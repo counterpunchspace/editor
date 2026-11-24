@@ -16,8 +16,13 @@ import {
     sparseRenameBlockers
 } from './sparse-rename';
 import type { Babelfont } from './babelfont';
+import type { RustBatchResult } from './font-manager';
 import { setYPath } from './change-bridge-ydoc';
-import { toRestingDrawingJson } from './resting-drawing-json';
+import {
+    describeDrawingStationViolation,
+    RestingDrawingWriteError,
+    toRestingDrawingJson
+} from './resting-drawing-json';
 import { glyphDataIndex, type GlyphDataSearchResult } from './glyph-data';
 import {
     glyphHasQaIssues,
@@ -3395,6 +3400,439 @@ export function buildInterpolationRustBatchOperations(
     return operations;
 }
 
+/** A Yjs v1 update with no structs and no deletions (`[0, 0]` or empty). */
+export function isEmptyYjsUpdate(update: Uint8Array): boolean {
+    return (
+        update.length === 0 || (update.length === 2 && !update[0] && !update[1])
+    );
+}
+
+/**
+ * Whether a worker batch edited anything. The worker encodes a batch with
+ * no edits as the empty update `[0, 0]`, so packet lengths say nothing;
+ * each per-document packet is inspected.
+ */
+export function workerBatchHasEdits(result: {
+    update: Uint8Array;
+    updates?: Array<{ documentId: string; update: Uint8Array }>;
+}): boolean {
+    if (!isEmptyYjsUpdate(result.update)) {
+        return true;
+    }
+    return Boolean(
+        result.updates?.some((packet) => !isEmptyYjsUpdate(packet.update))
+    );
+}
+
+/**
+ * Refuse a drawing about to be added to a glyph without a non-empty `id`, a
+ * finite `width` and a station link in `master` (an explicit
+ * `{ type: 'FreeFloating' }` for a free drawing). Nothing is filled in.
+ */
+function assertDrawingIdentityForWrite(
+    drawingData: Babelfont.Layer,
+    context: string
+): void {
+    const record = drawingData as unknown as Record<string, unknown>;
+    if (typeof record.id !== 'string' || !record.id.length) {
+        throw new RestingDrawingWriteError(
+            'drawing id is not a non-empty string',
+            context
+        );
+    }
+    if (typeof record.width !== 'number' || !Number.isFinite(record.width)) {
+        throw new RestingDrawingWriteError(
+            'drawing width is not a finite number',
+            context
+        );
+    }
+    const stationViolation = describeDrawingStationViolation(record.master, {
+        isBackground: record.is_background === true
+    });
+    if (stationViolation) {
+        throw new RestingDrawingWriteError(stationViolation, context);
+    }
+}
+
+/**
+ * `format_specific` key on a station drawing that was a free drawing before
+ * its station was added. The value is `{ location }`, the free drawing’s
+ * location exactly as it was stored. Removing that station turns the drawing
+ * back into a free drawing at that location.
+ */
+export const FORMER_FREE_DRAWING_KEY = 'com.counterpunch.formerFreeDrawing';
+
+/**
+ * A station drawing made from the free drawing `free`: the marker remembers
+ * where the free drawing was.
+ */
+export function markFormerFreeDrawing(
+    stationDrawing: Babelfont.Layer,
+    free: Babelfont.Layer,
+    context: string
+): void {
+    const location = free.location as unknown;
+    if (!location || typeof location !== 'object' || Array.isArray(location)) {
+        throw new RestingDrawingWriteError(
+            'free drawing has no location to remember',
+            context
+        );
+    }
+    stationDrawing.format_specific = {
+        ...(stationDrawing.format_specific ?? {}),
+        [FORMER_FREE_DRAWING_KEY]: {
+            location: cloneForHistory(location)
+        }
+    };
+}
+
+/**
+ * The free drawing a marked station drawing goes back to when its station is
+ * removed, or `null` for a drawing without the marker. A marker without a
+ * location object throws: nothing is made up for it.
+ */
+export function freeDrawingFromFormerFreeDrawing(
+    drawing: Babelfont.Layer,
+    context: string
+): Babelfont.Layer | null {
+    const formatSpecific = drawing.format_specific;
+    if (!formatSpecific || !(FORMER_FREE_DRAWING_KEY in formatSpecific)) {
+        return null;
+    }
+    const marker = formatSpecific[FORMER_FREE_DRAWING_KEY] as unknown;
+    const location =
+        marker && typeof marker === 'object'
+            ? (marker as { location?: unknown }).location
+            : undefined;
+    if (!location || typeof location !== 'object' || Array.isArray(location)) {
+        throw new RestingDrawingWriteError(
+            `“${FORMER_FREE_DRAWING_KEY}” has no location object`,
+            context
+        );
+    }
+    const restored = cloneForHistory(drawing);
+    restored.master = { type: 'FreeFloating' } as Babelfont.LayerType;
+    restored.location = cloneForHistory(
+        location
+    ) as Babelfont.Layer['location'];
+    const restFormatSpecific = { ...formatSpecific };
+    delete restFormatSpecific[FORMER_FREE_DRAWING_KEY];
+    if (Object.keys(restFormatSpecific).length) {
+        restored.format_specific = cloneForHistory(restFormatSpecific);
+    } else {
+        delete restored.format_specific;
+    }
+    return restored;
+}
+
+/**
+ * `value` with every top-level key that only `other` has set to `null`.
+ * A drawing snapshot is merged into the stored drawing key by key, and only
+ * `null` deletes a key, so undo and redo of a drawing that loses a key (a
+ * free drawing’s `location`, an emptied `format_specific`) need it named.
+ */
+function withDroppedDrawingKeysAsNull(
+    value: unknown,
+    other: unknown
+): Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new TypeError('A drawing snapshot must be an object.');
+    }
+    const result: Record<string, unknown> = cloneForHistory(
+        value as Record<string, unknown>
+    );
+    if (other && typeof other === 'object' && !Array.isArray(other)) {
+        for (const key of Object.keys(other)) {
+            if (!(key in result)) {
+                result[key] = null;
+            }
+        }
+    }
+    return result;
+}
+
+/**
+ * A station edit the font worker refused: nothing of it was applied, the
+ * font is as it was. `workerError` is what the worker reported.
+ */
+export class StationEditRefusedError extends Error {
+    readonly workerError: unknown;
+
+    constructor(edit: string, workerError: unknown) {
+        const reason =
+            workerError instanceof Error
+                ? workerError.message
+                : String(workerError);
+        super(`Couldn’t ${edit}, so nothing was changed: ${reason}`);
+        this.name = 'StationEditRefusedError';
+        this.workerError = workerError;
+    }
+}
+
+/**
+ * Await a font worker batch for a station edit. A refusal (a drawing the
+ * font doesn’t have, one drawing that fails, refused stored data) becomes a
+ * {@link StationEditRefusedError} naming the edit; the caller has changed
+ * nothing yet, so the font stays as it was.
+ */
+async function awaitStationWorkerBatch(
+    edit: string,
+    batch: Promise<RustBatchResult>
+): Promise<RustBatchResult> {
+    try {
+        return await batch;
+    } catch (error) {
+        if (error instanceof StationEditRefusedError) {
+            throw error;
+        }
+        throw new StationEditRefusedError(edit, error);
+    }
+}
+
+/** Two stored JSON values are the same, key order aside. */
+function sameStoredValue(a: unknown, b: unknown): boolean {
+    if (a === b) {
+        return true;
+    }
+    if (
+        !a ||
+        !b ||
+        typeof a !== 'object' ||
+        typeof b !== 'object' ||
+        Array.isArray(a) !== Array.isArray(b)
+    ) {
+        return false;
+    }
+    if (Array.isArray(a)) {
+        const other = b as unknown[];
+        return (
+            a.length === other.length &&
+            a.every((entry, index) => sameStoredValue(entry, other[index]))
+        );
+    }
+    const left = a as Record<string, unknown>;
+    const right = b as Record<string, unknown>;
+    const keys = Object.keys(left);
+    return (
+        keys.length === Object.keys(right).length &&
+        keys.every(
+            (key) =>
+                Object.prototype.hasOwnProperty.call(right, key) &&
+                sameStoredValue(left[key], right[key])
+        )
+    );
+}
+
+/** What removing stations does to one glyph’s stored drawings. */
+export interface StationRemovalDrawingPlan {
+    /** Drawings removed with their station. */
+    removeIds: string[];
+    /** Drawings rewritten in place, keyed by their unchanged id. */
+    replacements: Array<{ id: string; layer: Babelfont.Layer }>;
+}
+
+function drawingLinkNamesStation(
+    drawing: Babelfont.Layer,
+    stationIds: readonly string[]
+): boolean {
+    const link = drawing.master as { master?: unknown } | undefined;
+    return typeof link?.master === 'string' && stationIds.includes(link.master);
+}
+
+/**
+ * What removing `stationIds` does to the drawings of glyph `glyphName`, the
+ * same rules the font worker follows:
+ *
+ * - A drawing at a removed station is removed, or goes back to being the
+ *   free drawing it was before its station was added
+ *   ({@link FORMER_FREE_DRAWING_KEY}).
+ * - A background drawing belongs to the drawing whose `background_layer_id`
+ *   names it. A removed drawing takes its background with it; a drawing that
+ *   goes back to being a free drawing takes its background along (free, at
+ *   the same location) when the background is linked to a removed station.
+ * - A background linked to a removed station whose drawing stays follows
+ *   that drawing: it takes its station link and location.
+ * - A background linked to a removed station that no drawing owns goes with
+ *   its station.
+ *
+ * Nothing is filled in: a drawing or background without an id, a staying
+ * drawing without a station link, or drawings that disagree on where their
+ * shared background goes throw before anything changes.
+ */
+export function planStationRemovalDrawings(
+    glyphName: string,
+    drawings: readonly Babelfont.Layer[],
+    stationIds: readonly string[]
+): StationRemovalDrawingPlan {
+    const plan: StationRemovalDrawingPlan = {
+        removeIds: [],
+        replacements: []
+    };
+    // Each removed station drawing: the free drawing it goes back to, or
+    // `null` when it is removed.
+    const outcomes = new Map<string, Babelfont.Layer | null>();
+    for (const drawing of drawings) {
+        if (
+            drawing.is_background ||
+            !drawingLinkNamesStation(drawing, stationIds)
+        ) {
+            continue;
+        }
+        const stationId = (drawing.master as { master: string }).master;
+        const context = `removing station “${stationId}” from glyph “${glyphName}”`;
+        if (typeof drawing.id !== 'string' || !drawing.id.length) {
+            throw new RestingDrawingWriteError(
+                'drawing id is not a non-empty string',
+                context
+            );
+        }
+        if (outcomes.has(drawing.id)) {
+            continue;
+        }
+        const restored = freeDrawingFromFormerFreeDrawing(drawing, context);
+        outcomes.set(drawing.id, restored);
+        if (restored) {
+            plan.replacements.push({ id: drawing.id, layer: restored });
+        } else {
+            plan.removeIds.push(drawing.id);
+        }
+    }
+
+    const handledBackgrounds = new Set<string>();
+    for (const background of drawings) {
+        if (!background.is_background) {
+            continue;
+        }
+        const namesRemovedStation = drawingLinkNamesStation(
+            background,
+            stationIds
+        );
+        const backgroundId = background.id;
+        if (typeof backgroundId !== 'string' || !backgroundId.length) {
+            if (namesRemovedStation) {
+                throw new Error(
+                    `Can’t remove the station: glyph “${glyphName}” has a background drawing without an id linked to it.`
+                );
+            }
+            continue;
+        }
+        if (handledBackgrounds.has(backgroundId)) {
+            continue;
+        }
+        handledBackgrounds.add(backgroundId);
+        const removedOwners: string[] = [];
+        const stayingOwners: Babelfont.Layer[] = [];
+        for (const owner of drawings) {
+            if (
+                owner.is_background ||
+                owner.background_layer_id !== backgroundId
+            ) {
+                continue;
+            }
+            if (typeof owner.id === 'string' && outcomes.has(owner.id)) {
+                removedOwners.push(owner.id);
+                continue;
+            }
+            if (
+                namesRemovedStation &&
+                (typeof owner.id !== 'string' || !owner.id.length)
+            ) {
+                throw new Error(
+                    `Can’t remove the station: background drawing “${backgroundId}” of glyph “${glyphName}” is linked to it, and a drawing without an id that stays owns it.`
+                );
+            }
+            stayingOwners.push(owner);
+        }
+        if (!namesRemovedStation) {
+            // Linked elsewhere: it goes only when every drawing that owns it
+            // is removed, and stays with any that remains.
+            if (
+                stayingOwners.length === 0 &&
+                removedOwners.length > 0 &&
+                removedOwners.every((id) => outcomes.get(id) === null)
+            ) {
+                plan.removeIds.push(backgroundId);
+            }
+            continue;
+        }
+
+        if (stayingOwners.length) {
+            // It belongs to drawings that stay: it takes their station link
+            // and location, which they must share.
+            let link: { master: unknown; location: unknown } | null = null;
+            for (const owner of stayingOwners) {
+                const master = owner.master as unknown;
+                if (
+                    !master ||
+                    typeof master !== 'object' ||
+                    Array.isArray(master)
+                ) {
+                    throw new Error(
+                        `Can’t remove the station: drawing “${owner.id}” of glyph “${glyphName}”, which owns background drawing “${backgroundId}”, has no station link.`
+                    );
+                }
+                const candidate = { master, location: owner.location };
+                if (!link) {
+                    link = candidate;
+                } else if (
+                    !sameStoredValue(link.master, candidate.master) ||
+                    !sameStoredValue(link.location, candidate.location)
+                ) {
+                    throw new Error(
+                        `Can’t remove the station: the drawings of glyph “${glyphName}” that own background drawing “${backgroundId}” sit at different locations.`
+                    );
+                }
+            }
+            const relinked = cloneForHistory(background);
+            relinked.master = cloneForHistory(
+                link!.master
+            ) as Babelfont.Layer['master'];
+            if (link!.location === undefined) {
+                delete relinked.location;
+            } else {
+                relinked.location = cloneForHistory(
+                    link!.location
+                ) as Babelfont.Layer['location'];
+            }
+            plan.replacements.push({ id: backgroundId, layer: relinked });
+            continue;
+        }
+
+        const locations = removedOwners
+            .map((id) => outcomes.get(id))
+            .filter((restored): restored is Babelfont.Layer => !!restored)
+            .map((restored) => restored.location);
+        if (!locations.length) {
+            plan.removeIds.push(backgroundId);
+            continue;
+        }
+        if (
+            locations.some(
+                (location) => !sameStoredValue(location, locations[0])
+            )
+        ) {
+            throw new Error(
+                `Can’t remove the station: the drawings of glyph “${glyphName}” that own background drawing “${backgroundId}” go back to different locations.`
+            );
+        }
+        const moved = cloneForHistory(background);
+        moved.master = { type: 'FreeFloating' } as Babelfont.LayerType;
+        moved.location = cloneForHistory(
+            locations[0]
+        ) as Babelfont.Layer['location'];
+        plan.replacements.push({ id: backgroundId, layer: moved });
+    }
+    // Every rewritten record must be one that may be stored, checked here
+    // so the removal is refused before anything changes, never half-way.
+    for (const { id, layer } of plan.replacements) {
+        assertDrawingIdentityForWrite(
+            layer,
+            `removing stations from glyph “${glyphName}”, drawing “${id}”`
+        );
+    }
+    return plan;
+}
+
 /**
  * Replace base per-document packets with refined ones by document id. A
  * refine pass only re-encodes the documents it touched, so every other base
@@ -3932,6 +4370,28 @@ function isPlainNumericText(value: string): boolean {
 
 function roundMetricValue(value: number): number {
     return Math.round(value);
+}
+
+const SIDEBEARING_METRIC_LABELS = {
+    width: 'width',
+    left: 'left sidebearing',
+    right: 'right sidebearing'
+} as const;
+
+/**
+ * Refuse a drawing metric that is not a finite number. A drawing's width is
+ * never filled in or guessed: an invalid value is an error the caller
+ * surfaces.
+ */
+function assertFiniteDrawingMetric(
+    metric: keyof typeof SIDEBEARING_METRIC_LABELS,
+    value: unknown
+): asserts value is number {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+        throw new TypeError(
+            `The ${SIDEBEARING_METRIC_LABELS[metric]} must be a finite number, not “${String(value)}”.`
+        );
+    }
 }
 
 function appendMapArrayValue<Key, Value>(
@@ -6616,7 +7076,20 @@ export class Drawing extends ArrayElementBase {
      * {@link toCompileJSON} at the Rust/compile/export/preview boundary.
      */
     toJSON(): Unsafe {
-        return super.toJSON() as Unsafe;
+        const data = super.toJSON() as Unsafe;
+        // A whole drawing always carries its shapes. Babelfont JSON leaves an
+        // empty `shapes` list out (`skip_serializing_if = "Vec::is_empty"`), so
+        // an absent key means a drawing without shapes, never unknown shapes;
+        // anything else that isn’t a list is corrupt and is refused.
+        if (data && typeof data === 'object' && !Array.isArray(data.shapes)) {
+            if (data.shapes !== undefined) {
+                throw new Error(
+                    `Drawing “${String(data.id)}” has shapes that aren’t a list; its stored data is corrupt.`
+                );
+            }
+            return { ...data, shapes: [] } as Unsafe;
+        }
+        return data;
     }
 
     /**
@@ -7112,6 +7585,7 @@ export class Drawing extends ArrayElementBase {
     }
 
     setDirectSidebearing(side: SidebearingSide, value: number): void {
+        assertFiniteDrawingMetric(side, value);
         if (side === 'left') {
             const currentLsb = this.getDirectSidebearing('left');
             const currentRsb = this.getDirectSidebearing('right');
@@ -9046,6 +9520,7 @@ export class Drawing extends ArrayElementBase {
 
     set width(value: number) {
         assertModelMutationAllowed();
+        assertFiniteDrawingMetric('width', value);
         const old = this.data.width;
         const roundedValue = roundMetricValue(value);
         this.data.width = roundedValue;
@@ -9067,6 +9542,7 @@ export class Drawing extends ArrayElementBase {
      */
     set lsb(value: number) {
         assertModelMutationAllowed();
+        assertFiniteDrawingMetric('left', value);
         withBridgeTransaction(
             getSidebearingTransactionLabel('left'),
             'keyboard-sidebearing',
@@ -9095,6 +9571,7 @@ export class Drawing extends ArrayElementBase {
      */
     set rsb(value: number) {
         assertModelMutationAllowed();
+        assertFiniteDrawingMetric('right', value);
         withBridgeTransaction(
             getSidebearingTransactionLabel('right'),
             'keyboard-sidebearing',
@@ -10707,7 +11184,10 @@ export class Drawing extends ArrayElementBase {
 
             // No points found (e.g., space character) - use glyph width from drawing data
             // Create a small bbox: 10 units high, centered on baseline, as wide as the glyph
-            const glyphWidth = drawingData.width || 250; // Fallback to 250 if no width
+            const glyphWidth = drawingData.width;
+            // A drawing without a finite width is broken; its bounds are
+            // not invented.
+            assertFiniteDrawingMetric('width', glyphWidth);
             const height = 10;
 
             return {
@@ -11340,6 +11820,10 @@ export class Glyph extends ArrayElementBase {
 
     private appendRawDrawing(drawingData: Babelfont.Layer): Drawing {
         assertModelMutationAllowed();
+        assertDrawingIdentityForWrite(
+            drawingData,
+            `adding a drawing to glyph “${this.data.name}”`
+        );
         if (!this.data.layers) {
             this.data.layers = [];
         }
@@ -11962,6 +12446,28 @@ export class Glyph extends ArrayElementBase {
         requestedDrawingId?: string | null
     ): Drawing {
         assertModelMutationAllowed();
+        assertFiniteDrawingMetric('width', width);
+        if (!station) {
+            throw new TypeError(
+                'A new drawing needs a station: pass the station it belongs to.'
+            );
+        }
+        // A new drawing is made from this window’s own station list, so its
+        // station must be in it. Writes of existing drawings are not checked
+        // this way: a station add or remove reaches font-core and the glyph
+        // documents in separate packets.
+        const font = this.parent();
+        if (
+            font instanceof Font &&
+            station.type !== 'FreeFloating' &&
+            typeof station.master === 'string' &&
+            station.master.length &&
+            !font.findStation(station.master)
+        ) {
+            throw new TypeError(
+                `A new drawing can’t belong to station “${station.master}”: the font has no such station.`
+            );
+        }
         if (!this.data.layers) {
             this.data.layers = [];
         }
@@ -11979,9 +12485,7 @@ export class Glyph extends ArrayElementBase {
             ),
             shapes: []
         };
-        if (station) {
-            drawingData.master = cloneForHistory(station);
-        }
+        drawingData.master = cloneForHistory(station);
         return this.appendRawDrawing(drawingData);
     }
 
@@ -12010,9 +12514,13 @@ export class Glyph extends ArrayElementBase {
             is_background: true,
             background_layer_id: foreground.id
         };
-        if (foreground.station) {
-            drawingData.master = cloneForHistory(foreground.station);
+        const foregroundStation = foreground.station;
+        if (!foregroundStation) {
+            throw new TypeError(
+                `Drawing ${foreground.id} has no station link, so its background drawing cannot have one.`
+            );
         }
+        drawingData.master = cloneForHistory(foregroundStation);
         if (foreground.location) {
             drawingData.location = cloneForHistory(foreground.location);
         }
@@ -12042,6 +12550,53 @@ export class Glyph extends ArrayElementBase {
                 removedDrawing
             );
         }
+    }
+
+    /**
+     * Add a whole drawing record, recorded like any other added drawing.
+     * Its `id`, `width` and station link must already be there.
+     * @internal
+     */
+    _appendDrawingRecord(drawingData: Babelfont.Layer): Drawing {
+        return this.appendRawDrawing(drawingData);
+    }
+
+    /**
+     * Replace the stored drawing `id` with the whole record `drawingData`
+     * (same id) at the same place, recorded as that drawing removed and the
+     * new record added so undo, redo and collaborators get every key it
+     * drops. A drawing that isn’t stored throws.
+     * @internal
+     */
+    _replaceDrawingRecord(id: string, drawingData: Babelfont.Layer): Drawing {
+        assertModelMutationAllowed();
+        const context = `replacing drawing “${id}” of glyph “${this.data.name}”`;
+        if (drawingData.id !== id) {
+            throw new RestingDrawingWriteError(
+                `the new record has id “${String(drawingData.id)}”`,
+                context
+            );
+        }
+        assertDrawingIdentityForWrite(drawingData, context);
+        const layers = this.data.layers ?? [];
+        const index = layers.findIndex(
+            (drawing: Babelfont.Layer) => drawing.id === id
+        );
+        if (index < 0) {
+            throw new RestingDrawingWriteError(
+                'the drawing is not stored',
+                context
+            );
+        }
+        const removed = layers[index];
+        const path = [...this.getPath(), 'layers', id];
+        layers.splice(index, 1);
+        this._drawingWrappers = null;
+        recordRemoveAndMarkDirty(path, removed);
+        layers.splice(index, 0, drawingData);
+        this._drawingWrappers = null;
+        recordAddAndMarkDirty(path, drawingData);
+        return new Drawing(layers, index, this);
     }
 
     /**
@@ -13028,11 +13583,13 @@ export class Station extends ArrayElementBase {
         beginLoadingCursor();
         beginStartupInteractionLock();
         try {
-            const batchResult =
-                await window.fontManager.buildWorkerReinterpolateStationDrawingsBatch(
+            const batchResult = await awaitStationWorkerBatch(
+                'reinterpolate the station’s drawings',
+                window.fontManager.buildWorkerReinterpolateStationDrawingsBatch(
                     this.id
-                );
-            if (!batchResult.update.length && !batchResult.updates?.length) {
+                )
+            );
+            if (!workerBatchHasEdits(batchResult)) {
                 return;
             }
 
@@ -15589,6 +16146,11 @@ export class Font extends ModelBase {
             const layer = this.clonePlainValue(free) as Babelfont.Layer;
             layer.id = added.id ?? operation.layerId;
             layer.master = this.clonePlainValue(added.master);
+            markFormerFreeDrawing(
+                layer,
+                free,
+                `adding station “${stationId}” to glyph “${operation.glyphName}”`
+            );
             delete layer.location;
             found.push({
                 glyphName: operation.glyphName,
@@ -15596,6 +16158,76 @@ export class Font extends ModelBase {
                 layer,
                 freeDrawingId: free.id
             });
+        }
+        return found;
+    }
+
+    /**
+     * Drawings at the removed stations that were free drawings before their
+     * station was added, each as the free drawing it goes back to. With
+     * `metadata`, each must be one the removal batch removes.
+     */
+    private collectFormerFreeDrawingsAtStations(
+        stationIds: string[],
+        metadata?: InterpolationRustBatchMetadata
+    ): Array<{
+        glyphName: string;
+        layerId: string;
+        layer: Babelfont.Layer;
+    }> {
+        const found: Array<{
+            glyphName: string;
+            layerId: string;
+            layer: Babelfont.Layer;
+        }> = [];
+        for (const glyph of this._data.glyphs ?? []) {
+            const glyphName = glyph.name as string;
+            for (const drawing of glyph.layers ?? []) {
+                const drawingStation = drawing.master as
+                    { master?: string } | undefined;
+                if (
+                    drawing.is_background ||
+                    typeof drawingStation?.master !== 'string' ||
+                    !stationIds.includes(drawingStation.master)
+                ) {
+                    continue;
+                }
+                const context = `removing station “${drawingStation.master}” from glyph “${glyphName}”`;
+                const restored = freeDrawingFromFormerFreeDrawing(
+                    drawing,
+                    context
+                );
+                if (!restored) {
+                    continue;
+                }
+                if (typeof drawing.id !== 'string' || !drawing.id.length) {
+                    throw new RestingDrawingWriteError(
+                        'drawing id is not a non-empty string',
+                        context
+                    );
+                }
+                if (metadata) {
+                    const operation = metadata.layerOperations.find(
+                        (candidate) =>
+                            candidate.glyphName === glyphName &&
+                            candidate.layerId === drawing.id
+                    );
+                    if (
+                        operation &&
+                        operation.newValue !== undefined &&
+                        operation.newValue !== null
+                    ) {
+                        // The batch already wrote this drawing itself.
+                        continue;
+                    }
+                    if (!operation) {
+                        throw new Error(
+                            `Removing station “${drawingStation.master}” left drawing “${drawing.id}” of glyph “${glyphName}” in place, so it can’t become a free drawing again.`
+                        );
+                    }
+                }
+                found.push({ glyphName, layerId: drawing.id, layer: restored });
+            }
         }
         return found;
     }
@@ -15782,24 +16414,27 @@ export class Font extends ModelBase {
         ) {
             beginLoadingCursor();
             beginStartupInteractionLock();
+            // Until the worker's packet is applied, the extended axes above
+            // are this window's alone: a refused batch puts them back.
+            let applied = false;
             try {
-                const batchResult =
-                    await window.fontManager.buildWorkerAddStationWithInterpolatedDrawingsBatch(
+                const batchResult = await awaitStationWorkerBatch(
+                    'add the station',
+                    window.fontManager.buildWorkerAddStationWithInterpolatedDrawingsBatch(
                         clonedStation,
                         this.getAddStationInterpolationLocations(
                             clonedStation.location
                         ),
-                        // Always send the axes snapshot used for interpolation.
-                        // Even when min/max/map did not change, the worker
-                        // FONT_CACHE can lag (e.g. prior structural sync
-                        // quarantine); omitting axes then extrapolates with a
-                        // stale avar map and produces frankenstein drawings.
+                        // Always send the axes snapshot used for
+                        // interpolation. Even when min/max/map did not
+                        // change, the worker FONT_CACHE can lag (e.g.
+                        // prior structural sync quarantine); omitting axes
+                        // then extrapolates with a stale avar map and
+                        // produces frankenstein drawings.
                         this._data.axes ?? []
-                    );
-                if (
-                    !batchResult.update.length &&
-                    !batchResult.updates?.length
-                ) {
+                    )
+                );
+                if (!workerBatchHasEdits(batchResult)) {
                     if (axisExtension.changed) {
                         this._data.axes = previousAxes;
                     }
@@ -15829,15 +16464,18 @@ export class Font extends ModelBase {
                     )
                 ];
                 if (overrides.length) {
-                    const refined =
-                        await window.fontManager.buildWorkerRefineDrawingSnapshotsBatch(
+                    const refined = await awaitStationWorkerBatch(
+                        'add the station',
+                        window.fontManager.buildWorkerRefineDrawingSnapshotsBatch(
                             batchResult.update,
                             overrides,
-                            batchResult.updates ?? []
-                        );
-                    if (refined.update.length) {
-                        finalUpdate = refined.update;
-                    }
+                            batchResult.updates
+                        )
+                    );
+                    // The refined core packet carries the base batch's
+                    // transaction too, so it replaces the base packet even
+                    // when it is the empty update.
+                    finalUpdate = refined.update;
                     if (refined.updates?.length) {
                         documentUpdates = mergeDocumentUpdatePackets(
                             documentUpdates,
@@ -15859,6 +16497,7 @@ export class Font extends ModelBase {
                     }
                 }
 
+                applied = true;
                 applyWorkerGeneratedYjsUpdate(
                     bridge,
                     finalUpdate,
@@ -15889,6 +16528,15 @@ export class Font extends ModelBase {
                         }
                     );
                 }
+            } catch (error) {
+                if (
+                    !applied &&
+                    axisExtension.changed &&
+                    this._data.axes === axisExtension.axes
+                ) {
+                    this._data.axes = previousAxes;
+                }
+                throw error;
             } finally {
                 endStartupInteractionLock();
                 endLoadingCursor();
@@ -15909,7 +16557,10 @@ export class Font extends ModelBase {
             for (const glyph of this.glyphs) {
                 const sourceDrawing =
                     glyph.drawings?.[glyph.drawings.length - 1];
-                const sourceWidth = sourceDrawing?.width ?? 500;
+                // A glyph without drawings starts the new station at 500
+                // units; an existing drawing must have its own width.
+                const sourceWidth = sourceDrawing ? sourceDrawing.width : 500;
+                assertFiniteDrawingMetric('width', sourceWidth);
                 glyph.addDrawing(
                     sourceWidth,
                     {
@@ -15969,10 +16620,12 @@ export class Font extends ModelBase {
         beginLoadingCursor();
         beginStartupInteractionLock();
         try {
-            const batch =
-                await window.fontManager.buildWorkerAddAxisWithStationCopiesBatch(
+            const batch = await awaitStationWorkerBatch(
+                'add the axis',
+                window.fontManager.buildWorkerAddAxisWithStationCopiesBatch(
                     this.clonePlainValue(plan)
-                );
+                )
+            );
             applyWorkerGeneratedYjsUpdate(
                 bridge as Parameters<typeof applyWorkerGeneratedYjsUpdate>[0],
                 batch.update,
@@ -16018,31 +16671,6 @@ export class Font extends ModelBase {
             return false;
         }
 
-        const removeStationBoundDrawings = () => {
-            for (const glyph of this.glyphs) {
-                const rawDrawings = ((glyph as Unsafe).data?.layers ||
-                    []) as Array<Babelfont.Layer & { id?: string }>;
-                const drawingIdsToRemove = rawDrawings
-                    .filter((drawing) => {
-                        const drawingStation = drawing.master as
-                            { master?: string } | undefined;
-                        return (
-                            typeof drawing.id === 'string' &&
-                            typeof drawingStation?.master === 'string' &&
-                            normalizedStationIds.includes(drawingStation.master)
-                        );
-                    })
-                    .map((drawing) => drawing.id as string)
-                    .filter((drawingId, index, values) => {
-                        return values.indexOf(drawingId) === index;
-                    });
-
-                for (const drawingId of drawingIdsToRemove) {
-                    glyph.removeDrawingById(drawingId);
-                }
-            }
-        };
-
         const bridge = getPatchSyncEngine() as
             | (PatchSyncEngine & {
                   applyLocalGeneratedYjsUpdate?: (
@@ -16065,30 +16693,101 @@ export class Font extends ModelBase {
             beginLoadingCursor();
             beginStartupInteractionLock();
             try {
-                const batchResult =
-                    await window.fontManager.buildWorkerRemoveStationsBatch(
+                const batchResult = await awaitStationWorkerBatch(
+                    'remove the station',
+                    window.fontManager.buildWorkerRemoveStationsBatch(
                         normalizedStationIds
-                    );
-                if (
-                    !batchResult.update.length &&
-                    !batchResult.updates?.length
-                ) {
+                    )
+                );
+                if (!workerBatchHasEdits(batchResult)) {
                     return false;
+                }
+                let finalUpdate = batchResult.update;
+                let documentUpdates = batchResult.updates;
+                const metadata = batchResult.metadata;
+                // A drawing that was a free drawing before its station was
+                // added becomes that free drawing again, in the same packet
+                // and history item as the removal.
+                const restoredFreeDrawings =
+                    this.collectFormerFreeDrawingsAtStations(
+                        normalizedStationIds,
+                        metadata
+                    );
+                if (restoredFreeDrawings.length) {
+                    const refined = await awaitStationWorkerBatch(
+                        'remove the station',
+                        window.fontManager.buildWorkerRefineDrawingSnapshotsBatch(
+                            batchResult.update,
+                            restoredFreeDrawings,
+                            batchResult.updates
+                        )
+                    );
+                    // The refined core packet carries the removal too.
+                    finalUpdate = refined.update;
+                    if (refined.updates?.length) {
+                        documentUpdates = mergeDocumentUpdatePackets(
+                            documentUpdates,
+                            refined.updates
+                        );
+                    }
+                    const restoredByKey = new Map(
+                        restoredFreeDrawings.map((restored) => [
+                            `${restored.glyphName}::${restored.layerId}`,
+                            restored.layer
+                        ])
+                    );
+                    for (const operation of metadata.layerOperations) {
+                        const restored = restoredByKey.get(
+                            `${operation.glyphName}::${operation.layerId}`
+                        );
+                        if (restored !== undefined) {
+                            operation.newValue = restored;
+                        }
+                    }
                 }
                 applyWorkerGeneratedYjsUpdate(
                     bridge,
-                    batchResult.update,
-                    buildInterpolationRustBatchOperations(
-                        batchResult.metadata
-                    ).map((operation) => ({
-                        ...operation,
-                        compileChangeSource: 'station-topology',
-                        compileEditType: 'station-topology'
-                    })),
+                    finalUpdate,
+                    buildInterpolationRustBatchOperations(metadata).map(
+                        (operation) => {
+                            const stationOperation = {
+                                ...operation,
+                                compileChangeSource: 'station-topology',
+                                compileEditType: 'station-topology'
+                            };
+                            // A drawing the removal rewrites instead of
+                            // removing is a former free drawing coming
+                            // back, whether the worker batch restored it or
+                            // the refine above did.
+                            const isObject = (value: unknown) =>
+                                !!value &&
+                                typeof value === 'object' &&
+                                !Array.isArray(value);
+                            if (
+                                operation.op !== 'set' ||
+                                operation.applyMode !== 'drawing-snapshot' ||
+                                !isObject(operation.oldValue) ||
+                                !isObject(operation.newValue)
+                            ) {
+                                return stationOperation;
+                            }
+                            // Undo and redo replay these snapshots: the keys
+                            // one side drops are deleted, not kept.
+                            return {
+                                ...stationOperation,
+                                applyOldValue: withDroppedDrawingKeysAsNull(
+                                    operation.oldValue,
+                                    operation.newValue
+                                ),
+                                applyNewValue: withDroppedDrawingKeysAsNull(
+                                    operation.newValue,
+                                    operation.oldValue
+                                )
+                            };
+                        }
+                    ),
                     'Remove station',
-                    batchResult.updates?.length
-                        ? batchResult.updates
-                        : undefined
+                    documentUpdates?.length ? documentUpdates : undefined
                 );
             } finally {
                 endStartupInteractionLock();
@@ -16097,8 +16796,36 @@ export class Font extends ModelBase {
             return true;
         }
 
+        // Every glyph's plan is worked out, and refused, before anything
+        // changes, so a refusal leaves the font as it was.
+        const drawingPlans = (this._data.glyphs ?? []).map(
+            (glyphData: Babelfont.Glyph) => ({
+                glyphName: glyphData.name as string,
+                plan: planStationRemovalDrawings(
+                    glyphData.name as string,
+                    glyphData.layers ?? [],
+                    normalizedStationIds
+                )
+            })
+        );
         this.setLocalStationsList(nextStations);
-        removeStationBoundDrawings();
+        for (const { glyphName, plan } of drawingPlans) {
+            if (!plan.removeIds.length && !plan.replacements.length) {
+                continue;
+            }
+            const glyph = this.findGlyph(glyphName);
+            if (!glyph) {
+                throw new Error(
+                    `Glyph “${glyphName}” disappeared while removing a station.`
+                );
+            }
+            for (const { id, layer } of plan.replacements) {
+                glyph._replaceDrawingRecord(id, layer);
+            }
+            for (const drawingId of plan.removeIds) {
+                glyph.removeDrawingById(drawingId);
+            }
+        }
 
         const currentFont = (window as Unsafe).fontManager?.currentFont;
         currentFont?.markDirty?.('font-info-stations-list');

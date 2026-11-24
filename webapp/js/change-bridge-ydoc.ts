@@ -9,13 +9,17 @@
 import * as Y from 'yjs';
 import { generateStableId } from './babelfont-model';
 import {
+    describeDrawingStationViolation,
+    describeRestingDrawingViolation,
     omitRestingDrawingRuntimeKeys,
     RESTING_DRAWING_IDENTITY_KEYS,
     RESTING_DRAWING_RUNTIME_KEYS,
+    RestingDrawingWriteError,
     toRestingComponentTransform,
     toRestingDrawingJson
 } from './resting-drawing-json';
 import { flattenKerningMap } from './delete-glyphs-preflight';
+import { recordCollabTrace } from './collab-trace';
 import {
     geometryHasNormalizedStorage,
     getNodeIdAt,
@@ -23,7 +27,9 @@ import {
     DRAWING_GEOMETRY_TOPOLOGY_KEY,
     DRAWING_NODE_POSITIONS_KEY,
     DRAWING_SHAPE_DATA_KEY,
+    isYTypeNewInCurrentTransaction,
     readDrawingGeometry,
+    recordLateDrawingChildMap,
     writeDrawingGeometry,
     writeNodePosition
 } from './drawing-geometry-ydoc';
@@ -197,14 +203,18 @@ function featureEntryRecord(
             }
         });
     }
+    if (tag === undefined || code === undefined) {
+        // A feature without its tag or code is refused, never written as
+        // an empty one.
+        throw new RestingDrawingWriteError(
+            `a feature written to the document has no ${tag === undefined ? 'tag' : 'code'}`,
+            'Y.Doc write'
+        );
+    }
     if (!id) {
         id = generateStableId();
     }
-    return {
-        id,
-        tag,
-        code: code === undefined ? { code: '' } : code
-    };
+    return { id, tag, code };
 }
 
 function featureTupleField(
@@ -242,10 +252,12 @@ export function normalizeValueForYDocWrite(value: unknown): unknown {
         if (!Array.isArray(record.nodes)) {
             throw new TypeError('Y.Doc path nodes must be arrays.');
         }
-        return {
-            ...record,
-            closed: record.closed === undefined ? true : record.closed
-        };
+        // A path without a boolean closed flag is refused, never read as
+        // closed or open.
+        if (typeof record.closed !== 'boolean') {
+            throw new TypeError('Y.Doc paths must have a boolean closed flag.');
+        }
+        return record === value ? value : record;
     }
 
     // Ensure component transforms are normalized for Y.Doc storage
@@ -281,12 +293,6 @@ function pathSegmentIndex(seg: string | number): number {
     return typeof seg === 'number' ? seg : Number(seg);
 }
 
-function createYContainerForNextSegment(
-    nextSegment: string | number
-): Y.Map<unknown> | Y.Array<unknown> {
-    return isNumericPathSegment(nextSegment) ? new Y.Array() : new Y.Map();
-}
-
 function coerceNumericPath(path: (string | number)[]): (string | number)[] {
     return path.map((seg) =>
         typeof seg === 'string' && /^\d+$/.test(seg)
@@ -305,97 +311,174 @@ function coerceNumericPath(path: (string | number)[]): (string | number)[] {
  * map structure because their ids are editor/runtime metadata and this change
  * only migrates path node storage.
  */
-function drawingToYMap(drawingData: Record<string, unknown>): Y.Map<unknown> {
+export function drawingToYMap(
+    drawingData: Record<string, unknown>
+): Y.Map<unknown> {
     const map = new Y.Map<unknown>();
+    // A drawing map is created once, from a whole drawing: it must carry
+    // its own finite width, id and station link.
     drawingData = toRestingDrawingJson(drawingData, {
-        mode: 'delta',
-        strict: true,
         context: 'Y.Doc write'
     });
 
     // Non-array fields: set directly via toYType
     for (const [k, v] of Object.entries(drawingData)) {
-        if (k === 'shapes' || k === 'anchors' || k === 'guides') {
+        if (
+            k === 'shapes' ||
+            k === 'anchors' ||
+            k === 'guides' ||
+            k === DRAWING_FORMAT_SPECIFIC_KEY
+        ) {
             continue; // handled below
         }
         map.set(k, toYType(v));
     }
 
-    if (Array.isArray(drawingData.shapes)) {
-        writeDrawingGeometry(map, drawingData.shapes, toYType);
-    }
+    // `format_specific` is a keyed map like the others below: it is created
+    // with the drawing even when empty, so two collaborators writing its
+    // first entry (such as the former-free-drawing marker) write into one
+    // map instead of creating competing ones. An empty map is read back as
+    // no `format_specific` (see `fromYDrawingMap`).
+    map.set(
+        DRAWING_FORMAT_SPECIFIC_KEY,
+        formatSpecificToYMap(drawingData[DRAWING_FORMAT_SPECIFIC_KEY])
+    );
 
-    // anchors → anchorsById + anchorOrder
-    if (Array.isArray(drawingData.anchors)) {
-        const anchorsById = new Y.Map<unknown>();
-        const anchorOrder = new Y.Array<unknown>();
-        for (const anchor of drawingData.anchors) {
-            const anchorId = (anchor as any)?.id ?? generateStableId();
-            (anchor as any).id = anchorId;
-            anchorsById.set(anchorId, toYType(anchor));
-            anchorOrder.push([anchorId]);
-        }
-        map.set('anchorsById', anchorsById);
-        map.set('anchorOrder', anchorOrder);
-    }
+    // Every keyed child map is created here, together with the drawing,
+    // even when it starts empty: a map created later by the first entry
+    // races a collaborator's first entry, and every entry in the map that
+    // loses disappears. The geometry maps come with the topology.
+    writeDrawingGeometry(
+        map,
+        Array.isArray(drawingData.shapes) ? drawingData.shapes : [],
+        toYType
+    );
 
-    // guides → guidesById + guideOrder
-    if (Array.isArray(drawingData.guides)) {
-        const guidesById = new Y.Map<unknown>();
-        const guideOrder = new Y.Array<unknown>();
-        for (const guide of drawingData.guides) {
-            const guideId = (guide as any)?.id ?? generateStableId();
-            (guide as any).id = guideId;
-            guidesById.set(guideId, toYType(guide));
-            guideOrder.push([guideId]);
+    // anchors → anchorsById + anchorOrder, guides → guidesById + guideOrder
+    for (const arrayKey of ['anchors', 'guides'] as const) {
+        const mapping = INDEXED_MAP_KEYS[arrayKey]!;
+        const byId = new Y.Map<unknown>();
+        const order = new Y.Array<unknown>();
+        const items = drawingData[arrayKey];
+        const seenIds = new Set<string>();
+        if (Array.isArray(items)) {
+            for (const item of items) {
+                if (!isPlainObject(item)) {
+                    throw new RestingDrawingWriteError(
+                        `an entry of ${arrayKey} is not a plain object`,
+                        'Y.Doc write'
+                    );
+                }
+                const itemId =
+                    typeof item.id === 'string' && item.id
+                        ? item.id
+                        : generateStableId();
+                if (seenIds.has(itemId)) {
+                    // Two entries with one id would leave the order
+                    // listing it twice for one entry.
+                    throw new RestingDrawingWriteError(
+                        `${arrayKey} entry “${itemId}” appears twice`,
+                        'Y.Doc write'
+                    );
+                }
+                seenIds.add(itemId);
+                item.id = itemId;
+                byId.set(itemId, toYType(item));
+                order.push([itemId]);
+            }
         }
-        map.set('guidesById', guidesById);
-        map.set('guideOrder', guideOrder);
+        map.set(mapping.byId, byId);
+        map.set(mapping.order, order);
     }
 
     return map;
 }
 
-function restingDrawingContextFromYMap(
-    drawingMap: Y.Map<unknown>
-): Record<string, unknown> {
-    const existing: Record<string, unknown> = {};
-    const width = yMapGet(drawingMap, 'width');
-    if (typeof width === 'number' && Number.isFinite(width)) {
-        existing.width = width;
+/** The drawing key holding format-specific data, a keyed child map. */
+export const DRAWING_FORMAT_SPECIFIC_KEY = 'format_specific';
+
+/**
+ * A new drawing's `format_specific` map. A drawing without format-specific
+ * data (absent or null) gets an empty map; anything else that is not a
+ * plain object is refused.
+ */
+function formatSpecificToYMap(value: unknown): Y.Map<unknown> {
+    const map = new Y.Map<unknown>();
+    if (value === undefined || value === null) {
+        return map;
     }
-    const id = yMapGet(drawingMap, 'id');
-    if (typeof id === 'string' && id.length) {
-        existing.id = id;
+    if (!isPlainObject(value)) {
+        throw new RestingDrawingWriteError(
+            'drawing format_specific is not a plain object',
+            'Y.Doc write'
+        );
     }
-    const station = yMapGet(drawingMap, 'master');
-    if (station !== undefined) {
-        existing.master = fromYType(station);
+    for (const [key, entry] of Object.entries(value)) {
+        map.set(key, toYType(entry));
     }
-    try {
-        const shapes = yMapGet(drawingMap, 'shapes');
-        if (shapes !== undefined) {
-            existing.shapes = fromYType(shapes);
-        } else if (geometryHasNormalizedStorage(drawingMap)) {
-            existing.shapes = readDrawingGeometry(drawingMap);
-        }
-    } catch {
-        try {
-            if (geometryHasNormalizedStorage(drawingMap)) {
-                existing.shapes = readDrawingGeometry(drawingMap);
-            }
-        } catch {
-            // Identity-only fallback remains if both encodings are unreadable.
-        }
-    }
-    return existing;
+    return map;
 }
 
 /**
- * Glyph drawings must be a Y.Map keyed by drawing id. Whole-glyph writes that
- * go through generic `toYType` store `layers` as a Y.Array; the next
- * drawing delta would otherwise replace that array with an empty map and
- * drop every other drawing.
+ * Write a stored drawing's `format_specific`. The map is created with the
+ * drawing and is never deleted or replaced: absent or null empties it, and
+ * a plain object replaces its entries in place. A map created again by a
+ * later write would race a collaborator's, and every entry in the map that
+ * loses disappears. A drawing stored before every drawing got the map gets
+ * it here, and that is recorded. A value that is not a plain object, or a
+ * stored `format_specific` that is not a map, is refused.
+ */
+export function writeDrawingFormatSpecific(
+    drawingMap: Y.Map<unknown>,
+    value: unknown
+): void {
+    const existing = yMapGet(drawingMap, DRAWING_FORMAT_SPECIFIC_KEY);
+    if (existing !== undefined && !isYMap(existing)) {
+        throw new MissingDrawingError(
+            'The format_specific of this drawing is damaged in the document: it is not a map.'
+        );
+    }
+    if (value === undefined || value === null) {
+        if (isYMap(existing)) {
+            for (const key of yMapKeys(existing)) {
+                existing.delete(key);
+            }
+        }
+        return;
+    }
+    if (!isPlainObject(value)) {
+        throw new RestingDrawingWriteError(
+            'drawing format_specific is not a plain object',
+            'Y.Doc write'
+        );
+    }
+    if (isYMap(existing)) {
+        replaceYMapContents(existing, value);
+        return;
+    }
+    recordLateDrawingChildMap(drawingMap, DRAWING_FORMAT_SPECIFIC_KEY);
+    drawingMap.set(DRAWING_FORMAT_SPECIFIC_KEY, formatSpecificToYMap(value));
+}
+
+/**
+ * Thrown when a write addresses a glyph or drawing that the document does
+ * not hold. Nothing creates a stand-in for it: a stub drawing would carry
+ * no width, station or outline, and a second container created next to a
+ * collaborator's would hide theirs.
+ */
+export class MissingDrawingError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'MissingDrawingError';
+    }
+}
+
+/**
+ * Return a glyph's drawings map. Glyph drawings must be a Y.Map keyed by
+ * drawing id, created together with the glyph (`fillGlyphYMap`,
+ * `createGlyphDrawingsMap`). Any other state is refused: creating the map
+ * here would race a collaborator's and hide every drawing in theirs, and a
+ * Y.Array is a layout nothing may write any more.
  */
 export function ensureGlyphDrawingsMap(
     glyphMap: Y.Map<unknown>
@@ -404,25 +487,34 @@ export function ensureGlyphDrawingsMap(
     if (isYMap(existing)) {
         return existing;
     }
-
-    const migratedDrawings: Array<[string, Record<string, unknown>]> = [];
-    if (isYArray(existing)) {
-        for (const drawingVal of existing.toArray()) {
-            const drawingJson = fromYType(drawingVal);
-            if (!isPlainObject(drawingJson)) {
-                continue;
-            }
-            const drawingId = drawingJson.id;
-            if (typeof drawingId === 'string' && drawingId.length) {
-                migratedDrawings.push([drawingId, drawingJson]);
-            }
-        }
+    const glyphName = yMapGet(glyphMap, 'name');
+    const label = typeof glyphName === 'string' ? ` of “${glyphName}”` : '';
+    if (existing === undefined) {
+        throw new MissingDrawingError(
+            `The drawings${label} are missing from the document. Drawings are only created together with their glyph.`
+        );
     }
+    throw new MissingDrawingError(
+        `The drawings${label} are not stored as a map keyed by drawing id.`
+    );
+}
 
+/**
+ * Create the drawings map of a glyph that is being created. Refuses when
+ * the glyph already has one.
+ */
+export function createGlyphDrawingsMap(
+    glyphMap: Y.Map<unknown>
+): Y.Map<unknown> {
+    if (glyphMap.get('layers') !== undefined) {
+        throw new MissingDrawingError(
+            'This glyph already has drawings; they are created only once, with the glyph.'
+        );
+    }
     const drawingsMap = new Y.Map<unknown>();
     glyphMap.set('layers', drawingsMap);
-    for (const [drawingId, drawingJson] of migratedDrawings) {
-        drawingsMap.set(drawingId, toYType(drawingJson) as Y.Map<unknown>);
+    if (glyphMap.get('layerOrder') === undefined) {
+        glyphMap.set('layerOrder', new Y.Array<unknown>());
     }
     return drawingsMap;
 }
@@ -451,21 +543,37 @@ export function applyDrawingDelta(
             fontMap.get('name') === glyphName
           ? fontMap
           : null;
-    if (!isYMap(glyphMap)) return;
+    if (!isYMap(glyphMap)) {
+        throw new MissingDrawingError(
+            `Glyph “${glyphName}” is missing from the document; its drawing “${drawingId}” cannot be written.`
+        );
+    }
     const drawingsMapTyped = ensureGlyphDrawingsMap(glyphMap);
-    let drawingMap = drawingsMapTyped.get(drawingId);
-    const existingDrawingJson = isYMap(drawingMap)
-        ? restingDrawingContextFromYMap(drawingMap)
-        : null;
+    const drawingMap = drawingsMapTyped.get(drawingId);
+    if (!isYMap(drawingMap)) {
+        // A new drawing: it must be whole (drawingToYMap validates it).
+        if (drawingData.id !== undefined && drawingData.id !== drawingId) {
+            throw new RestingDrawingWriteError(
+                `drawing id “${String(drawingData.id)}” does not match its key “${drawingId}”`,
+                'Y.Doc write'
+            );
+        }
+        drawingsMapTyped.set(drawingId, drawingToYMap(drawingData));
+        return;
+    }
     const sanitizedDrawingData = toRestingDrawingJson(drawingData, {
-        existing: existingDrawingJson,
-        mode: isYMap(drawingMap) ? 'delta' : 'replace',
+        existing: { is_background: drawingMap.get('is_background') },
+        mode: 'delta',
         context: 'Y.Doc write'
     });
-    if (!isYMap(drawingMap)) {
-        // Drawing doesn't exist — create from flat JSON
-        drawingsMapTyped.set(drawingId, drawingToYMap(sanitizedDrawingData));
-        return;
+    if (
+        sanitizedDrawingData.id !== undefined &&
+        sanitizedDrawingData.id !== drawingId
+    ) {
+        throw new RestingDrawingWriteError(
+            `drawing id “${String(sanitizedDrawingData.id)}” does not match its key “${drawingId}”`,
+            'Y.Doc write'
+        );
     }
 
     const normalizedDrawingData = normalizeValueForYDocWrite(
@@ -490,7 +598,18 @@ export function applyDrawingDelta(
                 writeDrawingGeometry(drawingMap, [], toYType);
                 continue;
             }
+            if (key === 'anchors' || key === 'guides') {
+                // The keyed maps stay; only their entries go.
+                applyIndexedMapArray(drawingMap, key, []);
+                continue;
+            }
+            if (key === DRAWING_FORMAT_SPECIFIC_KEY) {
+                writeDrawingFormatSpecific(drawingMap, null);
+                continue;
+            }
             drawingMap.delete(key);
+        } else if (key === DRAWING_FORMAT_SPECIFIC_KEY) {
+            writeDrawingFormatSpecific(drawingMap, value);
         } else if (key === 'shapes' && Array.isArray(value)) {
             writeDrawingGeometry(drawingMap, value, toYType);
         } else if (
@@ -502,6 +621,13 @@ export function applyDrawingDelta(
             const existing = drawingMap.get(key);
             if (isYMap(existing) && isPlainObject(value)) {
                 replaceYMapContents(existing, value as Record<string, unknown>);
+            } else if (isYArray(existing) && Array.isArray(value)) {
+                diffYArray(existing, value);
+            } else if (existing === value) {
+                // An equal value is not written again: each rewrite makes a
+                // new item and deletes the old one, and a receiver that
+                // misses this packet would lose the key to that deletion.
+                continue;
             } else {
                 drawingMap.set(key, toYType(value));
             }
@@ -519,11 +645,14 @@ export function applyIndexedMapArray(
     arrayKey: string,
     nextArray: unknown[]
 ): void {
-    const byIdMap = ensureIndexedMap(drawingMap, arrayKey);
+    const byIdMap = ensureIndexedMap(drawingMap, arrayKey, true);
     if (!byIdMap) return;
     const mapping = INDEXED_MAP_KEYS[arrayKey]!;
     const orderArr = yMapGet(drawingMap, mapping.order);
     const orderIntegrated = isYArray(orderArr) && Boolean(orderArr.doc);
+    if (orderIntegrated && isYArray(orderArr)) {
+        tidyKeyedPairOrder(byIdMap, orderArr, arrayKey);
+    }
     const currentOrder: string[] = orderIntegrated
         ? (orderArr.toArray() as string[])
         : [];
@@ -546,6 +675,12 @@ export function applyIndexedMapArray(
                 ? featureEntryRecord(item, byIdMap, seenIds)
                 : item;
         const id = (inner as { id?: string })?.id ?? generateStableId();
+        if (seenIds.has(id)) {
+            throw new RestingDrawingWriteError(
+                `${arrayKey} entry “${id}” appears twice in the written list`,
+                'Y.Doc write'
+            );
+        }
         if (isPlainObject(inner)) {
             (inner as Record<string, unknown>).id = id;
         }
@@ -553,10 +688,18 @@ export function applyIndexedMapArray(
         seenIds.add(id);
 
         const existing = yMapGet(byIdMap, id);
-        if (isYMap(existing) && isPlainObject(inner)) {
+        if (existing === undefined) {
+            byIdMap.set(id, toYType(inner));
+        } else if (isYMap(existing) && isPlainObject(inner)) {
+            // An existing entry changes field by field, never by a new
+            // map: a collaborator deleting it at the same time would
+            // leave the new map behind without its place in the order.
             replaceYMapContents(existing, inner as Record<string, unknown>);
         } else {
-            byIdMap.set(id, toYType(inner));
+            throw new RestingDrawingWriteError(
+                `${arrayKey} entry “${id}” is not a map in the document or in the written list`,
+                'Y.Doc write'
+            );
         }
     }
 
@@ -621,18 +764,28 @@ function replaceYMapContentsInternal(
     >;
 
     const nextKeys = new Set(Object.keys(normalizedRecord));
+    const targetIsDrawing = isDrawingYMap(targetMap);
     for (const key of yMapKeys(targetMap)) {
         if (
             !nextKeys.has(key) &&
             !YMAP_INFRASTRUCTURE_KEYS.has(key) &&
             !(RESTING_DRAWING_IDENTITY_KEYS as readonly string[]).includes(key)
         ) {
+            if (targetIsDrawing && key === DRAWING_FORMAT_SPECIFIC_KEY) {
+                // Emptied, never deleted (see writeDrawingFormatSpecific).
+                writeDrawingFormatSpecific(targetMap, undefined);
+                continue;
+            }
             targetMap.delete(key);
         }
     }
 
     for (const [key, value] of Object.entries(normalizedRecord)) {
         if (value === undefined && key === 'code') {
+            continue;
+        }
+        if (targetIsDrawing && key === DRAWING_FORMAT_SPECIFIC_KEY) {
+            writeDrawingFormatSpecific(targetMap, value);
             continue;
         }
         const current = yMapGet(targetMap, key);
@@ -749,12 +902,14 @@ export function fillGlyphYMap(
             const drawingsMap = new Y.Map();
             const drawingOrder = new Y.Array<unknown>();
             for (const drawingJson of gv as Record<string, unknown>[]) {
-                const drawingId =
-                    (drawingJson.id as string) || crypto.randomUUID();
-                drawingsMap.set(
-                    drawingId,
-                    toYType(drawingJson) as Y.Map<unknown>
-                );
+                const drawingId = drawingJson?.id;
+                if (typeof drawingId !== 'string' || !drawingId.length) {
+                    throw new RestingDrawingWriteError(
+                        'drawing id is not a non-empty string',
+                        'glyph creation'
+                    );
+                }
+                drawingsMap.set(drawingId, drawingToYMap(drawingJson));
                 drawingOrder.push([drawingId]);
             }
             glyphMap.set('layers', drawingsMap);
@@ -770,26 +925,21 @@ export function fillGlyphYMap(
             for (const [drawingKey, drawingValue] of Object.entries(
                 gv as Record<string, unknown>
             )) {
-                if (
-                    !drawingValue ||
-                    typeof drawingValue !== 'object' ||
-                    Array.isArray(drawingValue)
-                ) {
-                    continue;
+                if (!isPlainObject(drawingValue)) {
+                    throw new RestingDrawingWriteError(
+                        `drawing “${drawingKey}” is not a plain object`,
+                        'glyph creation'
+                    );
                 }
-                const drawingJson = drawingValue as Record<string, unknown>;
-                const drawingId =
-                    typeof drawingJson.id === 'string' && drawingJson.id
-                        ? drawingJson.id
-                        : drawingKey;
-                if (typeof drawingJson.id !== 'string' || !drawingJson.id) {
-                    drawingJson.id = drawingId;
+                const drawingJson = drawingValue;
+                if (drawingJson.id !== drawingKey) {
+                    throw new RestingDrawingWriteError(
+                        `drawing id “${String(drawingJson.id)}” does not match its key “${drawingKey}”`,
+                        'glyph creation'
+                    );
                 }
-                drawingsMap.set(
-                    drawingId,
-                    toYType(drawingJson) as Y.Map<unknown>
-                );
-                drawingOrder.push([drawingId]);
+                drawingsMap.set(drawingKey, drawingToYMap(drawingJson));
+                drawingOrder.push([drawingKey]);
             }
             glyphMap.set('layers', drawingsMap);
             glyphMap.set('layerOrder', drawingOrder);
@@ -970,19 +1120,23 @@ function fromYGlyphMap(glyphMap: Y.Map<unknown>): Record<string, unknown> {
             glyphMap.get('layerOrder')
         )) {
             const drawingJson = fromYType(drawingValue);
-            const drawingRecord =
-                drawingJson &&
-                typeof drawingJson === 'object' &&
-                !Array.isArray(drawingJson)
-                    ? (drawingJson as Record<string, unknown>)
-                    : {};
-            if (
-                typeof drawingRecord.id !== 'string' ||
-                !drawingRecord.id.length
-            ) {
-                drawingRecord.id = drawingId;
+            if (!isPlainObject(drawingJson)) {
+                throw new MissingDrawingError(
+                    `Drawing “${drawingId}” is not a map in the document.`
+                );
             }
-            drawings.push(drawingRecord);
+            // The id is never filled in from the map key: a drawing without
+            // its own id lost it, and that must surface.
+            if (drawingJson.id !== drawingId) {
+                throw new MissingDrawingError(
+                    `Drawing “${drawingId}” has ${
+                        typeof drawingJson.id === 'string' && drawingJson.id
+                            ? `the id “${drawingJson.id}”`
+                            : 'no id'
+                    } in the document.`
+                );
+            }
+            drawings.push(drawingJson);
         }
         glyphJson.layers = drawings;
     }
@@ -1039,18 +1193,38 @@ export function fromYType(value: unknown): unknown {
         ) {
             const byId = yMapGet(value, 'featuresById');
             const order = yMapGet(value, 'featureOrder');
-            if (isYMap(byId) && isYArray(order)) {
-                const features: unknown[] = [];
-                for (const id of yArrayToArray(order) as string[]) {
-                    const entry = yMapGet(byId, id);
-                    if (entry === undefined) {
-                        continue;
-                    }
-                    const record = fromYType(entry) as Record<string, unknown>;
-                    features.push([record.tag, record.code]);
-                }
-                obj.features = features;
+            if (!isYMap(byId) || !isYArray(order)) {
+                // One half of the pair without the other lost the rest.
+                throw new MissingDrawingError(
+                    'The features are damaged in the document: featureOrder is missing or not a list.'
+                );
             }
+            const features: unknown[] = [];
+            for (const id of readIndexedPairIds(byId, order, 'features')) {
+                const entry = yMapGet(byId, id);
+                if (!isYMap(entry)) {
+                    throw new MissingDrawingError(
+                        `The features are damaged in the document: feature ${id} is not a map.`
+                    );
+                }
+                // A feature without its tag or code lost it; it is never
+                // read as an empty one.
+                for (const field of ['tag', 'code'] as const) {
+                    if (yMapGet(entry, field) === undefined) {
+                        throw new MissingDrawingError(
+                            `The features are damaged in the document: feature ${id} has no ${field}.`
+                        );
+                    }
+                }
+                features.push([
+                    fromYType(yMapGet(entry, 'tag')),
+                    fromYType(yMapGet(entry, 'code'))
+                ]);
+            }
+            obj.features = features;
+        }
+        if (isDrawingYMap(value)) {
+            readBabelfontDrawingStation(obj);
         }
         return obj;
     }
@@ -1058,6 +1232,20 @@ export function fromYType(value: unknown): unknown {
         return yArrayToArray(value).map((v) => fromYType(v));
     }
     return value;
+}
+
+/**
+ * A stored drawing without a `master` key is free-floating: Babelfont
+ * leaves out its default link, FreeFloating, and documents uploaded
+ * before every import wrote it explicitly hold their free drawings so (a
+ * UFO `public.background` layer from a designspace, for one). This reads
+ * that encoding; nothing is filled in. A `master` that is present stays
+ * as it is, and readers refuse it when it is malformed.
+ */
+function readBabelfontDrawingStation(drawing: Record<string, unknown>): void {
+    if (!('master' in drawing)) {
+        drawing.master = { type: 'FreeFloating' };
+    }
 }
 
 /**
@@ -1081,6 +1269,20 @@ function fromYDrawingMap(drawingMap: Y.Map<unknown>): Record<string, unknown> {
             k !== DRAWING_NODE_POSITIONS_KEY &&
             k !== DRAWING_SHAPE_DATA_KEY
         ) {
+            // Every drawing holds a `format_specific` map from its creation
+            // so collaborators share one map (drawingToYMap). An empty map
+            // is not a missing value: it is the drawing having no
+            // format-specific data, which drawing JSON writes by leaving the
+            // key out (Babelfont does not serialize an empty one either).
+            // Reading it as `{}` would change every snapshot and export of a
+            // drawing that never had any.
+            if (
+                k === DRAWING_FORMAT_SPECIFIC_KEY &&
+                v instanceof Y.Map &&
+                v.size === 0
+            ) {
+                return;
+            }
             obj[k] = fromYType(v);
         }
     });
@@ -1092,76 +1294,311 @@ function fromYDrawingMap(drawingMap: Y.Map<unknown>): Record<string, unknown> {
         }
         return undefined;
     };
-    try {
-        const normalizedShapes = geometryHasNormalizedStorage(drawingMap)
-            ? readDrawingGeometry(drawingMap)
-            : null;
-        if (normalizedShapes && normalizedShapes.length > 0) {
-            obj.shapes = normalizedShapes;
-        } else {
-            const shapes = readShapesArray();
-            if (shapes && shapes.length > 0) {
-                obj.shapes = shapes;
-            } else if (normalizedShapes) {
-                obj.shapes = normalizedShapes;
-            } else if (shapes) {
-                obj.shapes = shapes;
-            }
-        }
-    } catch {
+    // Unreadable geometry throws; it is never replaced by the legacy
+    // shapes array, which may be stale.
+    const normalizedShapes = geometryHasNormalizedStorage(drawingMap)
+        ? readDrawingGeometry(drawingMap)
+        : null;
+    if (normalizedShapes && normalizedShapes.length > 0) {
+        obj.shapes = normalizedShapes;
+    } else {
         const shapes = readShapesArray();
-        if (shapes) {
+        if (shapes && shapes.length > 0) {
+            obj.shapes = shapes;
+        } else if (normalizedShapes) {
+            obj.shapes = normalizedShapes;
+        } else if (shapes) {
             obj.shapes = shapes;
         }
     }
 
     // anchorsById + anchorOrder → anchors array
-    const anchorsById = drawingMap.get('anchorsById');
-    const anchorOrder = drawingMap.get('anchorOrder');
-    if (anchorsById instanceof Y.Map) {
-        const orderedIds: string[] =
-            anchorOrder instanceof Y.Array
-                ? (anchorOrder.toArray() as string[])
-                : [];
+    const anchorOrder = readIndexedMapOrder(drawingMap, 'anchors');
+    if (anchorOrder) {
         const anchors: unknown[] = [];
-        for (const anchorId of orderedIds) {
-            const anchorVal = (anchorsById as Y.Map<unknown>).get(anchorId);
+        for (const anchorId of anchorOrder.ids) {
+            const anchorVal = anchorOrder.byId.get(anchorId);
             if (anchorVal === undefined) {
-                throw new Error(
+                throw new MissingDrawingError(
                     `Indexed-map integrity error: anchorOrder references missing anchor id ${anchorId}.`
                 );
             }
-            const anchorObj = fromYType(anchorVal) as Record<string, unknown>;
-            if (anchorObj && typeof anchorObj === 'object' && !anchorObj.id) {
-                anchorObj.id = anchorId;
+            const anchorObj = fromYType(anchorVal);
+            // Every writer stores the anchor's id inside the anchor; one
+            // without it lost it, and it is never taken from the key.
+            if (!isPlainObject(anchorObj) || anchorObj.id !== anchorId) {
+                throw new MissingDrawingError(
+                    `Anchor “${anchorId}” has ${
+                        isPlainObject(anchorObj) &&
+                        typeof anchorObj.id === 'string' &&
+                        anchorObj.id
+                            ? `the id “${anchorObj.id}”`
+                            : 'no id'
+                    } in the document.`
+                );
             }
             anchors.push(anchorObj);
         }
         obj.anchors = anchors;
+    } else {
+        const flatAnchors = readFlatDrawingList(drawingMap, 'anchors');
+        if (flatAnchors) {
+            obj.anchors = flatAnchors;
+        }
     }
 
     // guidesById + guideOrder → guides array
-    const guidesById = drawingMap.get('guidesById');
-    const guideOrder = drawingMap.get('guideOrder');
-    if (guidesById instanceof Y.Map) {
-        const orderedIds: string[] =
-            guideOrder instanceof Y.Array
-                ? (guideOrder.toArray() as string[])
-                : [];
+    const guideOrder = readIndexedMapOrder(drawingMap, 'guides');
+    if (guideOrder) {
         const guides: unknown[] = [];
-        for (const guideId of orderedIds) {
-            const guideVal = (guidesById as Y.Map<unknown>).get(guideId);
+        for (const guideId of guideOrder.ids) {
+            const guideVal = guideOrder.byId.get(guideId);
             if (guideVal === undefined) {
-                throw new Error(
+                throw new MissingDrawingError(
                     `Indexed-map integrity error: guideOrder references missing guide id ${guideId}.`
                 );
             }
             guides.push(fromYType(guideVal));
         }
         obj.guides = guides;
+    } else {
+        const flatGuides = readFlatDrawingList(drawingMap, 'guides');
+        if (flatGuides) {
+            obj.guides = flatGuides;
+        }
     }
 
+    if (isDrawingYMap(drawingMap)) {
+        readBabelfontDrawingStation(obj);
+    }
     return obj;
+}
+
+/**
+ * The flat `anchors` or `guides` list of a drawing that has no keyed pair
+ * for them: an older font worker wrote drawings that way. The list is the
+ * stored value and is read as it is; skipping it would drop every entry.
+ * Null when the drawing has no such list.
+ */
+function readFlatDrawingList(
+    drawingMap: Y.Map<unknown>,
+    arrayKey: 'anchors' | 'guides'
+): unknown[] | null {
+    const flat = drawingMap.get(arrayKey);
+    if (flat === undefined) {
+        return null;
+    }
+    if (!(flat instanceof Y.Array) && !Array.isArray(flat)) {
+        throw new MissingDrawingError(
+            `The ${arrayKey} are damaged in the document: the flat ${arrayKey} entry is not a list.`
+        );
+    }
+    return fromYType(flat) as unknown[];
+}
+
+/**
+ * The `*ById` map and `*Order` ids of a drawing's anchors or guides, or
+ * null when the drawing has neither (a drawing stored before every drawing
+ * got them). One without the other is damage and throws; a missing order
+ * is never read as empty.
+ */
+function readIndexedMapOrder(
+    drawingMap: Y.Map<unknown>,
+    arrayKey: 'anchors' | 'guides'
+): { byId: Y.Map<unknown>; ids: string[] } | null {
+    const mapping = INDEXED_MAP_KEYS[arrayKey]!;
+    const byId = drawingMap.get(mapping.byId);
+    const order = drawingMap.get(mapping.order);
+    if (byId === undefined && order === undefined) {
+        return null;
+    }
+    if (!(byId instanceof Y.Map) || !(order instanceof Y.Array)) {
+        throw new MissingDrawingError(
+            `The ${arrayKey} are damaged in the document: ${
+                byId instanceof Y.Map ? mapping.order : mapping.byId
+            } is missing or not a ${byId instanceof Y.Map ? 'list' : 'map'}.`
+        );
+    }
+    return { byId, ids: readIndexedPairIds(byId, order, arrayKey) };
+}
+
+/**
+ * The glyph a keyed pair belongs to, for the collab trace: the owner of
+ * the pair is a drawing (its parent the drawings map, then the glyph) or
+ * the font's features map, which has none.
+ */
+function keyedPairGlyphNames(order: Y.Array<unknown>): string[] {
+    const owner = order.parent;
+    const glyphMap = owner?.parent?.parent;
+    const name = glyphMap instanceof Y.Map ? yMapGet(glyphMap, 'name') : null;
+    return typeof name === 'string' ? [name] : [];
+}
+
+/** What reading a keyed pair found in its order. */
+type KeyedPairOrder = {
+    /** The ids in order: each once, each with its entry. */
+    ids: string[];
+    /** Ids the order lists whose entry a collaborator deleted. */
+    deleted: string[];
+    /** Ids the order lists more than once. */
+    repeated: string[];
+};
+
+/**
+ * Read a keyed pair's order against its entries.
+ *
+ * Two states come from normal concurrent editing and are resolved here,
+ * the same way on every client:
+ * - An id whose entry is gone. Moving an entry deletes its id from the
+ *   order and inserts it again elsewhere (`diffYArrayOrder`), so a
+ *   collaborator deleting the entry at the same time deletes only the old
+ *   place; the new one remains. The delete wins: the id is skipped.
+ * - An id listed twice: two collaborators moved the same entry at once.
+ *   It is read once, at its first place.
+ * The next write of the pair drops both (`tidyKeyedPairOrder`).
+ *
+ * An entry the order does not list is damage and throws. Every writer
+ * adds an entry together with a new place in the order, and re-adding an
+ * entry whose id the order still lists gives it a new place too
+ * (`tidyKeyedPairOrder` runs first), so no interleaving of writers leaves
+ * one; reading past it would hide the entry. A value that is not an id
+ * throws as well.
+ */
+function readKeyedPairOrder(
+    byId: Y.Map<unknown>,
+    order: Y.Array<unknown>,
+    arrayKey: string
+): KeyedPairOrder {
+    const mapping = INDEXED_MAP_KEYS[arrayKey]!;
+    const entryName = arrayKey.replace(/s$/, '');
+    const ids: string[] = [];
+    const deleted: string[] = [];
+    const repeated: string[] = [];
+    const listed = new Set<string>();
+    for (const id of order.toArray()) {
+        if (typeof id !== 'string') {
+            throw new MissingDrawingError(
+                `The ${arrayKey} are damaged in the document: ${mapping.order} holds a value that is not an id.`
+            );
+        }
+        if (listed.has(id)) {
+            repeated.push(id);
+            continue;
+        }
+        listed.add(id);
+        if (yMapGet(byId, id) === undefined) {
+            deleted.push(id);
+            continue;
+        }
+        ids.push(id);
+    }
+    for (const id of yMapKeys(byId)) {
+        if (!listed.has(id)) {
+            throw new MissingDrawingError(
+                `Indexed-map integrity error: ${mapping.byId} holds ${entryName} id ${id}, which ${mapping.order} does not list.`
+            );
+        }
+    }
+    return { ids, deleted, repeated };
+}
+
+/**
+ * The ids of a keyed pair (`*ById` and `*Order`) in order, each once and
+ * each with its entry; see `readKeyedPairOrder` for what is skipped and
+ * what throws `MissingDrawingError`.
+ *
+ * Permanent collab trace event `keyed-pair-order-skipped`: a read skipped
+ * ids whose entry a collaborator deleted (`deleted`), or repeated ids
+ * (`repeated`), in the pair's order (`order`).
+ */
+export function readIndexedPairIds(
+    byId: Y.Map<unknown>,
+    order: Y.Array<unknown>,
+    arrayKey: string
+): string[] {
+    const read = readKeyedPairOrder(byId, order, arrayKey);
+    if (read.deleted.length > 0 || read.repeated.length > 0) {
+        recordCollabTrace(
+            'keyed-pair-order-skipped',
+            keyedPairGlyphNames(order),
+            {
+                order: INDEXED_MAP_KEYS[arrayKey]!.order,
+                deleted: read.deleted,
+                repeated: read.repeated
+            }
+        );
+    }
+    return read.ids;
+}
+
+/**
+ * Before a write of a keyed pair, drop from its order every id whose entry
+ * is gone and every repeated id (keeping its first place), so that the
+ * order lists each entry once and nothing else. A list index then means
+ * the same entry in the order as in what readers return, and an entry
+ * the write adds again gets a new place in the order: a collaborator
+ * dropping the stale place at the same time cannot unlist it. Changes
+ * nothing when the order is already clean.
+ *
+ * Permanent collab trace event `keyed-pair-order-tidied`: a write dropped
+ * the ids `deleted` (entry gone) and the repeats `repeated` from the
+ * pair's order (`order`).
+ */
+function tidyKeyedPairOrder(
+    byId: Y.Map<unknown>,
+    order: Y.Array<unknown>,
+    arrayKey: string
+): void {
+    const read = readKeyedPairOrder(byId, order, arrayKey);
+    if (read.deleted.length === 0 && read.repeated.length === 0) {
+        return;
+    }
+    const seen = new Set<string>();
+    const drop: number[] = [];
+    order.toArray().forEach((id, index) => {
+        const key = id as string;
+        if (seen.has(key) || yMapGet(byId, key) === undefined) {
+            drop.push(index);
+        }
+        seen.add(key);
+    });
+    for (let index = drop.length - 1; index >= 0; index -= 1) {
+        order.delete(drop[index]!, 1);
+    }
+    recordCollabTrace('keyed-pair-order-tidied', keyedPairGlyphNames(order), {
+        order: INDEXED_MAP_KEYS[arrayKey]!.order,
+        deleted: read.deleted,
+        repeated: read.repeated
+    });
+}
+
+/**
+ * `tidyKeyedPairOrder` for the pair `arrayKey` of `owner`, when the owner
+ * holds both halves.
+ */
+function tidyKeyedPairOf(owner: Y.Map<unknown>, arrayKey: string): void {
+    const mapping = INDEXED_MAP_KEYS[arrayKey];
+    if (!mapping) {
+        return;
+    }
+    const byId = owner.get(mapping.byId);
+    const order = owner.get(mapping.order);
+    if (isYMap(byId) && isYArray(order) && order.doc) {
+        tidyKeyedPairOrder(byId, order, arrayKey);
+    }
+}
+
+/**
+ * The id at `index` of a keyed pair as readers list it, or undefined past
+ * the end.
+ */
+function keyedPairIdAt(
+    byId: Y.Map<unknown>,
+    order: Y.Array<unknown>,
+    arrayKey: string,
+    index: number
+): string | undefined {
+    return readKeyedPairOrder(byId, order, arrayKey).ids[index];
 }
 
 /**
@@ -1251,11 +1688,7 @@ export function getYPath(
             const segStr = String(seg);
 
             if (segStr === 'shapes' && geometryHasNormalizedStorage(current)) {
-                try {
-                    current = readDrawingGeometry(current) || [];
-                } catch {
-                    return undefined;
-                }
+                current = readDrawingGeometry(current) || [];
                 i += 1;
                 continue;
             }
@@ -1297,20 +1730,20 @@ export function getYPath(
                     const byId = current.get(mapping.byId);
                     const order = current.get(mapping.order);
                     if (isYMap(byId) && isYArray(order)) {
-                        const ids = order.toArray() as string[];
                         const result: unknown[] = [];
-                        for (const id of ids) {
-                            const entry = byId.get(id);
-                            if (entry !== undefined) {
-                                const record = fromYType(entry) as Record<
-                                    string,
-                                    unknown
-                                >;
-                                if (segStr === 'features') {
-                                    result.push([record.tag, record.code]);
-                                } else {
-                                    result.push(record);
-                                }
+                        for (const id of readIndexedPairIds(
+                            byId,
+                            order,
+                            segStr
+                        )) {
+                            const record = fromYType(byId.get(id)) as Record<
+                                string,
+                                unknown
+                            >;
+                            if (segStr === 'features') {
+                                result.push([record.tag, record.code]);
+                            } else {
+                                result.push(record);
                             }
                         }
                         return result;
@@ -1396,8 +1829,13 @@ export function stabilizeIndexedMapPath(
             const order = current.get(mapping.order);
             const byId = current.get(mapping.byId);
             if (isYArray(order) && isYMap(byId)) {
-                const id = order.get(next[i + 1] as number);
-                if (typeof id === 'string' && byId.has(id)) {
+                const id = keyedPairIdAt(
+                    byId,
+                    order,
+                    segStr,
+                    next[i + 1] as number
+                );
+                if (id !== undefined) {
                     next[i + 1] = id;
                     current = byId.get(id);
                     i += 2;
@@ -1673,21 +2111,126 @@ function getIndexedByIdMap(
  */
 function ensureIndexedMap(
     map: Y.Map<unknown>,
-    arrayKey: string
+    arrayKey: string,
+    replacesWholeList = false
 ): Y.Map<unknown> | null {
     const mapping = INDEXED_MAP_KEYS[arrayKey];
     if (!mapping) return null;
-    let byId = yMapGet(map, mapping.byId);
-    let order = yMapGet(map, mapping.order);
+    const byId = yMapGet(map, mapping.byId);
+    const order = yMapGet(map, mapping.order);
+    if (isYMap(byId) && isYArray(order)) {
+        return byId;
+    }
+    if (byId !== undefined || order !== undefined) {
+        // One half without the other lost the rest; it is not rebuilt.
+        throw new MissingDrawingError(
+            `The ${arrayKey} are damaged in the document: ${
+                isYMap(byId) ? mapping.order : mapping.byId
+            } is missing or not a ${isYMap(byId) ? 'list' : 'map'}.`
+        );
+    }
+    const inDrawing =
+        (arrayKey === 'anchors' || arrayKey === 'guides') && isDrawingYMap(map);
+    if (inDrawing) {
+        // A drawing written by an older font worker stores its anchors or
+        // guides as a flat list, and readers take that list while the
+        // drawing has no keyed pair. A pair created next to it would hide
+        // every entry in it, so only a write of the whole list (which
+        // supersedes the flat one) may create the pair, and the flat list
+        // goes in the same transaction.
+        if (yMapGet(map, arrayKey) !== undefined) {
+            if (!replacesWholeList) {
+                throw new MissingDrawingError(
+                    `The ${arrayKey} of this drawing are stored as a flat list; only a write of the whole list may change them.`
+                );
+            }
+            map.delete(arrayKey);
+        }
+        // Drawings get both maps when they are created (drawingToYMap). A
+        // drawing stored before that, or written by the font worker, gets
+        // them on its first entry; two collaborators doing that at once
+        // create competing maps, so it is recorded.
+        recordLateDrawingChildMap(map, mapping.byId);
+    }
+    const createdById = new Y.Map<unknown>();
+    map.set(mapping.byId, createdById);
+    map.set(mapping.order, new Y.Array<unknown>());
+    return createdById;
+}
+
+/**
+ * Whether a map is a drawing: an entry of a glyph's `layers` map.
+ */
+function isDrawingYMap(map: Y.Map<unknown>): boolean {
+    const parent = map.parent;
+    return parent instanceof Y.Map && parent._item?.parentSub === 'layers';
+}
+
+/**
+ * The anchors or guides a drawing key belongs to, for each half of their
+ * keyed pair.
+ */
+const DRAWING_INDEXED_PAIR_KEYS: Readonly<
+    Record<string, 'anchors' | 'guides'>
+> = {
+    anchorsById: 'anchors',
+    anchorOrder: 'anchors',
+    guidesById: 'guides',
+    guideOrder: 'guides'
+};
+
+/**
+ * The list a `*ById` map holds the entries of (`anchors`, `guides`,
+ * `features`), or null when `map` is not the `*ById` half of a keyed pair.
+ */
+function indexedPairOfByIdMap(map: Y.Map<unknown>): string | null {
+    const key = map._item?.parentSub;
+    if (typeof key !== 'string' || !(map.parent instanceof Y.Map)) {
+        return null;
+    }
+    for (const [arrayKey, mapping] of Object.entries(INDEXED_MAP_KEYS)) {
+        if (mapping.byId === key) {
+            return arrayKey;
+        }
+    }
+    return null;
+}
+
+/**
+ * A write of a keyed pair's order alone may only reorder the ids it holds:
+ * an id it adds would have no entry, and an id it drops would leave an
+ * entry the order does not list. Entries are added and removed through
+ * the list path, which changes both halves.
+ */
+function assertOrderWriteOnlyReorders(
+    owner: Y.Map<unknown>,
+    orderKey: string,
+    nextIds: string[]
+): void {
+    const arrayKey = ORDER_KEYS[orderKey]!;
+    const mapping = INDEXED_MAP_KEYS[arrayKey];
+    if (!mapping) {
+        return;
+    }
+    const byId = yMapGet(owner, mapping.byId);
     if (!isYMap(byId)) {
-        byId = new Y.Map<unknown>();
-        map.set(mapping.byId, byId);
+        throw new MissingDrawingError(
+            `The ${arrayKey} are damaged in the document: ${mapping.byId} is missing or not a map.`
+        );
     }
-    if (!isYArray(order)) {
-        order = new Y.Array<unknown>();
-        map.set(mapping.order, order);
+    const stored = new Set(yMapKeys(byId));
+    const next = new Set(nextIds);
+    const added = [...next].filter((id) => !stored.has(id));
+    const dropped = [...stored].filter((id) => !next.has(id));
+    if (added.length || dropped.length) {
+        throw new MissingDrawingError(
+            `Cannot write ${orderKey}: an order write may only reorder the ${arrayKey} (${
+                added.length ? `adds ${added.join(', ')}` : ''
+            }${added.length && dropped.length ? '; ' : ''}${
+                dropped.length ? `drops ${dropped.join(', ')}` : ''
+            }).`
+        );
     }
-    return byId as Y.Map<unknown>;
 }
 
 /**
@@ -1705,57 +2248,296 @@ function navigateIndexedMap(
     const byId = map.get(mapping.byId);
     const order = map.get(mapping.order);
     if (!isYMap(byId) || !isYArray(order)) return null;
-    if (index < 0 || index >= order.length) return null;
-    const id = order.get(index);
-    if (typeof id !== 'string') return null;
+    if (index < 0) return null;
+    const id = keyedPairIdAt(byId, order, arrayKey, index);
+    if (id === undefined) return null;
     const entry = byId.get(id);
     return isYMap(entry) ? entry : null;
 }
 
+/**
+ * The entry at `index` of a keyed pair, or null when the index is past the
+ * end of the order (a write there adds an entry). An id the order lists
+ * without its entry is damage and throws; it is never read as a free slot.
+ */
+function indexedEntryAt(
+    map: Y.Map<unknown>,
+    arrayKey: string,
+    index: number,
+    path: (string | number)[]
+): Y.Map<unknown> | null {
+    const mapping = INDEXED_MAP_KEYS[arrayKey]!;
+    const byId = map.get(mapping.byId);
+    const order = map.get(mapping.order);
+    if (!isYMap(byId) || !isYArray(order)) {
+        throw new MissingDrawingError(
+            `Cannot write ${path.join('.')}: the ${arrayKey} are damaged in the document.`
+        );
+    }
+    if (!Number.isInteger(index) || index < 0) {
+        throw new MissingDrawingError(
+            `Cannot write ${path.join('.')}: ${index} is not an entry of ${arrayKey}.`
+        );
+    }
+    if (index >= order.length) {
+        return null;
+    }
+    const id = order.get(index);
+    const entry = typeof id === 'string' ? byId.get(id) : undefined;
+    if (!isYMap(entry)) {
+        throw new MissingDrawingError(
+            `The ${arrayKey} are damaged in the document: ${mapping.order} lists ${String(id)} at ${index}, and ${mapping.byId} holds no entry for it.`
+        );
+    }
+    return entry;
+}
+
+/**
+ * The fields of a whole anchor, guide or feature written to an existing
+ * entry whose id is `id`. A feature may come as its `[tag, code]` pair;
+ * its id is the entry's. An anchor or guide carries its own id.
+ */
+function indexedEntryFields(
+    arrayKey: string,
+    id: string,
+    value: unknown,
+    path: (string | number)[]
+): Record<string, unknown> {
+    if (arrayKey === 'features') {
+        const tag = Array.isArray(value)
+            ? value[0]
+            : isPlainObject(value)
+              ? value.tag
+              : undefined;
+        const code = Array.isArray(value)
+            ? value[1]
+            : isPlainObject(value)
+              ? value.code
+              : undefined;
+        if (tag === undefined || code === undefined) {
+            throw new RestingDrawingWriteError(
+                `the feature written to ${path.join('.')} has no ${tag === undefined ? 'tag' : 'code'}`,
+                'Y.Doc write'
+            );
+        }
+        if (isPlainObject(value) && value.id !== undefined && value.id !== id) {
+            throw new RestingDrawingWriteError(
+                `the feature written to ${path.join('.')} has id “${String(value.id)}”, not “${id}”`,
+                'Y.Doc write'
+            );
+        }
+        return { id, tag, code };
+    }
+    if (!isPlainObject(value) || value.id !== id) {
+        throw new RestingDrawingWriteError(
+            `${arrayKey} entry “${id}” must be written as a map whose id is “${id}”`,
+            'Y.Doc write'
+        );
+    }
+    return value;
+}
+
+/**
+ * A whole entry added past the end of a keyed pair. A feature may come as
+ * its `[tag, code]` pair and must carry both. An anchor or guide must
+ * carry its own id, and an id the pair already holds is refused: adding it
+ * again would list one entry twice in the order.
+ */
+function indexedEntryToAdd(
+    arrayKey: string,
+    byIdMap: Y.Map<unknown>,
+    value: unknown,
+    path: (string | number)[]
+): Record<string, unknown> & { id: string } {
+    if (arrayKey === 'features') {
+        // A new feature keeps an id it carries; it is never matched to an
+        // existing entry by its tag.
+        const record = featureEntryRecord(
+            value,
+            new Y.Map<unknown>(),
+            new Set()
+        );
+        const id = String(record.id);
+        if (byIdMap.get(id) !== undefined) {
+            throw new MissingDrawingError(
+                `Cannot write ${path.join('.')}: features entry “${id}” is already in the list.`
+            );
+        }
+        return { ...record, id };
+    }
+    const wrapped = isPlainObject(value)
+        ? (value.Path ?? value.Component)
+        : undefined;
+    const inner = wrapped ?? value;
+    if (!isPlainObject(inner)) {
+        throw new RestingDrawingWriteError(
+            `the ${arrayKey} entry written to ${path.join('.')} is not a map`,
+            'Y.Doc write'
+        );
+    }
+    const id = typeof inner.id === 'string' && inner.id ? inner.id : undefined;
+    if (id === undefined) {
+        if (arrayKey === 'anchors' || arrayKey === 'guides') {
+            throw new RestingDrawingWriteError(
+                `the ${arrayKey} entry written to ${path.join('.')} has no id`,
+                'Y.Doc write'
+            );
+        }
+        const generated = generateStableId();
+        inner.id = generated;
+        return { ...inner, id: generated };
+    }
+    if (byIdMap.get(id) !== undefined) {
+        throw new MissingDrawingError(
+            `Cannot write ${path.join('.')}: ${arrayKey} entry “${id}” is already in the list.`
+        );
+    }
+    return { ...inner, id };
+}
+
+/**
+ * Write a whole anchor, guide or feature to its existing entry. The
+ * entry's fields change inside its map; the map is never replaced, so a
+ * collaborator deleting the entry at the same time deletes it with its
+ * place in the order, and no entry is left that the order does not list.
+ */
+function writeIndexedEntryInPlace(
+    entry: Y.Map<unknown>,
+    arrayKey: string,
+    id: string,
+    value: unknown,
+    path: (string | number)[]
+): void {
+    replaceYMapContents(entry, indexedEntryFields(arrayKey, id, value, path));
+}
+
+/**
+ * A whole anchor, guide or feature written at an index the order holds.
+ * The same id there edits that entry in place. An id the pair does not
+ * hold yet is a new entry inserted at that index, with its id in the
+ * order (an add replayed by undo or redo). An anchor or guide without an
+ * id, or one whose id sits elsewhere in the list, is refused: the write
+ * does not say which entry it means.
+ */
+function writeIndexedEntryAtIndex(
+    map: Y.Map<unknown>,
+    arrayKey: string,
+    index: number,
+    entry: Y.Map<unknown>,
+    value: unknown,
+    path: (string | number)[]
+): void {
+    const mapping = INDEXED_MAP_KEYS[arrayKey]!;
+    const byId = map.get(mapping.byId) as Y.Map<unknown>;
+    const order = map.get(mapping.order) as Y.Array<unknown>;
+    const storedId = order.get(index) as string;
+    const nextId =
+        isPlainObject(value) && typeof value.id === 'string'
+            ? value.id
+            : undefined;
+    if (nextId === undefined || nextId === storedId) {
+        if (nextId === undefined && arrayKey !== 'features') {
+            throw new RestingDrawingWriteError(
+                `the ${arrayKey} entry written to ${path.join('.')} has no id`,
+                'Y.Doc write'
+            );
+        }
+        writeIndexedEntryInPlace(entry, arrayKey, storedId, value, path);
+        return;
+    }
+    if (byId.get(nextId) !== undefined) {
+        throw new MissingDrawingError(
+            `Cannot write ${path.join('.')}: ${arrayKey} entry “${nextId}” is stored at another place in the list.`
+        );
+    }
+    const fields = indexedEntryFields(arrayKey, nextId, value, path);
+    byId.set(nextId, toYType(fields));
+    order.insert(index, [nextId]);
+}
+
+/**
+ * Find the drawing map a path addresses (`…/layers/<id>/…`).
+ *
+ * Nothing is ever created here. With `forWrite`, a path through a glyph or
+ * drawings map the document does not hold throws, and so does a path into
+ * a drawing that does not exist: a missing drawing is an error, never a
+ * stub. A write of the whole drawing (`…/layers/<id>`) to a new id returns
+ * null so the caller can create it from the whole value.
+ */
 function locateDrawingMap(
     root: Y.Map<unknown>,
     path: (string | number)[],
-    createMissing = false
+    forWrite = false
 ): { drawingMap: Y.Map<unknown>; rest: (string | number)[] } | null {
-    let current: unknown = root;
-    for (let i = 0; i < path.length; i++) {
-        if (!isYMap(current)) {
-            return null;
-        }
-        if (String(path[i]) === 'layers' && i + 1 < path.length) {
-            const drawingsMap = ensureGlyphDrawingsMap(current);
-            const drawingId = String(path[i + 1]);
-            let drawing = drawingsMap.get(drawingId);
-            if (!isYMap(drawing)) {
-                if (!createMissing) {
-                    return null;
-                }
-                const created = new Y.Map<unknown>();
-                created.set('id', drawingId);
-                drawingsMap.set(drawingId, created);
-                drawing = created;
-            }
-            if (!isYMap(drawing)) {
-                return null;
-            }
-            return {
-                drawingMap: drawing,
-                rest: path.slice(i + 2)
-            };
-        }
-        const next = current.get(String(path[i]));
-        if (!isYMap(next)) {
-            if (!createMissing || next !== undefined) {
-                return null;
-            }
-            const created = new Y.Map<unknown>();
-            current.set(String(path[i]), created);
-            current = created;
-            continue;
-        }
-        current = next;
+    const layersIndex = path.findIndex(
+        (seg, index) => String(seg) === 'layers' && index + 1 < path.length
+    );
+    if (layersIndex < 0) {
+        return null;
     }
-    return null;
+    const missing = (what: string): null => {
+        if (forWrite) {
+            throw new MissingDrawingError(
+                `Cannot write ${path.join('.')}: ${what} is missing from the document.`
+            );
+        }
+        return null;
+    };
+    let current: unknown = root;
+    for (let i = 0; i < layersIndex; i++) {
+        if (!isYMap(current)) {
+            return missing(path.slice(0, i).join('.') || 'the root');
+        }
+        current = current.get(String(path[i]));
+    }
+    if (!isYMap(current)) {
+        return missing(path.slice(0, layersIndex).join('.'));
+    }
+    const drawingsMap = current.get('layers');
+    if (!isYMap(drawingsMap)) {
+        return missing(path.slice(0, layersIndex + 1).join('.'));
+    }
+    const drawingId = String(path[layersIndex + 1]);
+    const drawing = drawingsMap.get(drawingId);
+    const rest = path.slice(layersIndex + 2);
+    if (!isYMap(drawing)) {
+        if (drawing !== undefined || rest.length > 0) {
+            return missing(`drawing “${drawingId}”`);
+        }
+        return null;
+    }
+    return { drawingMap: drawing, rest };
+}
+
+/**
+ * Refuse a single-key write of a drawing identity key with an invalid
+ * value. Returns true when the stored value already equals `value`, so the
+ * write can be skipped.
+ */
+function checkDrawingIdentityLeafWrite(
+    drawingMap: Y.Map<unknown>,
+    drawingId: string,
+    key: string,
+    value: unknown
+): boolean {
+    let violation: string | null = null;
+    if (key === 'width') {
+        violation = describeRestingDrawingViolation(
+            { width: value },
+            { requireIdentity: false }
+        );
+    } else if (key === 'master') {
+        violation = describeDrawingStationViolation(value, {
+            isBackground: drawingMap.get('is_background') === true
+        });
+    } else if (key === 'id' && value !== drawingId) {
+        violation = `drawing id “${String(value)}” does not match its key “${drawingId}”`;
+    }
+    if (violation) {
+        throw new RestingDrawingWriteError(violation, 'Y.Doc write');
+    }
+    const stored = drawingMap.get(key);
+    return !isYMap(stored) && !isYArray(stored) && stored === value;
 }
 
 function deleteNormalizedShapePath(
@@ -1793,13 +2575,16 @@ function writeNormalizedShapePath(
     if (rest[0] !== 'shapes') {
         if (rest[0] === DRAWING_NODE_POSITIONS_KEY && rest.length === 2) {
             const packed = typeof value === 'string' ? value : String(value);
-            let positionMap = drawingMap.get(DRAWING_NODE_POSITIONS_KEY);
+            const positionMap = drawingMap.get(DRAWING_NODE_POSITIONS_KEY);
             if (!isYMap(positionMap)) {
-                positionMap = new Y.Map<unknown>();
-                drawingMap.set(DRAWING_NODE_POSITIONS_KEY, positionMap);
+                // The positions map is created with the drawing's geometry.
+                // A second one created here would hide a collaborator's.
+                throw new MissingDrawingError(
+                    'Cannot write a node position: the drawing has no node positions map.'
+                );
             }
-            if (!isYMap(positionMap)) {
-                return false;
+            if (positionMap.get(String(rest[1])) === packed) {
+                return true;
             }
             positionMap.set(String(rest[1]), packed);
             return true;
@@ -1807,18 +2592,10 @@ function writeNormalizedShapePath(
         return false;
     }
     if (!geometryHasNormalizedStorage(drawingMap) && rest.length > 1) {
-        const shapeIndex = Number(rest[1]);
-        if (!Number.isInteger(shapeIndex) || shapeIndex < 0) {
-            return false;
-        }
-        const bootstrap: unknown[] = [];
-        for (let index = 0; index <= shapeIndex; index++) {
-            bootstrap.push({
-                closed: true,
-                nodes: [{ x: 0, y: 0, nodetype: 'Line', smooth: false }]
-            });
-        }
-        writeDrawingGeometry(drawingMap, bootstrap, toYType);
+        // No placeholder shapes are invented to hold this write.
+        throw new MissingDrawingError(
+            `Cannot write shapes.${rest.slice(1).join('.')}: the drawing has no shapes.`
+        );
     }
     if (!geometryHasNormalizedStorage(drawingMap) && rest.length === 1) {
         if (Array.isArray(value)) {
@@ -1846,6 +2623,16 @@ function writeNormalizedShapePath(
     }
 
     const shapeIndex = Number(rest[1]);
+    if (
+        !Number.isInteger(shapeIndex) ||
+        shapeIndex < 0 ||
+        shapeIndex > shapes.length ||
+        (rest.length > 2 && shapeIndex === shapes.length)
+    ) {
+        throw new MissingDrawingError(
+            `Cannot write shapes.${rest.slice(1).join('.')}: the drawing has no shape ${String(rest[1])}.`
+        );
+    }
     if (rest.length === 2) {
         shapes[shapeIndex] = value as Record<string, unknown>;
         writeDrawingGeometry(drawingMap, shapes, toYType);
@@ -1860,9 +2647,22 @@ function writeNormalizedShapePath(
             return true;
         }
         const nodeIndex = Number(rest[3]);
-        const nodes = Array.isArray(shape.nodes)
-            ? (shape.nodes as Record<string, unknown>[])
-            : [];
+        if (!Array.isArray(shape.nodes)) {
+            throw new MissingDrawingError(
+                `Cannot write shapes.${rest.slice(1).join('.')}: shape ${shapeIndex} is not a path.`
+            );
+        }
+        const nodes = shape.nodes as Record<string, unknown>[];
+        if (
+            !Number.isInteger(nodeIndex) ||
+            nodeIndex < 0 ||
+            nodeIndex > nodes.length ||
+            (rest.length > 4 && nodeIndex === nodes.length)
+        ) {
+            throw new MissingDrawingError(
+                `Cannot write shapes.${rest.slice(1).join('.')}: the path has no node ${String(rest[3])}.`
+            );
+        }
         if (rest.length === 4) {
             nodes[nodeIndex] = value as Record<string, unknown>;
             shape.nodes = nodes;
@@ -1872,14 +2672,14 @@ function writeNormalizedShapePath(
         const property = String(rest[4]);
         if (property === 'x' || property === 'y') {
             const nodeId = getNodeIdAt(drawingMap, shapeIndex, nodeIndex);
-            const node = (nodes[nodeIndex] || {}) as Record<string, unknown>;
+            const node = nodes[nodeIndex];
             const nextX = property === 'x' ? Number(value) : Number(node.x);
             const nextY = property === 'y' ? Number(value) : Number(node.y);
             writeNodePosition(drawingMap, nodeId, nextX, nextY);
             return true;
         }
         const node = {
-            ...((nodes[nodeIndex] as Record<string, unknown>) || {}),
+            ...nodes[nodeIndex],
             [property]: value
         };
         nodes[nodeIndex] = node;
@@ -1889,7 +2689,7 @@ function writeNormalizedShapePath(
     }
 
     const shape = {
-        ...((shapes[shapeIndex] as Record<string, unknown>) || {})
+        ...(shapes[shapeIndex] as Record<string, unknown>)
     };
     setDeepValue(shape, rest.slice(2), value);
     shapes[shapeIndex] = shape;
@@ -1943,6 +2743,22 @@ export function setYPath(
     path = coerceNumericPath(path);
 
     const located = locateDrawingMap(root, path, true);
+    if (located && located.rest.length === 1) {
+        const key = String(located.rest[0]);
+        if (
+            (RESTING_DRAWING_IDENTITY_KEYS as readonly string[]).includes(
+                key
+            ) &&
+            checkDrawingIdentityLeafWrite(
+                located.drawingMap,
+                String(path[path.length - 2]),
+                key,
+                value
+            )
+        ) {
+            return;
+        }
+    }
     if (
         located &&
         writeNormalizedShapePath(located.drawingMap, located.rest, value)
@@ -1962,12 +2778,15 @@ export function setYPath(
         const property = String(path[nodesSegmentIndex + 2]);
         const existingNodes = getYPath(root, nodesPath);
         const nodes =
-            existingNodes === undefined ? [] : fromYType(existingNodes);
+            existingNodes === undefined ? undefined : fromYType(existingNodes);
         if (!Array.isArray(nodes)) {
             throw new TypeError('Y.Doc path nodes must be arrays.');
         }
-        while (nodes.length <= nodeIndex) {
-            nodes.push({ x: 0, y: 0, nodetype: 'Line', smooth: false });
+        // No placeholder nodes are invented to hold this write.
+        if (!Number.isInteger(nodeIndex) || nodeIndex >= nodes.length) {
+            throw new MissingDrawingError(
+                `Cannot write ${path.join('.')}: the path has no node ${nodeIndex}.`
+            );
         }
         nodes[nodeIndex][property] = value;
         setYPath(root, nodesPath, nodes);
@@ -2010,9 +2829,32 @@ export function setYPath(
                 if (byIdMap) {
                     // Next segment should be the index/id
                     const nextSeg = path[i + 1];
+                    // The pair addresses the entry itself: the value is
+                    // the whole entry.
+                    const entryIsTarget = i + 2 >= path.length;
                     if (typeof nextSeg === 'number') {
-                        // Index-based access: translate via *Order
-                        next = navigateIndexedMap(current, segStr, nextSeg);
+                        // Index-based access: translate via *Order, after
+                        // dropping ids a collaborator's delete left behind,
+                        // so the index means what readers list there.
+                        tidyKeyedPairOf(current, segStr);
+                        const entryAtIndex = indexedEntryAt(
+                            current,
+                            segStr,
+                            nextSeg,
+                            path
+                        );
+                        next = entryAtIndex;
+                        if (entryAtIndex && entryIsTarget) {
+                            writeIndexedEntryAtIndex(
+                                current,
+                                segStr,
+                                nextSeg,
+                                entryAtIndex,
+                                value,
+                                path
+                            );
+                            return;
+                        }
                         if (next === undefined || next === null) {
                             // Index out of range — need to create a new element.
                             const mapping = INDEXED_MAP_KEYS[segStr]!;
@@ -2026,30 +2868,25 @@ export function setYPath(
                                 const isLeaf = i + 2 >= path.length;
                                 if (isLeaf) {
                                     // The value IS the element being added
-                                    const inner =
-                                        (value as any)?.Path ??
-                                        (value as any)?.Component ??
-                                        value;
-                                    const id =
-                                        (inner as any)?.id ??
-                                        generateStableId();
-                                    (inner as any).id = id;
-                                    byIdMap.set(id, toYType(inner));
-                                    orderArr.insert(insertIdx, [id]);
+                                    const added = indexedEntryToAdd(
+                                        segStr,
+                                        byIdMap,
+                                        value,
+                                        path
+                                    );
+                                    byIdMap.set(added.id, toYType(added));
+                                    orderArr.insert(insertIdx, [added.id]);
                                     return; // value already written
-                                } else {
-                                    // Intermediate path — create an empty element
-                                    // and continue navigation through it
-                                    const newElement = new Y.Map<unknown>();
-                                    const newId = generateStableId();
-                                    byIdMap.set(newId, newElement);
-                                    orderArr.insert(insertIdx, [newId]);
-                                    current = newElement;
-                                    i += 2;
-                                    continue;
                                 }
+                                // A write into an element that does not
+                                // exist would create a stub element.
+                                throw new MissingDrawingError(
+                                    `Cannot write ${path.join('.')}: ${segStr} has no entry ${nextSeg}.`
+                                );
                             }
-                            return;
+                            throw new MissingDrawingError(
+                                `Cannot write ${path.join('.')}: ${segStr} has no order.`
+                            );
                         }
                         current = next; // move to the found element
                         i += 2; // consume both segments
@@ -2058,7 +2895,24 @@ export function setYPath(
                         // Id-based access: navigate directly via *ById
                         next = byIdMap.get(nextSeg);
                         if (next === undefined) {
-                            return; // id not found
+                            throw new MissingDrawingError(
+                                `Cannot write ${path.join('.')}: ${segStr} has no entry “${nextSeg}”.`
+                            );
+                        }
+                        if (entryIsTarget) {
+                            if (!isYMap(next)) {
+                                throw new MissingDrawingError(
+                                    `The ${segStr} are damaged in the document: entry “${nextSeg}” is not a map.`
+                                );
+                            }
+                            writeIndexedEntryInPlace(
+                                next,
+                                segStr,
+                                nextSeg,
+                                value,
+                                path
+                            );
+                            return;
                         }
                         current = next;
                         i += 2;
@@ -2071,43 +2925,83 @@ export function setYPath(
             if (featureField) {
                 next = current.get(featureField);
                 if (next === undefined) {
-                    return;
+                    // The write is refused, never dropped.
+                    throw new MissingDrawingError(
+                        `Cannot write ${path.join('.')}: the feature has no ${featureField}.`
+                    );
                 }
                 current = next;
                 i += 1;
                 continue;
             }
 
-            // Normal Y.Map navigation
+            // Normal Y.Map navigation. A missing container below a map is a
+            // map: a numeric next segment is a key there (a codepoint, a
+            // glyph named “1”), never an array index.
             next = current.get(segStr);
-            if (next === undefined) {
-                const newContainer = createYContainerForNextSegment(
-                    path[i + 1]
+            if (
+                next === undefined &&
+                located &&
+                current === located.drawingMap &&
+                DRAWING_INDEXED_PAIR_KEYS[segStr]
+            ) {
+                if (
+                    INDEXED_MAP_KEYS[DRAWING_INDEXED_PAIR_KEYS[segStr]]!
+                        .byId === segStr
+                ) {
+                    // A write into an entry of a map that does not exist
+                    // yet: the entry would have no id in the order. Refused
+                    // before anything is created.
+                    throw new MissingDrawingError(
+                        `Cannot write ${path.join('.')}: ${segStr} has no entry “${String(path[i + 1])}”.`
+                    );
+                }
+                // Half of the anchors' or guides' keyed pair: both halves
+                // are created together, never one alone.
+                ensureIndexedMap(current, DRAWING_INDEXED_PAIR_KEYS[segStr]);
+                next = current.get(segStr);
+            }
+            if (next === undefined && indexedPairOfByIdMap(current)) {
+                // An entry created here would have no id in the order: it
+                // is added only together with its id.
+                throw new MissingDrawingError(
+                    `Cannot write ${path.join('.')}: ${String(path[i - 1])} has no entry “${segStr}”.`
                 );
+            }
+            if (next === undefined) {
+                if (located && !isYTypeNewInCurrentTransaction(current)) {
+                    // A child map created lazily inside a stored drawing
+                    // races a collaborator's; recorded, never hidden.
+                    recordLateDrawingChildMap(
+                        located.drawingMap,
+                        path
+                            .slice(path.length - located.rest.length, i + 1)
+                            .join('.')
+                    );
+                }
+                const newContainer = new Y.Map<unknown>();
                 current.set(segStr, newContainer);
                 next = newContainer;
             }
         } else if (current instanceof Y.Array) {
+            // A write into an element that does not exist is refused: an
+            // element created here would be a stub, and a write dropped
+            // here would lose the edit.
             const idx = Number(seg);
-            if (!Number.isInteger(idx) || idx < 0 || idx > current.length) {
-                return;
-            }
-
-            next = idx < current.length ? current.get(idx) : undefined;
-            if (next === undefined) {
-                const newContainer = createYContainerForNextSegment(
-                    path[i + 1]
+            if (!Number.isInteger(idx) || idx < 0 || idx >= current.length) {
+                throw new MissingDrawingError(
+                    `Cannot write ${path.join('.')}: ${path
+                        .slice(0, i)
+                        .join('.')} has no entry ${String(seg)}.`
                 );
-                if (idx === current.length) {
-                    current.insert(idx, [newContainer]);
-                } else {
-                    current.delete(idx, 1);
-                    current.insert(idx, [newContainer]);
-                }
-                next = newContainer;
             }
+            next = current.get(idx);
         } else {
-            return; // Can't navigate further
+            throw new TypeError(
+                `Cannot write ${path.join('.')}: ${path
+                    .slice(0, i)
+                    .join('.')} is a value, not a container.`
+            );
         }
         current = next;
         i += 1;
@@ -2128,6 +3022,18 @@ export function setYPath(
     // whole Y.Array. This is the key to granular reorder operations
     // (set start point, reverse direction) — the Yjs delta contains
     // only the changed id references, not a full array replacement.
+    if (
+        current instanceof Y.Map &&
+        located &&
+        current === located.drawingMap &&
+        DRAWING_INDEXED_PAIR_KEYS[lastSegStr] &&
+        current.get(lastSegStr) === undefined
+    ) {
+        // A write of one half of the anchors' or guides' keyed pair: both
+        // halves are created together, never one alone.
+        ensureIndexedMap(current, DRAWING_INDEXED_PAIR_KEYS[lastSegStr]);
+    }
+
     if (current instanceof Y.Map && lastSegStr in ORDER_KEYS) {
         const existingOrder = current.get(lastSegStr);
         if (isYArray(existingOrder)) {
@@ -2138,6 +3044,8 @@ export function setYPath(
                 replaceYArrayOrder(existingOrder, nextIds);
                 return;
             }
+            tidyKeyedPairOf(current, ORDER_KEYS[lastSegStr]!);
+            assertOrderWriteOnlyReorders(current, lastSegStr, nextIds);
             diffYArrayOrder(existingOrder, nextIds);
             return;
         }
@@ -2246,6 +3154,81 @@ export function setYPath(
         }
     }
 
+    // A whole-drawing write (`…/layers/<id>`). A new drawing is created
+    // from the whole value, which must carry its own width, id and station
+    // link; a replace may not write invalid identity values.
+    if (
+        current instanceof Y.Map &&
+        path.length >= 2 &&
+        String(path[path.length - 2]) === 'layers'
+    ) {
+        if (!isPlainObject(value)) {
+            throw new RestingDrawingWriteError(
+                'drawing is not a plain object',
+                'Y.Doc write'
+            );
+        }
+        const existingDrawing = current.get(lastSegStr);
+        if (!isYMap(existingDrawing)) {
+            if (value.id !== lastSegStr) {
+                throw new RestingDrawingWriteError(
+                    `drawing id “${String(value.id)}” does not match its key “${lastSegStr}”`,
+                    'Y.Doc write'
+                );
+            }
+            current.set(lastSegStr, drawingToYMap(value));
+            return;
+        }
+        const violation = describeRestingDrawingViolation(
+            omitRestingDrawingRuntimeKeys(value),
+            {
+                requireIdentity: false,
+                isBackground:
+                    'is_background' in value
+                        ? value.is_background === true
+                        : existingDrawing.get('is_background') === true
+            }
+        );
+        if (violation) {
+            throw new RestingDrawingWriteError(violation, 'Y.Doc write');
+        }
+    }
+
+    if (
+        current instanceof Y.Map &&
+        path.length >= 2 &&
+        (path[path.length - 2] === 'anchorsById' ||
+            path[path.length - 2] === 'guidesById') &&
+        (!isPlainObject(value) || value.id !== lastSegStr)
+    ) {
+        // An anchor or guide stores its own id; it is never read from the key.
+        throw new RestingDrawingWriteError(
+            `${String(path[path.length - 2])} entry “${lastSegStr}” must be a map whose id is “${lastSegStr}”`,
+            'Y.Doc write'
+        );
+    }
+    if (
+        current instanceof Y.Map &&
+        indexedPairOfByIdMap(current) &&
+        current.get(lastSegStr) === undefined
+    ) {
+        // A new entry is added only together with its id in the order
+        // (through the list path), never into the map alone.
+        throw new MissingDrawingError(
+            `Cannot write ${path.join('.')}: a new ${indexedPairOfByIdMap(current)} entry is added with its place in the order, not into ${String(path[path.length - 2])} alone.`
+        );
+    }
+
+    if (
+        current instanceof Y.Map &&
+        located &&
+        current === located.drawingMap &&
+        lastSegStr === DRAWING_FORMAT_SPECIFIC_KEY
+    ) {
+        writeDrawingFormatSpecific(current, value);
+        return;
+    }
+
     const yValue = toYType(value);
     if (current instanceof Y.Map) {
         const existing = current.get(lastSegStr);
@@ -2257,12 +3240,21 @@ export function setYPath(
             replaceYMapContents(existing, value as Record<string, unknown>);
             return;
         }
+        if (!isYMap(existing) && !isYArray(existing) && existing === value) {
+            // An equal leaf is not written again (see applyDrawingDelta).
+            return;
+        }
         current.set(lastSegStr, yValue);
     } else if (current instanceof Y.Array) {
         const idx = pathSegmentIndex(lastSeg);
+        if (!Number.isInteger(idx) || idx < 0 || idx > current.length) {
+            throw new MissingDrawingError(
+                `Cannot write ${path.join('.')}: index ${String(lastSeg)} is outside the list.`
+            );
+        }
         if (idx === current.length) {
             current.insert(idx, [yValue]);
-        } else if (idx >= 0 && idx < current.length) {
+        } else {
             const existing = current.get(idx);
             if (isYArray(existing) && Array.isArray(value)) {
                 diffYArray(existing, value);
@@ -2275,6 +3267,12 @@ export function setYPath(
             current.delete(idx, 1);
             current.insert(idx, [yValue]);
         }
+    } else {
+        throw new TypeError(
+            `Cannot write ${path.join('.')}: ${path
+                .slice(0, -1)
+                .join('.')} is a value, not a container.`
+        );
     }
 }
 
@@ -2291,6 +3289,28 @@ export function deleteYPath(
     path = coerceNumericPath(path);
 
     const located = locateDrawingMap(root, path, false);
+    if (
+        located &&
+        located.rest.length === 1 &&
+        (RESTING_DRAWING_IDENTITY_KEYS as readonly string[]).includes(
+            String(located.rest[0])
+        )
+    ) {
+        // A drawing never loses its width, id or station link.
+        throw new RestingDrawingWriteError(
+            `drawing ${String(located.rest[0])} may not be deleted`,
+            'Y.Doc delete'
+        );
+    }
+    if (
+        located &&
+        located.rest.length === 1 &&
+        String(located.rest[0]) === DRAWING_FORMAT_SPECIFIC_KEY
+    ) {
+        // Emptied, never deleted (see writeDrawingFormatSpecific).
+        writeDrawingFormatSpecific(located.drawingMap, undefined);
+        return;
+    }
     if (
         located &&
         deleteNormalizedShapePath(located.drawingMap, located.rest)
@@ -2316,18 +3336,86 @@ export function deleteYPath(
                 const byId = parent.get(mapping.byId);
                 const order = parent.get(mapping.order);
                 if (byId instanceof Y.Map && order instanceof Y.Array) {
+                    // The index means what readers list there.
+                    tidyKeyedPairOrder(byId, order, secondLastSeg);
                     const idx = lastSeg;
                     if (idx < 0 || idx >= order.length) return;
                     const id = order.get(idx);
-                    if (typeof id === 'string') {
-                        byId.delete(id);
+                    if (typeof id !== 'string') {
+                        throw new MissingDrawingError(
+                            `The ${secondLastSeg} are damaged in the document: ${mapping.order} holds a value that is not an id.`
+                        );
                     }
-                    order.delete(idx, 1);
+                    // Every place the order lists the id goes with the
+                    // entry (two collaborators moving it at once list it
+                    // twice); one left behind would name a missing entry.
+                    const ids = order.toArray();
+                    for (let index = ids.length - 1; index >= 0; index -= 1) {
+                        if (ids[index] === id) {
+                            order.delete(index, 1);
+                        }
+                    }
+                    byId.delete(id);
                     return;
                 }
                 // Indexed-map structure doesn't exist (e.g. Master.guides
                 // stored as flat Y.Array). Fall through to generic deletion.
             }
+        }
+    }
+
+    // An entry of a keyed pair addressed through one half (`…/anchorsById/
+    // <id>` or `…/anchorOrder/<index>`) is removed from both halves in one
+    // go: removing it from one alone would leave an id without its entry,
+    // or an entry the order does not list.
+    if (path.length >= 2) {
+        const pairKey = String(path[path.length - 2]);
+        const lastSeg = path[path.length - 1];
+        const pair = Object.entries(INDEXED_MAP_KEYS).find(
+            ([, mapping]) =>
+                mapping.byId === pairKey || mapping.order === pairKey
+        );
+        if (pair) {
+            const [arrayKey, mapping] = pair;
+            const parentPath = path.slice(0, -2);
+            const parent =
+                parentPath.length > 0 ? getYPath(root, parentPath) : root;
+            if (!(parent instanceof Y.Map)) {
+                return;
+            }
+            const byId = parent.get(mapping.byId);
+            const order = parent.get(mapping.order);
+            if (!isYMap(byId) || !isYArray(order)) {
+                throw new MissingDrawingError(
+                    `The ${arrayKey} are damaged in the document: ${
+                        isYMap(byId) ? mapping.order : mapping.byId
+                    } is missing or not a ${isYMap(byId) ? 'list' : 'map'}.`
+                );
+            }
+            tidyKeyedPairOrder(byId, order, arrayKey);
+            let id: unknown;
+            if (pairKey === mapping.order) {
+                const idx = Number(lastSeg);
+                if (!Number.isInteger(idx) || idx < 0 || idx >= order.length) {
+                    return;
+                }
+                id = order.get(idx);
+            } else {
+                id = String(lastSeg);
+            }
+            if (typeof id !== 'string') {
+                throw new MissingDrawingError(
+                    `The ${arrayKey} are damaged in the document: ${mapping.order} holds a value that is not an id.`
+                );
+            }
+            const ids = order.toArray();
+            for (let index = ids.length - 1; index >= 0; index -= 1) {
+                if (ids[index] === id) {
+                    order.delete(index, 1);
+                }
+            }
+            byId.delete(id);
+            return;
         }
     }
 
@@ -2348,6 +3436,17 @@ export function deleteYPath(
                 const byId = parent.get(mapping.byId);
                 const order = parent.get(mapping.order);
                 if (byId instanceof Y.Map && order instanceof Y.Array) {
+                    if (
+                        (lastSegStr === 'anchors' || lastSegStr === 'guides') &&
+                        isDrawingYMap(parent)
+                    ) {
+                        // A drawing's keyed maps are created with it and
+                        // never deleted: a map created again by a later
+                        // first entry races a collaborator's. Only the
+                        // entries go.
+                        applyIndexedMapArray(parent, lastSegStr, []);
+                        return;
+                    }
                     parent.delete(mapping.byId);
                     parent.delete(mapping.order);
                     return;

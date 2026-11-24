@@ -101,12 +101,27 @@ function moving() {
 
 /** The peer hears the move and loads the new rooms. */
 function peerSwitches({ owner, peer, ownerOut }) {
-    ownerOut.deliverTo(peer);
+    // A room's deltas apply only once the room is loaded whole: the core
+    // change first, then each kerning room's state, then its packets.
+    const pending = ownerOut.packets.splice(0);
+    const isKerning = (packet) => packet.documentId.startsWith('kerning:');
+    const deliver = (packets) => {
+        for (const packet of packets) {
+            peer.applyRemoteUpdate(
+                packet.update,
+                packet.entries?.length ? packet.entries : undefined,
+                packet.message ? [packet.message] : undefined,
+                packet.documentId
+            );
+        }
+    };
+    deliver(pending.filter((packet) => !isKerning(packet)));
     for (const shard of owner.encodeDocumentSet()) {
         if (shard.documentId.startsWith('kerning:')) {
             peer.applyDocumentCatchUp(shard.documentId, shard.bytes);
         }
     }
+    deliver(pending.filter(isKerning));
     expect(peer.retiredLayoutDocumentIds()).toEqual(['kerning:0']);
 }
 

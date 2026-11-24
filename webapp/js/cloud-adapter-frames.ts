@@ -4,6 +4,18 @@
 import type { CollaborationMessageEnvelope } from './collaboration-message';
 import { FRAME_TYPE } from './generated/collab-protocol-limits';
 
+/**
+ * A frame from the room that cannot be read whole: truncated, or a chunked
+ * transaction that is missing chunks. Nothing in it may apply, and no cursor
+ * may move past it.
+ */
+export class CollabFrameError extends Error {
+    constructor(detail: string) {
+        super(`Malformed collaboration frame: ${detail}`);
+        this.name = 'CollabFrameError';
+    }
+}
+
 export function decodeCollabLiveFrames(bytes: Uint8Array): Array<{
     type: number;
     logId: number;
@@ -24,7 +36,9 @@ export function decodeCollabLiveFrames(bytes: Uint8Array): Array<{
         const start = offset + 16;
         const end = start + payloadLen;
         if (end > bytes.byteLength) {
-            break;
+            throw new CollabFrameError(
+                `frame at byte ${offset} claims ${payloadLen} bytes, ${bytes.byteLength - start} arrived`
+            );
         }
         frames.push({
             type,
@@ -35,6 +49,11 @@ export function decodeCollabLiveFrames(bytes: Uint8Array): Array<{
         if (type === 3) {
             break;
         }
+    }
+    if (offset < bytes.byteLength && frames[frames.length - 1]?.type !== 3) {
+        throw new CollabFrameError(
+            `${bytes.byteLength - offset} trailing bytes are not a whole frame`
+        );
     }
     return frames;
 }
@@ -64,31 +83,39 @@ export function decodeCheckpointMeta(payload: Uint8Array): {
             collaborationMessageHistory: []
         };
     }
+    let parsed: {
+        hasMore?: boolean;
+        throughLogId?: number;
+        lastLogId?: number;
+        collaborationMessageHistory?: CollaborationMessageEnvelope[];
+    };
     try {
-        const parsed = JSON.parse(utf8Decode(payload)) as {
+        parsed = JSON.parse(utf8Decode(payload)) as {
             hasMore?: boolean;
             throughLogId?: number;
             lastLogId?: number;
             collaborationMessageHistory?: CollaborationMessageEnvelope[];
         };
-        return {
-            hasMore: parsed.hasMore === true,
-            throughLogId: Number(parsed.throughLogId || 0),
-            lastLogId: Number(parsed.lastLogId || 0),
-            collaborationMessageHistory: Array.isArray(
-                parsed.collaborationMessageHistory
-            )
-                ? parsed.collaborationMessageHistory
-                : []
-        };
-    } catch {
-        return {
-            hasMore: false,
-            throughLogId: 0,
-            lastLogId: 0,
-            collaborationMessageHistory: []
-        };
+    } catch (error) {
+        throw new CollabFrameError(
+            `sync page meta is not JSON (${error instanceof Error ? error.message : String(error)})`
+        );
     }
+    if (
+        parsed.collaborationMessageHistory !== undefined &&
+        parsed.collaborationMessageHistory !== null &&
+        !Array.isArray(parsed.collaborationMessageHistory)
+    ) {
+        throw new CollabFrameError(
+            'sync page meta carries a message history that is not a list'
+        );
+    }
+    return {
+        hasMore: parsed.hasMore === true,
+        throughLogId: Number(parsed.throughLogId || 0),
+        lastLogId: Number(parsed.lastLogId || 0),
+        collaborationMessageHistory: parsed.collaborationMessageHistory ?? []
+    };
 }
 
 export function assembleTailTransactionsFromFrames(
@@ -109,11 +136,23 @@ export function assembleTailTransactionsFromFrames(
             frame.payload.byteLength
         );
         if (frame.payload.byteLength < 12) {
-            continue;
+            throw new CollabFrameError(
+                `row ${frame.logId} carries ${frame.payload.byteLength} bytes, under its 12-byte header`
+            );
         }
         const chunkIndex = view.getUint32(0, false);
         const totalChunks = Math.max(1, view.getUint32(4, false));
         const txnLen = view.getUint32(8, false);
+        if (12 + txnLen > frame.payload.byteLength) {
+            throw new CollabFrameError(
+                `row ${frame.logId} names a ${txnLen}-byte transaction id past its end`
+            );
+        }
+        if (chunkIndex >= totalChunks) {
+            throw new CollabFrameError(
+                `row ${frame.logId} is chunk ${chunkIndex} of ${totalChunks}`
+            );
+        }
         const transactionId = utf8Decode(
             frame.payload.subarray(12, 12 + txnLen)
         );
@@ -136,6 +175,11 @@ export function assembleTailTransactionsFromFrames(
             state.chunks[chunkIndex] = blob;
             state.received++;
         }
+        if (state.total !== totalChunks) {
+            throw new CollabFrameError(
+                `row ${frame.logId} says ${totalChunks} chunks, earlier chunks of its transaction said ${state.total}`
+            );
+        }
         if (state.received === state.total) {
             const totalLen = state.chunks.reduce(
                 (sum, chunk) => sum + (chunk ? chunk.byteLength : 0),
@@ -150,6 +194,11 @@ export function assembleTailTransactionsFromFrames(
             updates.push(combined);
             pending.delete(key);
         }
+    }
+    for (const [key, state] of pending) {
+        throw new CollabFrameError(
+            `transaction ${key} ended with ${state.received} of ${state.total} chunks`
+        );
     }
     return updates;
 }
@@ -175,9 +224,19 @@ export function decodeLiveUpdatePayload(payload: Uint8Array): {
     const updateLenOff = 8 + clientIdLen;
     const updateLen = view.getUint32(updateLenOff, false);
     const updateStart = updateLenOff + 4;
+    if (updateStart + updateLen + 4 > payload.byteLength) {
+        throw new CollabFrameError(
+            `live update claims ${updateLen} bytes, ${payload.byteLength - updateStart} arrived`
+        );
+    }
     const update = payload.subarray(updateStart, updateStart + updateLen);
     const extraLenOff = updateStart + updateLen;
     const extraLen = view.getUint32(extraLenOff, false);
+    if (extraLenOff + 4 + extraLen > payload.byteLength) {
+        throw new CollabFrameError(
+            `live update metadata claims ${extraLen} bytes, ${payload.byteLength - extraLenOff - 4} arrived`
+        );
+    }
     const extraBytes = payload.subarray(
         extraLenOff + 4,
         extraLenOff + 4 + extraLen

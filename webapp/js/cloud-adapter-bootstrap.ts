@@ -1,3 +1,10 @@
+import {
+    CloudRoomHttpError,
+    cloudRefusalFromBody,
+    readRoomErrorBody,
+    shouldRetryHydrateTransport
+} from './cloud-adapter-support';
+
 export function withCloudAccessToken(wsUrl: string, token: string): string {
     if (!token) {
         return wsUrl;
@@ -138,27 +145,83 @@ export async function fetchCloudDocumentState(options: {
     assetId: string;
     documentId: string;
 }): Promise<Uint8Array | null> {
+    return (await fetchCloudDocumentStateWithLogId(options))?.bytes ?? null;
+}
+
+/** The log id an `X-Checkpoint-Log-Id` header names, or null without one. */
+export function checkpointLogIdFromHeaders(headers: Headers): number | null {
+    const raw = headers.get('X-Checkpoint-Log-Id');
+    if (raw === null || !/^\d+$/.test(raw.trim())) {
+        return null;
+    }
+    const logId = Number(raw.trim());
+    return Number.isSafeInteger(logId) ? logId : null;
+}
+
+/**
+ * Like `fetchCloudDocumentState`, with the log id the state holds every row
+ * through (`X-Checkpoint-Log-Id`), or null when the room named none.
+ */
+export async function fetchCloudDocumentStateWithLogId(options: {
+    token: string;
+    roomUrl: string;
+    websiteBaseUrl: string;
+    assetId: string;
+    documentId: string;
+}): Promise<{ bytes: Uint8Array; logId: number | null } | null> {
     const url = normalizeCloudShardHttpUrl(
         options.roomUrl,
         options.websiteBaseUrl,
         options.assetId,
         options.documentId
     );
-    const response = await fetch(url, {
-        cache: 'no-store',
-        headers: {
-            Authorization: `Bearer ${options.token}`,
-            Accept: 'application/octet-stream'
+    // A state the room is rebuilding or just replaced (503
+    // `state_unavailable`, `state_superseded`) is asked for again;
+    // `broken_journal` (500) is final.
+    let response: Response;
+    for (let attempt = 0; ; attempt += 1) {
+        try {
+            response = await fetch(url, {
+                cache: 'no-store',
+                headers: {
+                    Authorization: `Bearer ${options.token}`,
+                    Accept: 'application/octet-stream'
+                }
+            });
+            if (response.ok || response.status === 404) {
+                break;
+            }
+            const body = await readRoomErrorBody(response);
+            const refusal = cloudRefusalFromBody(
+                options.documentId,
+                body,
+                undefined
+            );
+            if (refusal) {
+                throw refusal;
+            }
+            throw new CloudRoomHttpError(
+                `loading ${options.documentId} failed: ${response.status}${typeof body?.code === 'string' ? ` ${body.code}` : ''}`,
+                {
+                    status: response.status,
+                    code: body?.code,
+                    retryable: body?.retryable
+                }
+            );
+        } catch (error) {
+            if (!shouldRetryHydrateTransport(error, false, attempt)) {
+                throw error;
+            }
+            await new Promise((resolve) =>
+                setTimeout(resolve, 100 * 2 ** attempt)
+            );
         }
-    });
+    }
     if (response.status === 404) {
         return null;
     }
-    if (!response.ok) {
-        throw new Error(
-            `loading ${options.documentId} failed: ${response.status}`
-        );
-    }
     const bytes = new Uint8Array(await response.arrayBuffer());
-    return bytes.length > 2 ? bytes : null;
+    return bytes.length > 2
+        ? { bytes, logId: checkpointLogIdFromHeaders(response.headers) }
+        : null;
 }

@@ -86,6 +86,13 @@ export type CollaborationMessageMetadata = {
     undoSurfaceAffinity?: UndoSurfaceAffinity | null;
     originatingGlyphName?: string | null;
     originatingLayerId?: string | null;
+    /**
+     * Set by envelope fitting in place of the glyph lists: every glyph of
+     * the document the packet belongs to changed. Receivers re-read each of
+     * them and work out replay targets themselves (see the shared
+     * metadata-budget module).
+     */
+    allGlyphsChanged?: true;
 };
 
 /**
@@ -208,11 +215,47 @@ export function isCollaborationMessageEnvelope(
     );
 }
 
+/**
+ * Containers keyed by name: the given number of segments after the key are
+ * names (kerning sides, group names, format keys), never array positions,
+ * even when they look like numbers.
+ */
+const NAME_KEYED_SEGMENT_COUNTS: Readonly<Record<string, number>> = {
+    kerning: 2,
+    first_kern_groups: 1,
+    second_kern_groups: 1,
+    format_specific: 1
+};
+
+const ARRAY_INDEX_PATTERN = /^(0|[1-9]\d*)$/;
+
+/**
+ * Turn a named change path into Y.Doc path segments. Only real array
+ * positions become numbers: glyph names, drawing ids and other name-keyed
+ * segments stay strings, so a glyph named “1” is addressed as “1”.
+ */
 function pathToArray(path: string): (string | number)[] {
-    return getPathSegments(path).map((segment) => {
-        const numeric = Number.parseInt(segment, 10);
-        return String(numeric) === segment ? numeric : segment;
+    const segments = getPathSegments(path);
+    const nameIndexes = new Set<number>();
+    if (segments[0] === 'glyphs') {
+        nameIndexes.add(1);
+        if (segments[2] === 'layers') {
+            nameIndexes.add(3);
+        }
+    }
+    segments.forEach((segment, index) => {
+        const count = NAME_KEYED_SEGMENT_COUNTS[segment];
+        if (count && !nameIndexes.has(index)) {
+            for (let offset = 1; offset <= count; offset++) {
+                nameIndexes.add(index + offset);
+            }
+        }
     });
+    return segments.map((segment, index) =>
+        !nameIndexes.has(index) && ARRAY_INDEX_PATTERN.test(segment)
+            ? Number.parseInt(segment, 10)
+            : segment
+    );
 }
 
 function getNamedPatchOpForSet(oldValue: unknown): 'add' | 'replace' {
@@ -376,9 +419,11 @@ export function createCollaborationMessageEnvelopeFromChangeLogEntries(
         baseRevision?: string | null;
         windowId?: string | null;
     }
-): CollaborationMessageEnvelope | null {
+): CollaborationMessageEnvelope {
     if (!entries.length) {
-        return null;
+        throw new Error(
+            'A collaboration message needs at least one change-log entry'
+        );
     }
 
     const changedGlyphNames = [
@@ -623,6 +668,38 @@ export function createSyntheticChangeOperationsFromNamedChangePairs(
     }));
 }
 
+/**
+ * Resolve one JSON pointer segment against the snapshot it was made from.
+ * Over an array the segment is a position: the element there gives the
+ * name (`nameKey`). Over a keyed object, or without a snapshot, the segment
+ * already is the name and is used as it is (null). A position with no
+ * element, or a name used on an array, is refused: the segment would
+ * otherwise address another glyph or drawing.
+ */
+function resolvePointerElement(
+    container: unknown,
+    segment: string,
+    nameKey: 'name' | 'id',
+    pointerPath: string
+): Record<string, unknown> | null {
+    if (!Array.isArray(container)) {
+        return null;
+    }
+    const element: unknown = ARRAY_INDEX_PATTERN.test(segment)
+        ? container[Number.parseInt(segment, 10)]
+        : undefined;
+    if (
+        !element ||
+        typeof element !== 'object' ||
+        typeof (element as Record<string, unknown>)[nameKey] !== 'string'
+    ) {
+        throw new Error(
+            `JSON pointer “${pointerPath}”: “${segment}” addresses no element with a ${nameKey} in its snapshot`
+        );
+    }
+    return element as Record<string, unknown>;
+}
+
 function fromJsonPointerPath(
     pointerPath: string,
     fontJson?: FontJsonSnapshot
@@ -637,32 +714,23 @@ function fromJsonPointerPath(
         .map((segment) => segment.replaceAll('~1', '/').replaceAll('~0', '~'));
 
     if (segments[0] === 'glyphs' && segments.length >= 2) {
-        const glyphIndex = Number.parseInt(String(segments[1]), 10);
-        const glyphs = Array.isArray(fontJson?.glyphs)
-            ? (fontJson.glyphs as Unsafe[])
-            : null;
-        const glyph = Number.isFinite(glyphIndex) ? glyphs?.[glyphIndex] : null;
-        if (
-            glyph &&
-            typeof glyph === 'object' &&
-            typeof glyph.name === 'string'
-        ) {
-            segments[1] = glyph.name;
-
+        const glyph = resolvePointerElement(
+            fontJson?.glyphs,
+            segments[1],
+            'name',
+            pointerPath
+        );
+        if (glyph) {
+            segments[1] = String(glyph.name);
             if (segments[2] === 'layers' && segments.length >= 4) {
-                const drawingIndex = Number.parseInt(String(segments[3]), 10);
-                const drawings = Array.isArray(glyph.layers)
-                    ? (glyph.layers as Unsafe[])
-                    : null;
-                const drawing = Number.isFinite(drawingIndex)
-                    ? drawings?.[drawingIndex]
-                    : null;
-                if (
-                    drawing &&
-                    typeof drawing === 'object' &&
-                    typeof drawing.id === 'string'
-                ) {
-                    segments[3] = drawing.id;
+                const drawing = resolvePointerElement(
+                    glyph.layers,
+                    segments[3],
+                    'id',
+                    pointerPath
+                );
+                if (drawing) {
+                    segments[3] = String(drawing.id);
                 }
             }
         }
@@ -683,21 +751,26 @@ export function createNamedChangePairFromJsonPatchPair(
         workerReplayTargets?: WorkerReplayTarget[];
     }
 ): NamedChangePair {
+    const forwardPath = fromJsonPointerPath(
+        forwardPatch.path,
+        options.forwardSnapshot
+    );
     return {
         forward: {
             op: forwardPatch.op as NamedChangeOperation['op'],
-            path: fromJsonPointerPath(
-                forwardPatch.path,
-                options.forwardSnapshot
-            ),
+            path: forwardPath,
             value: forwardPatch.value
         },
         inverse: {
             op: (inversePatch?.op ?? 'remove') as NamedChangeOperation['op'],
-            path: fromJsonPointerPath(
-                inversePatch?.path ?? forwardPatch.path,
-                options.inverseSnapshot
-            ),
+            // Without an inverse patch (an add), the inverse removes what the
+            // forward path names; that element is not in the earlier snapshot.
+            path: inversePatch
+                ? fromJsonPointerPath(
+                      inversePatch.path,
+                      options.inverseSnapshot
+                  )
+                : forwardPath,
             value: inversePatch?.value
         },
         replayOldValue: options.replayOldValue,

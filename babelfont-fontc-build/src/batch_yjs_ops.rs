@@ -1,4 +1,9 @@
+use crate::drawing_geometry::{
+    decode_geometry_topology, encode_geometry_topology, next_generation, split_shapes_for_ydoc,
+    DRAWING_GEOMETRY_TOPOLOGY_KEY, DRAWING_NODE_POSITIONS_KEY, DRAWING_SHAPE_DATA_KEY,
+};
 use crate::interpolation::interpolate_glyph_layer;
+use crate::update_integrity::apply_update_with_integrity;
 use crate::{
     get_or_rebuild_font_cache, ydoc_get_layer_json_with_txn, ydoc_get_top_level_json_with_txn,
     FONT_CORE_DOCUMENT_ID, GLYPH_DOCS, GLYPH_ID_BY_NAME, Y_DOC,
@@ -7,9 +12,11 @@ use babelfont::{Layer, LayerType, Master};
 use js_sys::{Array as JsArray, Object, Reflect, Uint8Array};
 use serde::Deserialize;
 use serde_json::{Map as JsonMap, Value as JsonValue};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use wasm_bindgen::prelude::*;
-use yrs::updates::decoder::Decode;
+use yrs::updates::encoder::Encode;
 use yrs::{Any, Array, ArrayPrelim, Doc, Map, MapPrelim, ReadTxn, StateVector, Transact};
 
 #[derive(Clone, Debug)]
@@ -80,33 +87,78 @@ struct LayerSnapshotOverride {
     layer: JsonValue,
 }
 
-fn warn_batch(message: &str) {
-    web_sys::console::warn_1(&JsValue::from_str(message));
+/// Records the update of every transaction committed on a batch clone after
+/// it was loaded. A batch packet is the merge of these updates: it carries
+/// only the batch's own edits and the deletions they made, never the clone's
+/// load state and never the whole document's delete set.
+struct EditRecorder {
+    updates: Rc<RefCell<Vec<Vec<u8>>>>,
+    _subscription: yrs::Subscription,
 }
 
-fn clone_current_ydoc() -> Result<(Doc, StateVector), JsValue> {
-    let (full_state, base_state_vector) = {
-        let guard = Y_DOC.lock().unwrap();
-        let doc = guard
-            .as_ref()
-            .ok_or_else(|| JsValue::from_str("Y.Doc not initialized"))?;
-        let txn = doc.transact();
-        (
-            txn.encode_state_as_update_v1(&StateVector::default()),
-            txn.state_vector(),
-        )
-    };
-
-    let clone_doc = Doc::new();
-    {
-        let update = yrs::Update::decode_v1(full_state.as_slice()).map_err(|error| {
-            JsValue::from_str(&format!("clone_current_ydoc decode failed: {:?}", error))
-        })?;
-        let mut txn = clone_doc.transact_mut();
-        txn.apply_update(update);
+impl EditRecorder {
+    fn attach(doc: &Doc) -> Result<Self, JsValue> {
+        let updates: Rc<RefCell<Vec<Vec<u8>>>> = Rc::new(RefCell::new(Vec::new()));
+        let sink = updates.clone();
+        let subscription = doc
+            .observe_update_v1(move |_, event| sink.borrow_mut().push(event.update.clone()))
+            .map_err(|error| {
+                JsValue::from_str(&format!(
+                    "Batch edit recorder failed to attach: {:?}",
+                    error
+                ))
+            })?;
+        Ok(Self {
+            updates,
+            _subscription: subscription,
+        })
     }
 
-    Ok((clone_doc, base_state_vector))
+    fn has_edits(&self) -> bool {
+        !self.updates.borrow().is_empty()
+    }
+
+    /// The merged edit transactions, or an empty Yjs update when there were none.
+    fn packet(&self) -> Result<Vec<u8>, JsValue> {
+        let updates = self.updates.borrow();
+        match updates.len() {
+            0 => Ok(yrs::Update::new().encode_v1()),
+            1 => Ok(updates[0].clone()),
+            _ => {
+                let parts: Vec<&[u8]> = updates.iter().map(Vec::as_slice).collect();
+                yrs::merge_updates_v1(&parts).map_err(|error| {
+                    JsValue::from_str(&format!("Batch edit merge failed: {:?}", error))
+                })
+            }
+        }
+    }
+}
+
+/// Load a fresh copy of `src` through the update gate, then start recording.
+fn load_batch_clone(src: &Doc, document_id: &str) -> Result<(Doc, EditRecorder), JsValue> {
+    let full_state = src
+        .transact()
+        .encode_state_as_update_v1(&StateVector::default());
+    let clone_doc = Doc::new();
+    {
+        let mut txn = clone_doc.transact_mut();
+        apply_update_with_integrity(&mut txn, &full_state, document_id).map_err(|error| {
+            JsValue::from_str(&format!(
+                "Batch clone of {} refused: {}",
+                document_id, error
+            ))
+        })?;
+    }
+    let recorder = EditRecorder::attach(&clone_doc)?;
+    Ok((clone_doc, recorder))
+}
+
+fn clone_current_ydoc() -> Result<(Doc, EditRecorder), JsValue> {
+    let guard = Y_DOC.lock().unwrap();
+    let doc = guard
+        .as_ref()
+        .ok_or_else(|| JsValue::from_str("Y.Doc not initialized"))?;
+    load_batch_clone(doc, FONT_CORE_DOCUMENT_ID)
 }
 
 fn glyph_shards_active() -> bool {
@@ -117,30 +169,16 @@ struct ClonedGlyphDoc {
     glyph_id: String,
     glyph_name: String,
     doc: Doc,
-    base_state_vector: StateVector,
+    edits: EditRecorder,
 }
 
 fn clone_glyph_doc(glyph_id: &str, glyph_name: &str, src: &Doc) -> Result<ClonedGlyphDoc, JsValue> {
-    let (full_state, base_state_vector) = {
-        let txn = src.transact();
-        (
-            txn.encode_state_as_update_v1(&StateVector::default()),
-            txn.state_vector(),
-        )
-    };
-    let clone_doc = Doc::new();
-    {
-        let update = yrs::Update::decode_v1(full_state.as_slice()).map_err(|error| {
-            JsValue::from_str(&format!("clone_glyph_doc decode failed: {:?}", error))
-        })?;
-        let mut txn = clone_doc.transact_mut();
-        txn.apply_update(update);
-    }
+    let (doc, edits) = load_batch_clone(src, &glyph_document_id(glyph_id))?;
     Ok(ClonedGlyphDoc {
         glyph_id: glyph_id.to_string(),
         glyph_name: glyph_name.to_string(),
-        doc: clone_doc,
-        base_state_vector,
+        doc,
+        edits,
     })
 }
 
@@ -177,6 +215,17 @@ fn glyph_document_id(glyph_id: &str) -> String {
     format!("glyph:{}", glyph_id)
 }
 
+/// A drawing from the font-core Y.Doc (or its glyph shard); Err when the
+/// stored drawing is malformed.
+fn layer_json_from_core<T: ReadTxn>(
+    glyph_name: &str,
+    layer_id: &str,
+    txn: &T,
+) -> Result<Option<JsonValue>, JsValue> {
+    ydoc_get_layer_json_with_txn(glyph_name, layer_id, txn)
+        .map_err(|error| JsValue::from_str(&error))
+}
+
 fn glyph_root_maps(txn: &yrs::TransactionMut) -> Result<(yrs::MapRef, yrs::MapRef), JsValue> {
     let glyph_map = txn
         .get_map("glyph")
@@ -201,12 +250,68 @@ fn merge_json_map(
     Ok(())
 }
 
+/// JSON equality that treats `434` and `434.0` as the same number, the way
+/// a Yjs round trip does.
+fn json_values_equal(left: &JsonValue, right: &JsonValue) -> bool {
+    match (left, right) {
+        (JsonValue::Number(left), JsonValue::Number(right)) => left.as_f64() == right.as_f64(),
+        (JsonValue::Array(left), JsonValue::Array(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(left, right)| json_values_equal(left, right))
+        }
+        (JsonValue::Object(left), JsonValue::Object(right)) => {
+            left.len() == right.len()
+                && left.iter().all(|(key, value)| {
+                    right
+                        .get(key)
+                        .is_some_and(|other| json_values_equal(value, other))
+                })
+        }
+        _ => left == right,
+    }
+}
+
+/// Whether `map[key]` already holds `value`. Writing an equal value again
+/// would make a new item and delete the old one for nothing.
+fn map_entry_equals<T: ReadTxn>(
+    txn: &T,
+    map: &yrs::MapRef,
+    key: &str,
+    value: &JsonValue,
+) -> Result<bool, JsValue> {
+    match map.get(txn, key) {
+        None => Ok(false),
+        Some(existing) => crate::yrs_value_to_json(existing, txn)
+            .map(|existing| json_values_equal(&existing, value))
+            .map_err(|error| JsValue::from_str(&format!("Refusing to write {}: {}", key, error))),
+    }
+}
+
+/// A drawing's `width` is only ever written as a finite number.
+fn invalid_width_write(key: &str, value: &JsonValue) -> Option<String> {
+    (key == "width" && !value.as_f64().is_some_and(f64::is_finite)).then(|| {
+        format!(
+            "Refusing to write a width that is not a finite number: {}",
+            value
+        )
+    })
+}
+
 fn merge_json_map_entry(
     txn: &mut yrs::TransactionMut,
     map: &yrs::MapRef,
     key: &str,
     value: &JsonValue,
 ) -> Result<(), JsValue> {
+    if let Some(error) = invalid_width_write(key, value) {
+        return Err(JsValue::from_str(&error));
+    }
+    if !value.is_object() && map_entry_equals(txn, map, key, value)? {
+        return Ok(());
+    }
     match value {
         JsonValue::Object(object) => {
             if let Some(yrs::types::Value::YMap(existing)) = map.get(txn, key) {
@@ -216,15 +321,13 @@ fn merge_json_map_entry(
             }
         }
         JsonValue::Array(items) => {
-            map.remove(txn, key);
-            let child: yrs::ArrayRef = map.insert(txn, key, ArrayPrelim::from(Vec::<Any>::new()));
-            fill_json_array(txn, &child, items)?;
+            write_json_array_entry(txn, map, key, items)?;
         }
         JsonValue::String(text) => {
             map.insert(txn, key, text.clone());
         }
         JsonValue::Number(number) => {
-            map.insert(txn, key, json_number_to_any(number));
+            map.insert(txn, key, json_number_to_any(number)?);
         }
         JsonValue::Bool(flag) => {
             map.insert(txn, key, *flag);
@@ -234,6 +337,235 @@ fn merge_json_map_entry(
         }
     }
     Ok(())
+}
+
+/// Write `items` as `map[key]`. A stored Y.Array is edited in place, never
+/// replaced: a collaborator may be appending to it at the same time (an
+/// anchor added to `anchorOrder`), and a replacement would drop their entry
+/// while their item stays in the matching `*ById` map.
+fn write_json_array_entry(
+    txn: &mut yrs::TransactionMut,
+    map: &yrs::MapRef,
+    key: &str,
+    items: &[JsonValue],
+) -> Result<(), JsValue> {
+    if let Some(yrs::types::Value::YArray(existing)) = map.get(txn, key) {
+        return diff_json_array(txn, &existing, items);
+    }
+    let child: yrs::ArrayRef = map.insert(txn, key, ArrayPrelim::from(Vec::<Any>::new()));
+    fill_json_array(txn, &child, items)
+}
+
+/// One step that turns a stored array into the written one.
+#[derive(Debug, PartialEq)]
+enum ArrayEdit {
+    Keep,
+    Delete,
+    Insert(usize),
+}
+
+/// The steps from `current` to `next` along their longest common
+/// subsequence, in array order: the same edit `diffYArrayOrder` and
+/// `diffYArray` make in `change-bridge-ydoc.ts`. Only entries the write
+/// moves or drops are deleted, so an entry a collaborator inserts
+/// concurrently stays where they put it.
+fn array_edits(current: &[JsonValue], next: &[JsonValue]) -> Vec<ArrayEdit> {
+    let (m, n) = (current.len(), next.len());
+    let mut dp = vec![vec![0u32; n + 1]; m + 1];
+    for i in 1..=m {
+        for j in 1..=n {
+            dp[i][j] = if json_values_equal(&current[i - 1], &next[j - 1]) {
+                dp[i - 1][j - 1] + 1
+            } else {
+                dp[i - 1][j].max(dp[i][j - 1])
+            };
+        }
+    }
+    let mut edits = Vec::with_capacity(m.max(n));
+    let (mut i, mut j) = (m, n);
+    while i > 0 || j > 0 {
+        if i > 0 && j > 0 && json_values_equal(&current[i - 1], &next[j - 1]) {
+            edits.push(ArrayEdit::Keep);
+            i -= 1;
+            j -= 1;
+        } else if j > 0 && (i == 0 || dp[i][j - 1] >= dp[i - 1][j]) {
+            edits.push(ArrayEdit::Insert(j - 1));
+            j -= 1;
+        } else {
+            edits.push(ArrayEdit::Delete);
+            i -= 1;
+        }
+    }
+    edits.reverse();
+    edits
+}
+
+/// Edit the stored Y.Array `array` in place until it holds `next`.
+fn diff_json_array(
+    txn: &mut yrs::TransactionMut,
+    array: &yrs::ArrayRef,
+    next: &[JsonValue],
+) -> Result<(), JsValue> {
+    let current = array
+        .iter(txn)
+        .map(|value| crate::yrs_value_to_json(value, txn))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| JsValue::from_str(&error))?;
+    let mut cursor: u32 = 0;
+    for edit in array_edits(&current, next) {
+        match edit {
+            ArrayEdit::Keep => cursor += 1,
+            ArrayEdit::Delete => array.remove(txn, cursor),
+            ArrayEdit::Insert(index) => {
+                insert_json_array_value(txn, array, cursor, &next[index])?;
+                cursor += 1;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The key of a keyed entry (a station's or instance's `id`, an axis's
+/// `tag`), `None` for any other value.
+fn keyed_entry_id<'a>(value: &'a JsonValue, key_field: &str) -> Option<&'a str> {
+    value.get(key_field).and_then(JsonValue::as_str)
+}
+
+/// What a keyed list write does to the entries it keeps.
+#[derive(Clone, Copy)]
+enum KeptEntries<'a> {
+    /// Leave them as stored (the worker's copy of them may be stale).
+    Untouched,
+    /// Merge only these fields into each stored entry, in place.
+    Fields(&'a [&'a str]),
+    /// Merge every field of the written entry into the stored one, in place.
+    Merged,
+}
+
+/// Add and remove entries of a stored list of keyed maps (`font.masters`,
+/// `font.instances`, `font.axes`) so it lists the keys of `next` in their
+/// order, and edit the entries it keeps in place as `kept` says. A kept
+/// entry is never deleted and inserted again: a collaborator may be editing
+/// a station's kerning or metrics at the same time, and a replacement would
+/// drop their edit. An entry without its key is refused.
+fn sync_keyed_array(
+    txn: &mut yrs::TransactionMut,
+    map: &yrs::MapRef,
+    key: &str,
+    next: &[JsonValue],
+    key_field: &str,
+    kept: KeptEntries,
+) -> Result<(), JsValue> {
+    let array = match map.get(txn, key) {
+        Some(yrs::types::Value::YArray(array)) => array,
+        None => {
+            let child: yrs::ArrayRef = map.insert(txn, key, ArrayPrelim::from(Vec::<Any>::new()));
+            return fill_json_array(txn, &child, next);
+        }
+        Some(_) => {
+            return Err(JsValue::from_str(&format!(
+                "Refusing to write {}: the stored entry is not a Y.Array",
+                key
+            )))
+        }
+    };
+    let id_of = |value: &JsonValue, which: &str| {
+        keyed_entry_id(value, key_field)
+            .map(|id| JsonValue::String(id.to_string()))
+            .ok_or_else(|| {
+                JsValue::from_str(&format!(
+                    "Refusing to write {}: a {} entry has no {}",
+                    key, which, key_field
+                ))
+            })
+    };
+    let current_ids = array
+        .iter(txn)
+        .map(|value| {
+            crate::yrs_value_to_json(value, txn)
+                .map_err(|error| JsValue::from_str(&error))
+                .and_then(|value| id_of(&value, "stored"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let next_ids = next
+        .iter()
+        .map(|value| id_of(value, "written"))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut cursor: u32 = 0;
+    let mut kept_entries: Vec<(u32, usize)> = Vec::new();
+    let mut next_index = 0usize;
+    for edit in array_edits(&current_ids, &next_ids) {
+        match edit {
+            ArrayEdit::Keep => {
+                kept_entries.push((cursor, next_index));
+                next_index += 1;
+                cursor += 1;
+            }
+            ArrayEdit::Delete => array.remove(txn, cursor),
+            ArrayEdit::Insert(index) => {
+                insert_json_array_value(txn, &array, cursor, &next[index])?;
+                next_index = index + 1;
+                cursor += 1;
+            }
+        }
+    }
+    if matches!(kept, KeptEntries::Untouched) {
+        return Ok(());
+    }
+    for (position, index) in kept_entries {
+        let Some(yrs::types::Value::YMap(entry)) = array.get(txn, position) else {
+            return Err(JsValue::from_str(&format!(
+                "Refusing to write {}: the stored entry {} is not a Y.Map",
+                key, next_ids[index]
+            )));
+        };
+        let JsonValue::Object(written) = &next[index] else {
+            return Err(JsValue::from_str(&format!(
+                "Refusing to write {}: the written entry {} is not an object",
+                key, next_ids[index]
+            )));
+        };
+        match kept {
+            KeptEntries::Untouched => {}
+            KeptEntries::Merged => merge_json_map(txn, &entry, written)?,
+            KeptEntries::Fields(fields) => {
+                for field in fields {
+                    if let Some(value) = written.get(*field) {
+                        merge_json_map_entry(txn, &entry, field, value)?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Add and remove stations by id, leaving every station it keeps untouched.
+fn sync_keyed_array_membership(
+    txn: &mut yrs::TransactionMut,
+    map: &yrs::MapRef,
+    key: &str,
+    next: &[JsonValue],
+) -> Result<(), JsValue> {
+    sync_keyed_array(txn, map, key, next, "id", KeptEntries::Untouched)
+}
+
+/// Write `value`, which must be a list, as the keyed list `map[key]`.
+fn write_keyed_list_value(
+    txn: &mut yrs::TransactionMut,
+    map: &yrs::MapRef,
+    key: &str,
+    value: &JsonValue,
+    key_field: &str,
+    kept: KeptEntries,
+) -> Result<(), JsValue> {
+    let JsonValue::Array(items) = value else {
+        return Err(JsValue::from_str(&format!(
+            "Refusing to write {}: it is not a list",
+            key
+        )));
+    };
+    sync_keyed_array(txn, map, key, items, key_field, kept)
 }
 
 fn nonzero_number_or(value: Option<&JsonValue>, fallback: i64) -> JsonValue {
@@ -302,21 +634,531 @@ fn with_canonical_component_transforms(layer_json: &JsonValue) -> JsonValue {
     layer
 }
 
+/// A drawing written by a batch must be whole: `id`, a finite `width` and a
+/// valid station link in `master` (absent is Babelfont's FreeFloating), and
+/// never a failed geometry reconstruction.
+fn validate_drawing_for_write(layer_id: &str, layer_json: &JsonValue) -> Result<(), JsValue> {
+    if layer_json.get("geometryError").is_some() {
+        return Err(JsValue::from_str(&format!(
+            "Refusing to write drawing {} with a geometry error",
+            layer_id
+        )));
+    }
+    crate::validate_drawing_identity(layer_id, layer_json)
+        .map_err(|error| JsValue::from_str(&format!("Refusing to write {}", error)))
+}
+
+/// The flat drawing list and the indexed-map pair the Y.Doc stores it as,
+/// the same keys `drawingToYMap` writes in JS.
+struct IndexedCollection {
+    array_key: &'static str,
+    by_id_key: &'static str,
+    order_key: &'static str,
+}
+
+const DRAWING_INDEXED_COLLECTIONS: [IndexedCollection; 2] = [
+    IndexedCollection {
+        array_key: "anchors",
+        by_id_key: "anchorsById",
+        order_key: "anchorOrder",
+    },
+    IndexedCollection {
+        array_key: "guides",
+        by_id_key: "guidesById",
+        order_key: "guideOrder",
+    },
+];
+
+static GENERATED_ITEM_ID_COUNTER: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// A new id for an anchor or guide this batch adds. The writing document's
+/// client id keeps it apart from every other client's ids.
+fn generated_item_id(client_id: u64, layer_id: &str) -> String {
+    let counter = GENERATED_ITEM_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{layer_id}-{client_id}-{counter}")
+}
+
+/// `(id, name)` of each item the stored drawing lists in `collection`, in
+/// order, from the indexed pair or a flat list written before it. The order
+/// is read by the rule of `crate::ids_in_order` (an id whose item a
+/// collaborator deleted is skipped, an id listed twice is read once). A
+/// keyed item is read with the id it stores, which every writer keeps equal
+/// to its key; one without it, an item the order does not list, or one half
+/// of the pair without the other is damaged and refused, never filled in
+/// from the key or skipped. A flat item without an id has none to reuse.
+fn stored_collection_items<T: ReadTxn>(
+    txn: &T,
+    layer_map: &yrs::MapRef,
+    collection: &IndexedCollection,
+    layer_id: &str,
+) -> Result<Vec<(String, Option<String>)>, String> {
+    let item_name = |item: &JsonValue| {
+        item.get("name")
+            .and_then(JsonValue::as_str)
+            .map(str::to_string)
+    };
+    let damaged = |detail: String| {
+        format!(
+            "Refusing to write drawing {}: its stored {} are damaged: {}",
+            layer_id, collection.array_key, detail
+        )
+    };
+    let mut items = Vec::new();
+    match (
+        layer_map.get(txn, collection.by_id_key),
+        layer_map.get(txn, collection.order_key),
+    ) {
+        (None, None) => {}
+        (Some(by_id), Some(order)) => {
+            let JsonValue::Object(by_id) = crate::yrs_value_to_json(by_id, txn).map_err(&damaged)? else {
+                return Err(damaged(format!("{} is not a map", collection.by_id_key)));
+            };
+            let JsonValue::Array(order) = crate::yrs_value_to_json(order, txn).map_err(&damaged)? else {
+                return Err(damaged(format!("{} is not a list", collection.order_key)));
+            };
+            let ids = crate::ids_in_order(&by_id, &order, collection.by_id_key, collection.order_key)
+                .map_err(&damaged)?;
+            for id in ids {
+                let item = &by_id[id];
+                if item.get("id").and_then(JsonValue::as_str) != Some(id) {
+                    return Err(damaged(format!(
+                        "{}.{} does not store its id",
+                        collection.by_id_key, id
+                    )));
+                }
+                items.push((id.to_string(), item_name(item)));
+            }
+        }
+        (Some(_), None) => {
+            return Err(damaged(format!(
+                "{} is stored without {}",
+                collection.by_id_key, collection.order_key
+            )))
+        }
+        (None, Some(_)) => {
+            return Err(damaged(format!(
+                "{} is stored without {}",
+                collection.order_key, collection.by_id_key
+            )))
+        }
+    }
+    if let Some(flat) = layer_map.get(txn, collection.array_key) {
+        let JsonValue::Array(flat) = crate::yrs_value_to_json(flat, txn).map_err(&damaged)? else {
+            return Err(damaged(format!("the flat {} entry is not a list", collection.array_key)));
+        };
+        items.extend(flat.iter().filter_map(|item| {
+            let id = item.get("id").and_then(JsonValue::as_str)?;
+            Some((id.to_string(), item_name(item)))
+        }));
+    }
+    Ok(items)
+}
+
+/// Before a write of `collection`, drop from its stored order every id
+/// whose item is gone and every repeated id (keeping its first place), as
+/// `tidyKeyedPairOrder` does in the webapp, so the order lists each stored
+/// item once and nothing else. The longest-common-subsequence diff that
+/// writes the order then never keeps a leftover place for an item this
+/// write adds again (a collaborator dropping that place at the same time
+/// would unlist it), and for a repeated id it drops the same places every
+/// client drops, never the first place the readers use. Run after
+/// `stored_collection_items`, which refuses a damaged pair; changes nothing
+/// when the order is already clean.
+fn tidy_stored_collection_order(
+    txn: &mut yrs::TransactionMut,
+    layer_map: &yrs::MapRef,
+    collection: &IndexedCollection,
+) {
+    let (Some(yrs::types::Value::YMap(by_id)), Some(yrs::types::Value::YArray(order))) = (
+        layer_map.get(txn, collection.by_id_key),
+        layer_map.get(txn, collection.order_key),
+    ) else {
+        return;
+    };
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut drop: Vec<u32> = Vec::new();
+    for (index, value) in order.iter(txn).enumerate() {
+        let yrs::types::Value::Any(Any::String(id)) = value else {
+            continue;
+        };
+        let id = id.to_string();
+        if !by_id.contains_key(txn, &id) || !seen.insert(id) {
+            drop.push(index as u32);
+        }
+    }
+    for index in drop.into_iter().rev() {
+        order.remove(txn, index);
+    }
+}
+
+/// Replace `collection`'s flat list in a drawing being written by its
+/// indexed pair. An item without an id takes the id of a stored item with
+/// the same name that nothing else in the write claims, so rewriting a
+/// drawing does not re-create its anchors; otherwise it gets a new id. With
+/// `always`, a drawing without the list gets an empty pair, so the pair is
+/// created together with the drawing and never later by two clients at once.
+fn write_collection_as_indexed_map(
+    object: &mut JsonMap<String, JsonValue>,
+    collection: &IndexedCollection,
+    stored: &[(String, Option<String>)],
+    client_id: u64,
+    layer_id: &str,
+    always: bool,
+) -> Result<(), JsValue> {
+    let items = match object.remove(collection.array_key) {
+        Some(JsonValue::Array(items)) => items,
+        Some(_) => {
+            return Err(JsValue::from_str(&format!(
+                "Refusing to write drawing {}: {} is not a list",
+                layer_id, collection.array_key
+            )))
+        }
+        None if always => Vec::new(),
+        None => return Ok(()),
+    };
+    let mut claimed: HashSet<String> = items
+        .iter()
+        .filter_map(|item| item.get("id").and_then(JsonValue::as_str))
+        .map(str::to_string)
+        .collect();
+    let mut by_id = JsonMap::new();
+    let mut order = Vec::with_capacity(items.len());
+    for item in items {
+        let JsonValue::Object(mut item) = item else {
+            return Err(JsValue::from_str(&format!(
+                "Refusing to write drawing {}: an item of {} is not an object",
+                layer_id, collection.array_key
+            )));
+        };
+        let id = match item.get("id") {
+            Some(JsonValue::String(id)) if !id.is_empty() => id.clone(),
+            None => {
+                let name = item.get("name").and_then(JsonValue::as_str);
+                let reused = stored.iter().find(|(id, stored_name)| {
+                    name.is_some() && stored_name.as_deref() == name && !claimed.contains(id)
+                });
+                let id = match reused {
+                    Some((id, _)) => id.clone(),
+                    None => generated_item_id(client_id, layer_id),
+                };
+                claimed.insert(id.clone());
+                id
+            }
+            Some(other) => {
+                return Err(JsValue::from_str(&format!(
+                    "Refusing to write drawing {}: an item of {} has an invalid id {}",
+                    layer_id, collection.array_key, other
+                )))
+            }
+        };
+        item.insert("id".into(), JsonValue::String(id.clone()));
+        // Readers list an id once, so a list naming one twice holds two
+        // items for one key: one of them would be lost. `applyIndexedMapArray`
+        // in the webapp refuses it the same way.
+        if by_id.contains_key(&id) {
+            return Err(JsValue::from_str(&format!(
+                "Refusing to write drawing {}: {} entry {} appears twice in the written list",
+                layer_id, collection.array_key, id
+            )));
+        }
+        by_id.insert(id.clone(), JsonValue::Object(item));
+        order.push(JsonValue::String(id));
+    }
+    object.insert(collection.by_id_key.into(), JsonValue::Object(by_id));
+    object.insert(collection.order_key.into(), JsonValue::Array(order));
+    Ok(())
+}
+
+/// The drawing key holding format-specific data, a keyed child map
+/// (`DRAWING_FORMAT_SPECIFIC_KEY` in the webapp).
+const DRAWING_FORMAT_SPECIFIC_KEY: &str = "format_specific";
+
+/// Write a whole drawing into a glyph's `layers` map: create it, with its
+/// anchor, guide, format-specific and geometry maps, or rewrite the stored
+/// one in place until it holds exactly the written drawing.
+///
+/// The outline is stored the way `drawingToYMap` and `writeDrawingGeometry`
+/// store it in JS (`geometryTopology`, `nodePositionsById`,
+/// `shapeDataById`), never as a flat `shapes` list: readers take the maps
+/// when they exist and would ignore a flat list. A drawing without
+/// `shapes`, `anchors`, `guides` or `format_specific` has none (Babelfont
+/// leaves empty ones out), so their stored maps are emptied in place.
+fn write_drawing(
+    txn: &mut yrs::TransactionMut,
+    glyph_map: &yrs::MapRef,
+    layers_map: &yrs::MapRef,
+    layer_id: &str,
+    layer_json: &JsonValue,
+) -> Result<(), JsValue> {
+    validate_drawing_for_write(layer_id, layer_json)?;
+    let JsonValue::Object(mut object) = with_canonical_component_transforms(layer_json) else {
+        return Err(JsValue::from_str(&format!(
+            "Refusing to write drawing {}: it is not an object",
+            layer_id
+        )));
+    };
+    let shapes = match object.remove("shapes") {
+        Some(JsonValue::Array(shapes)) => shapes,
+        None | Some(JsonValue::Null) => Vec::new(),
+        Some(_) => {
+            return Err(JsValue::from_str(&format!(
+                "Refusing to write drawing {}: shapes is not a list",
+                layer_id
+            )))
+        }
+    };
+    for key in DRAWING_GEOMETRY_KEYS {
+        if object.contains_key(key) {
+            return Err(JsValue::from_str(&format!(
+                "Refusing to write drawing {}: it carries the stored geometry key {}",
+                layer_id, key
+            )));
+        }
+    }
+    // `format_specific` is a keyed child map created with the drawing, empty
+    // when it has none, as `drawingToYMap` does: a map created later by the
+    // first entry would race a collaborator's first entry, and every entry
+    // in the map that loses would disappear.
+    match object.get(DRAWING_FORMAT_SPECIFIC_KEY) {
+        Some(JsonValue::Object(_)) => {}
+        None | Some(JsonValue::Null) => {
+            object.insert(
+                DRAWING_FORMAT_SPECIFIC_KEY.into(),
+                JsonValue::Object(JsonMap::new()),
+            );
+        }
+        Some(_) => {
+            return Err(JsValue::from_str(&format!(
+                "Refusing to write drawing {}: format_specific is not an object",
+                layer_id
+            )))
+        }
+    }
+    // Babelfont writes a FreeFloating link by leaving `master` out; the
+    // Y.Doc stores it by name, as `build_reinterpolated_layer` does.
+    object
+        .entry("master")
+        .or_insert_with(|| serde_json::json!({ "type": "FreeFloating" }));
+    let client_id = txn.doc().client_id();
+    let layer_map = match layers_map.get(txn, layer_id) {
+        Some(yrs::types::Value::YMap(layer_map)) => {
+            for collection in &DRAWING_INDEXED_COLLECTIONS {
+                let stored = stored_collection_items(txn, &layer_map, collection, layer_id)
+                    .map_err(|error| JsValue::from_str(&error))?;
+                tidy_stored_collection_order(txn, &layer_map, collection);
+                write_collection_as_indexed_map(
+                    &mut object,
+                    collection,
+                    &stored,
+                    client_id,
+                    layer_id,
+                    true,
+                )?;
+                // Readers take the indexed pair; a flat list beside it
+                // would only go stale.
+                if layer_map.get(txn, collection.array_key).is_some() {
+                    layer_map.remove(txn, collection.array_key);
+                }
+            }
+            replace_drawing_map_contents(txn, &layer_map, &object)?;
+            layer_map
+        }
+        Some(_) => {
+            return Err(JsValue::from_str(&format!(
+                "Refusing to write drawing {}: the stored drawing is not a map",
+                layer_id
+            )))
+        }
+        None => {
+            for collection in &DRAWING_INDEXED_COLLECTIONS {
+                write_collection_as_indexed_map(
+                    &mut object,
+                    collection,
+                    &[],
+                    client_id,
+                    layer_id,
+                    true,
+                )?;
+            }
+            let layer_map: yrs::MapRef = layers_map.insert(txn, layer_id, MapPrelim::<Any>::new());
+            fill_json_map(txn, &layer_map, &object)?;
+            layer_map
+        }
+    };
+    write_drawing_geometry(txn, &layer_map, layer_id, &shapes, client_id)?;
+    ensure_layer_order_contains(txn, glyph_map, layer_id)
+}
+
+/// The drawing keys that hold its outline (`drawing-geometry-ydoc.ts`).
+const DRAWING_GEOMETRY_KEYS: [&str; 3] = [
+    DRAWING_GEOMETRY_TOPOLOGY_KEY,
+    DRAWING_NODE_POSITIONS_KEY,
+    DRAWING_SHAPE_DATA_KEY,
+];
+
+/// Make the stored drawing `layer_map` hold exactly `object`: every key is
+/// written in place (nested maps key by key, arrays by their longest common
+/// subsequence, equal values not at all) and every stored key `object` lacks
+/// is removed, so a rewritten drawing keeps no `location` it no longer has.
+/// (`write_drawing` always names the station link, so `master` stays.) The
+/// geometry maps are left to `write_drawing_geometry`, and a stored
+/// internal `*ById` / `*Order` pair the drawing does not name stays.
+fn replace_drawing_map_contents(
+    txn: &mut yrs::TransactionMut,
+    layer_map: &yrs::MapRef,
+    object: &JsonMap<String, JsonValue>,
+) -> Result<(), JsValue> {
+    for (key, value) in object {
+        replace_json_map_entry(txn, layer_map, key, value)?;
+    }
+    let stale: Vec<String> = layer_map
+        .keys(txn)
+        .filter(|key| {
+            !object.contains_key(*key)
+                && !DRAWING_GEOMETRY_KEYS.contains(key)
+                && !key.ends_with("ById")
+                && !key.ends_with("Order")
+        })
+        .map(str::to_string)
+        .collect();
+    for key in stale {
+        layer_map.remove(txn, &key);
+    }
+    Ok(())
+}
+
+/// Write `value` as `map[key]` so it holds exactly `value`. A stored Y.Map
+/// is edited in place and loses the keys `value` lacks; it is never
+/// replaced, since a collaborator may be writing into it.
+fn replace_json_map_entry(
+    txn: &mut yrs::TransactionMut,
+    map: &yrs::MapRef,
+    key: &str,
+    value: &JsonValue,
+) -> Result<(), JsValue> {
+    let JsonValue::Object(object) = value else {
+        return merge_json_map_entry(txn, map, key, value);
+    };
+    let Some(yrs::types::Value::YMap(existing)) = map.get(txn, key) else {
+        return set_json_map_entry(txn, map, key, value);
+    };
+    for (child_key, child_value) in object {
+        replace_json_map_entry(txn, &existing, child_key, child_value)?;
+    }
+    let stale: Vec<String> = existing
+        .keys(txn)
+        .filter(|child_key| !object.contains_key(*child_key))
+        .map(str::to_string)
+        .collect();
+    for child_key in stale {
+        existing.remove(txn, &child_key);
+    }
+    Ok(())
+}
+
+/// A geometry child map of a drawing. It is created only together with the
+/// drawing's first topology (`may_create`); afterwards a missing one was
+/// lost, and creating a second one next to a collaborator's would hide
+/// every entry in theirs (`ensureChildMap`).
+fn geometry_child_map(
+    txn: &mut yrs::TransactionMut,
+    layer_map: &yrs::MapRef,
+    layer_id: &str,
+    key: &str,
+    may_create: bool,
+) -> Result<yrs::MapRef, JsValue> {
+    match layer_map.get(txn, key) {
+        Some(yrs::types::Value::YMap(existing)) => Ok(existing),
+        Some(_) => Err(JsValue::from_str(&format!(
+            "Refusing to write drawing {}: its {} is not a map",
+            layer_id, key
+        ))),
+        None if may_create => Ok(layer_map.insert(txn, key, MapPrelim::<Any>::new())),
+        None => Err(JsValue::from_str(&format!(
+            "Refusing to write drawing {}: the drawing’s geometry has no {} map",
+            layer_id, key
+        ))),
+    }
+}
+
+static GENERATED_GEOMETRY_ID_COUNTER: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Write a drawing's outline the way `writeDrawingGeometry` does in JS:
+/// split `shapes` into topology, node positions and shape data; remove a
+/// flat `shapes` key; write the topology string only when it changed; and
+/// write only positions and shape data that differ. Positions of nodes the
+/// outline no longer has are never deleted: a concurrent topology may still
+/// name them.
+fn write_drawing_geometry(
+    txn: &mut yrs::TransactionMut,
+    layer_map: &yrs::MapRef,
+    layer_id: &str,
+    shapes: &[JsonValue],
+    client_id: u64,
+) -> Result<(), JsValue> {
+    let refuse = |error: String| {
+        JsValue::from_str(&format!(
+            "Refusing to write drawing {}: {}",
+            layer_id, error
+        ))
+    };
+    let stored = match layer_map.get(txn, DRAWING_GEOMETRY_TOPOLOGY_KEY) {
+        None => None,
+        Some(yrs::types::Value::Any(Any::String(raw))) => {
+            Some(decode_geometry_topology(&raw).map_err(refuse)?)
+        }
+        Some(_) => return Err(refuse("geometryTopology must be a JSON string".to_string())),
+    };
+    let mut new_id = || {
+        let counter =
+            GENERATED_GEOMETRY_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        format!("{layer_id}-g{client_id}-{counter}")
+    };
+    let mut split = split_shapes_for_ydoc(shapes, stored.as_ref(), &mut new_id).map_err(refuse)?;
+    split.topology.g = next_generation(stored.as_ref(), &split.topology.shapes);
+    let encoded = encode_geometry_topology(&split.topology).map_err(refuse)?;
+    if layer_map.get(txn, "shapes").is_some() {
+        layer_map.remove(txn, "shapes");
+    }
+    let stored_encoded = match layer_map.get(txn, DRAWING_GEOMETRY_TOPOLOGY_KEY) {
+        Some(yrs::types::Value::Any(Any::String(raw))) => Some(raw.to_string()),
+        _ => None,
+    };
+    if stored_encoded.as_deref() != Some(encoded.as_str()) {
+        layer_map.insert(txn, DRAWING_GEOMETRY_TOPOLOGY_KEY, encoded);
+    }
+    let may_create = stored.is_none();
+    let positions =
+        geometry_child_map(txn, layer_map, layer_id, DRAWING_NODE_POSITIONS_KEY, may_create)?;
+    for (node_id, packed) in split.positions {
+        // An equal position is not written again: each rewrite deletes the
+        // stored item, and a receiver that misses this packet would lose
+        // the coordinate to that deletion.
+        let unchanged = matches!(
+            positions.get(txn, &node_id),
+            Some(yrs::types::Value::Any(Any::String(current))) if current.as_ref() == packed
+        );
+        if !unchanged {
+            positions.insert(txn, node_id, packed);
+        }
+    }
+    let shape_data =
+        geometry_child_map(txn, layer_map, layer_id, DRAWING_SHAPE_DATA_KEY, may_create)?;
+    for (shape_id, data) in split.shape_data {
+        set_json_map_entry(txn, &shape_data, &shape_id, &JsonValue::Object(data))?;
+    }
+    Ok(())
+}
+
 fn upsert_layer_on_glyph_root(
     txn: &mut yrs::TransactionMut,
     layer_id: &str,
     layer_json: &JsonValue,
 ) -> Result<(), JsValue> {
-    let layer_json = &with_canonical_component_transforms(layer_json);
     let (glyph_map, layers_map) = glyph_root_maps(txn)?;
-    if let Some(yrs::types::Value::YMap(layer_map)) = layers_map.get(txn, layer_id) {
-        if let JsonValue::Object(object) = layer_json {
-            merge_json_map(txn, &layer_map, object)?;
-            return Ok(());
-        }
-    }
-    set_json_map_entry(txn, &layers_map, layer_id, layer_json)?;
-    ensure_layer_order_contains(txn, &glyph_map, layer_id)
+    write_drawing(txn, &glyph_map, &layers_map, layer_id, layer_json)
 }
 
 fn remove_layer_on_glyph_root(
@@ -329,61 +1171,98 @@ fn remove_layer_on_glyph_root(
     Ok(())
 }
 
-fn layer_json_from_glyph_root<T: ReadTxn>(txn: &T, layer_id: &str) -> Option<JsonValue> {
-    let glyph_map = txn.get_map("glyph")?;
-    let layers_value = glyph_map.get(txn, "layers")?;
-    let yrs::types::Value::YMap(layers_map) = layers_value else {
-        return None;
+fn layer_json_from_glyph_root<T: ReadTxn>(
+    txn: &T,
+    layer_id: &str,
+) -> Result<Option<JsonValue>, JsValue> {
+    let Some(glyph_map) = txn.get_map("glyph") else {
+        return Ok(None);
     };
-    let layer_val = layers_map.get(txn, layer_id)?;
-    Some(crate::ydoc_layer_to_json(layer_id, layer_val, txn))
+    let Some(yrs::types::Value::YMap(layers_map)) = glyph_map.get(txn, "layers") else {
+        return Ok(None);
+    };
+    let Some(layer_val) = layers_map.get(txn, layer_id) else {
+        return Ok(None);
+    };
+    crate::ydoc_layer_to_json(layer_id, layer_val, txn)
+        .map(Some)
+        .map_err(|error| JsValue::from_str(&error))
 }
 
-fn encode_glyph_diffs(clones: &[ClonedGlyphDoc]) -> Vec<(String, Vec<u8>)> {
+/// One packet per glyph clone that the batch edited.
+fn encode_glyph_edits(clones: &[ClonedGlyphDoc]) -> Result<Vec<(String, Vec<u8>)>, JsValue> {
     clones
         .iter()
-        .filter_map(|clone| {
-            let diff = clone
-                .doc
-                .transact()
-                .encode_diff_v1(&clone.base_state_vector);
-            if diff.is_empty() {
-                None
-            } else {
-                Some((glyph_document_id(&clone.glyph_id), diff))
-            }
-        })
+        .filter(|clone| clone.edits.has_edits())
+        .map(|clone| Ok((glyph_document_id(&clone.glyph_id), clone.edits.packet()?)))
         .collect()
 }
 
-/// `[{ documentId, update }]` packets from JS; anything else is ignored.
-fn base_glyph_packets(value: &JsValue) -> Vec<(String, Vec<u8>)> {
-    let Some(array) = value.dyn_ref::<js_sys::Array>() else {
-        return Vec::new();
-    };
+/// `[{ documentId, update }]` packets from JS. An entry of any other shape
+/// is refused, never skipped: skipping it would drop that base packet.
+fn base_glyph_packets(value: &JsValue) -> Result<Vec<(String, Vec<u8>)>, JsValue> {
+    if value.is_undefined() || value.is_null() {
+        return Ok(Vec::new());
+    }
+    let array = value.dyn_ref::<js_sys::Array>().ok_or_else(|| {
+        JsValue::from_str("refine_layer_snapshots_yjs: base packets are not an array")
+    })?;
     array
         .iter()
-        .filter_map(|entry| {
+        .enumerate()
+        .map(|(index, entry)| {
+            let malformed = |what: &str| {
+                JsValue::from_str(&format!(
+                    "refine_layer_snapshots_yjs: base packet {} has no {}",
+                    index, what
+                ))
+            };
             let document_id = js_sys::Reflect::get(&entry, &JsValue::from_str("documentId"))
-                .ok()?
-                .as_string()?;
-            let update = js_sys::Reflect::get(&entry, &JsValue::from_str("update")).ok()?;
-            Some((document_id, js_sys::Uint8Array::new(&update).to_vec()))
+                .ok()
+                .and_then(|value| value.as_string())
+                .ok_or_else(|| malformed("documentId"))?;
+            let update = js_sys::Reflect::get(&entry, &JsValue::from_str("update"))
+                .ok()
+                .filter(|value| {
+                    value.is_instance_of::<js_sys::Uint8Array>()
+                        || value.is_instance_of::<js_sys::ArrayBuffer>()
+                })
+                .ok_or_else(|| malformed("byte update"))?;
+            Ok((document_id, js_sys::Uint8Array::new(&update).to_vec()))
         })
         .collect()
 }
 
-fn find_cloned_glyph_mut<'a>(
+/// The loaded glyph document a batch edits. A glyph whose drawings the
+/// batch would write has no loaded document only when the worker's state is
+/// out of step with JS, so this refuses instead of dropping the edit.
+fn require_cloned_glyph_mut<'a>(
     clones: &'a mut [ClonedGlyphDoc],
     glyph_name: &str,
-) -> Option<&'a mut ClonedGlyphDoc> {
+    context: &str,
+) -> Result<&'a mut ClonedGlyphDoc, JsValue> {
     clones
         .iter_mut()
         .find(|clone| clone.glyph_name == glyph_name)
+        .ok_or_else(|| {
+            JsValue::from_str(&format!(
+                "{}: glyph {} has drawings to write but its glyph document is not loaded",
+                context, glyph_name
+            ))
+        })
 }
 
-fn json_number_to_any(number: &serde_json::Number) -> Any {
-    Any::Number(number.as_f64().unwrap_or(0.0))
+fn json_number_to_any(number: &serde_json::Number) -> Result<Any, JsValue> {
+    number
+        .as_f64()
+        .filter(|value| value.is_finite())
+        .map(Any::Number)
+        .ok_or_else(|| {
+            JsValue::from_str(&format!(
+                "Refusing to write a number that is not a finite f64: {}",
+                number
+            ))
+        })
 }
 
 fn set_json_map_entry(
@@ -392,6 +1271,9 @@ fn set_json_map_entry(
     key: &str,
     value: &JsonValue,
 ) -> Result<(), JsValue> {
+    if map_entry_equals(txn, map, key, value)? {
+        return Ok(());
+    }
     match value {
         JsonValue::Object(object) => {
             map.remove(txn, key);
@@ -399,15 +1281,13 @@ fn set_json_map_entry(
             fill_json_map(txn, &child, object)?;
         }
         JsonValue::Array(items) => {
-            map.remove(txn, key);
-            let child: yrs::ArrayRef = map.insert(txn, key, ArrayPrelim::from(Vec::<Any>::new()));
-            fill_json_array(txn, &child, items)?;
+            write_json_array_entry(txn, map, key, items)?;
         }
         JsonValue::String(text) => {
             map.insert(txn, key, text.clone());
         }
         JsonValue::Number(number) => {
-            map.insert(txn, key, json_number_to_any(number));
+            map.insert(txn, key, json_number_to_any(number)?);
         }
         JsonValue::Bool(flag) => {
             map.insert(txn, key, *flag);
@@ -449,7 +1329,7 @@ fn push_json_array_value(
             array.push_back(txn, text.clone());
         }
         JsonValue::Number(number) => {
-            array.push_back(txn, json_number_to_any(number));
+            array.push_back(txn, json_number_to_any(number)?);
         }
         JsonValue::Bool(flag) => {
             array.push_back(txn, *flag);
@@ -459,6 +1339,38 @@ fn push_json_array_value(
         }
     }
 
+    Ok(())
+}
+
+fn insert_json_array_value(
+    txn: &mut yrs::TransactionMut,
+    array: &yrs::ArrayRef,
+    index: u32,
+    value: &JsonValue,
+) -> Result<(), JsValue> {
+    match value {
+        JsonValue::Object(object) => {
+            let child: yrs::MapRef = array.insert(txn, index, MapPrelim::<Any>::new());
+            fill_json_map(txn, &child, object)?;
+        }
+        JsonValue::Array(items) => {
+            let child: yrs::ArrayRef =
+                array.insert(txn, index, ArrayPrelim::from(Vec::<Any>::new()));
+            fill_json_array(txn, &child, items)?;
+        }
+        JsonValue::String(text) => {
+            array.insert(txn, index, text.clone());
+        }
+        JsonValue::Number(number) => {
+            array.insert(txn, index, json_number_to_any(number)?);
+        }
+        JsonValue::Bool(flag) => {
+            array.insert(txn, index, *flag);
+        }
+        JsonValue::Null => {
+            array.insert(txn, index, Any::Null);
+        }
+    }
     Ok(())
 }
 
@@ -566,16 +1478,8 @@ fn upsert_layer_json(
     layer_id: &str,
     layer_json: &JsonValue,
 ) -> Result<(), JsValue> {
-    let layer_json = &with_canonical_component_transforms(layer_json);
     let (glyph_map, layers_map) = glyph_maps_for_layer_edit(txn, font_map, glyph_name)?;
-    if let Some(yrs::types::Value::YMap(layer_map)) = layers_map.get(txn, layer_id) {
-        if let JsonValue::Object(object) = layer_json {
-            merge_json_map(txn, &layer_map, object)?;
-            return ensure_layer_order_contains(txn, &glyph_map, layer_id);
-        }
-    }
-    set_json_map_entry(txn, &layers_map, layer_id, layer_json)?;
-    ensure_layer_order_contains(txn, &glyph_map, layer_id)
+    write_drawing(txn, &glyph_map, &layers_map, layer_id, layer_json)
 }
 
 fn remove_layer_json(
@@ -590,16 +1494,16 @@ fn remove_layer_json(
     Ok(())
 }
 
-fn layer_id_for_batch(layer: &Layer) -> Option<String> {
-    if let Some(layer_id) = layer.id.clone() {
-        return Some(layer_id);
-    }
-
-    match &layer.master {
-        LayerType::DefaultForMaster(master_id) => Some(master_id.clone()),
-        LayerType::AssociatedWithMaster(master_id) => Some(master_id.clone()),
-        LayerType::FreeFloating => None,
-    }
+/// The id a batch writes `layer` under. Every stored drawing has its own
+/// id; one without it is damaged and refused, never given its station's id,
+/// which would write it over the station's own drawing.
+fn layer_id_for_batch(glyph_name: &str, layer: &Layer) -> Result<String, String> {
+    layer.id.clone().ok_or_else(|| {
+        format!(
+            "Refusing to write glyph {}: one of its drawings has no id",
+            glyph_name
+        )
+    })
 }
 
 fn target_location_for_layer(
@@ -632,7 +1536,7 @@ fn target_location_for_layer(
 fn collect_reinterpolation_targets(
     font: &babelfont::Font,
     master_id: &str,
-) -> Vec<ReinterpolationTarget> {
+) -> Result<Vec<ReinterpolationTarget>, String> {
     let mut targets = Vec::new();
 
     for glyph in font.glyphs.iter() {
@@ -653,9 +1557,7 @@ fn collect_reinterpolation_targets(
                 continue;
             }
 
-            let Some(layer_id) = layer_id_for_batch(layer) else {
-                continue;
-            };
+            let layer_id = layer_id_for_batch(&glyph_name, layer)?;
 
             targets.push(ReinterpolationTarget {
                 glyph_name: glyph_name.clone(),
@@ -665,7 +1567,7 @@ fn collect_reinterpolation_targets(
         }
     }
 
-    targets
+    Ok(targets)
 }
 
 fn find_reinterpolation_target(
@@ -677,13 +1579,52 @@ fn find_reinterpolation_target(
     let layer = glyph
         .layers
         .iter()
-        .find(|layer| layer_id_for_batch(layer).as_deref() == Some(layer_id))?;
+        .find(|layer| layer.id.as_deref() == Some(layer_id))?;
 
     Some(ReinterpolationTarget {
         glyph_name: glyph_name.to_string(),
         layer_id: layer_id.to_string(),
         layer: layer.clone(),
     })
+}
+
+/// The drawing `reinterpolate_layer_yjs` was asked to rebuild. A drawing
+/// the font does not have is refused, never answered with an empty batch,
+/// so the caller learns that the edit was not applied.
+fn require_reinterpolation_target(
+    font: &babelfont::Font,
+    glyph_name: &str,
+    layer_id: &str,
+) -> Result<ReinterpolationTarget, String> {
+    find_reinterpolation_target(font, glyph_name, layer_id).ok_or_else(|| {
+        format!(
+            "Refusing to reinterpolate drawing {}::{}: the font has no such drawing",
+            glyph_name, layer_id
+        )
+    })
+}
+
+/// Rebuild every target with `build`, in order. The first drawing that
+/// cannot be rebuilt refuses all of them, so a caller writes either every
+/// rebuilt drawing or none.
+fn regenerate_reinterpolation_targets<F>(
+    targets: Vec<ReinterpolationTarget>,
+    mut build: F,
+) -> Result<Vec<(ReinterpolationTarget, JsonValue)>, String>
+where
+    F: FnMut(&ReinterpolationTarget) -> Result<JsonValue, String>,
+{
+    let mut regenerated = Vec::with_capacity(targets.len());
+    for target in targets {
+        let value = build(&target).map_err(|error| {
+            format!(
+                "drawing {}::{} cannot be rebuilt, so no drawing was changed: {}",
+                target.glyph_name, target.layer_id, error
+            )
+        })?;
+        regenerated.push((target, value));
+    }
+    Ok(regenerated)
 }
 
 fn clone_font_without_target_layer(
@@ -695,7 +1636,7 @@ fn clone_font_without_target_layer(
     if let Some(glyph) = cloned.glyphs.get_mut(glyph_name) {
         glyph
             .layers
-            .retain(|candidate| layer_id_for_batch(candidate).as_deref() != Some(layer_id));
+            .retain(|candidate| candidate.id.as_deref() != Some(layer_id));
     }
     cloned
 }
@@ -750,11 +1691,13 @@ fn font_with_variation_as_glyph(
             .filter(|layer| layer.feature_variation_rules().map(Vec::as_slice) == Some(rules))
             .filter(|layer| {
                 excluded_layer_id.is_none()
-                    || layer_id_for_batch(layer).as_deref() != excluded_layer_id
+                    || layer.id.as_deref() != excluded_layer_id
             })
             .cloned()
             .map(|mut layer| {
-                layer.format_specific.remove(babelfont::FEATURE_VARIATION_ATTRIBUTES_KEY);
+                layer
+                    .format_specific
+                    .remove(babelfont::FEATURE_VARIATION_ATTRIBUTES_KEY);
                 if layer.location.is_none() {
                     if let LayerType::AssociatedWithMaster(master_id) = &layer.master {
                         layer.master = LayerType::DefaultForMaster(master_id.clone());
@@ -770,7 +1713,12 @@ fn font_with_variation_as_glyph(
 
 /// A new layer id for a glyph, from `base`, that none of its layers has.
 fn unused_layer_id(glyph: &babelfont::Glyph, base: &str) -> String {
-    let taken = |id: &str| glyph.layers.iter().any(|layer| layer.id.as_deref() == Some(id));
+    let taken = |id: &str| {
+        glyph
+            .layers
+            .iter()
+            .any(|layer| layer.id.as_deref() == Some(id))
+    };
     let mut candidate = base.to_string();
     let mut suffix = 2;
     while taken(&candidate) {
@@ -887,8 +1835,9 @@ fn build_reinterpolated_layer(
         // Still a layer of the same variation, at its own location if it
         // had one (a free layer of the variation), else at its master.
         interpolated.location = source_layer.location.clone();
-        if let Some(attributes) =
-            source_layer.format_specific.get(babelfont::FEATURE_VARIATION_ATTRIBUTES_KEY)
+        if let Some(attributes) = source_layer
+            .format_specific
+            .get(babelfont::FEATURE_VARIATION_ATTRIBUTES_KEY)
         {
             interpolated.format_specific.insert(
                 babelfont::FEATURE_VARIATION_ATTRIBUTES_KEY.to_string(),
@@ -897,8 +1846,16 @@ fn build_reinterpolated_layer(
         }
     }
 
-    serde_json::to_value(interpolated)
-        .map_err(|error| JsValue::from_str(&format!("Layer serialization failed: {}", error)))
+    let mut layer_json = serde_json::to_value(interpolated)
+        .map_err(|error| JsValue::from_str(&format!("Layer serialization failed: {}", error)))?;
+    // Babelfont leaves out a FreeFloating `master`; a drawing in the Y.Doc
+    // always names its station link.
+    if let Some(object) = layer_json.as_object_mut() {
+        object
+            .entry("master")
+            .or_insert_with(|| serde_json::json!({ "type": "FreeFloating" }));
+    }
+    Ok(layer_json)
 }
 
 fn merge_reinterpolated_layer(existing: &JsonValue, regenerated: JsonValue) -> JsonValue {
@@ -1026,7 +1983,8 @@ fn encode_result_packets(
 #[wasm_bindgen]
 pub fn reinterpolate_master_layers_yjs(master_id: &str) -> Result<JsValue, JsValue> {
     let font = get_or_rebuild_font_cache()?;
-    let targets = collect_reinterpolation_targets(&font, master_id);
+    let targets =
+        collect_reinterpolation_targets(&font, master_id).map_err(|error| JsValue::from_str(&error))?;
     if targets.is_empty() {
         return encode_result(
             Vec::new(),
@@ -1041,42 +1999,42 @@ pub fn reinterpolate_master_layers_yjs(master_id: &str) -> Result<JsValue, JsVal
         );
     }
 
+    // Every drawing is rebuilt before anything is written: one that cannot
+    // be rebuilt refuses the whole station edit, so it is never applied to
+    // only some drawings.
+    let regenerated = regenerate_reinterpolation_targets(targets, |target| {
+        build_reinterpolated_layer(
+            &font,
+            &target.glyph_name,
+            &target.layer,
+            &target.layer_id,
+            target.layer.master.clone(),
+            target.layer.location.clone(),
+            Some(&target.layer_id),
+        )
+        .map_err(|error| error.as_string().unwrap_or_else(|| format!("{:?}", error)))
+    })
+    .map_err(|error| JsValue::from_str(&format!("reinterpolate_master_layers_yjs: {}", error)))?;
+
     if glyph_shards_active() {
-        let names: HashSet<String> = targets.iter().map(|t| t.glyph_name.clone()).collect();
+        let names: HashSet<String> = regenerated
+            .iter()
+            .map(|(target, _)| target.glyph_name.clone())
+            .collect();
         let mut clones = clone_named_glyph_docs(&names)?;
         let mut changed_glyphs = HashSet::new();
         let mut layer_targets = Vec::new();
         let mut layer_operations = Vec::new();
-        for target in targets {
-            let Some(clone) = find_cloned_glyph_mut(&mut clones, &target.glyph_name) else {
-                continue;
-            };
-            let regenerated_value = match build_reinterpolated_layer(
-                &font,
+        for (target, regenerated_value) in regenerated {
+            let clone = require_cloned_glyph_mut(
+                &mut clones,
                 &target.glyph_name,
-                &target.layer,
-                &target.layer_id,
-                target.layer.master.clone(),
-                target.layer.location.clone(),
-                Some(&target.layer_id),
-            ) {
-                Ok(new_value) => new_value,
-                Err(error) => {
-                    warn_batch(&format!(
-                        "reinterpolate_master_layers_yjs skipped {}::{}: {}",
-                        target.glyph_name,
-                        target.layer_id,
-                        error
-                            .as_string()
-                            .unwrap_or_else(|| "unknown error".to_string())
-                    ));
-                    continue;
-                }
-            };
+                "reinterpolate_master_layers_yjs",
+            )?;
             let (old_value, new_value) = {
                 let txn = clone.doc.transact();
                 let old_value =
-                    layer_json_from_glyph_root(&txn, &target.layer_id).ok_or_else(|| {
+                    layer_json_from_glyph_root(&txn, &target.layer_id)?.ok_or_else(|| {
                         JsValue::from_str(&format!(
                             "Missing raw Y.Doc layer {}::{} during reinterpolation",
                             target.glyph_name, target.layer_id
@@ -1104,7 +2062,7 @@ pub fn reinterpolate_master_layers_yjs(master_id: &str) -> Result<JsValue, JsVal
             });
         }
         return encode_result_packets(
-            encode_glyph_diffs(&clones),
+            encode_glyph_edits(&clones)?,
             &BatchMetadata {
                 changed_glyphs: changed_glyphs.into_iter().collect(),
                 layer_targets,
@@ -1116,7 +2074,7 @@ pub fn reinterpolate_master_layers_yjs(master_id: &str) -> Result<JsValue, JsVal
         );
     }
 
-    let (clone_doc, base_state_vector) = clone_current_ydoc()?;
+    let (clone_doc, edits) = clone_current_ydoc()?;
     let mut changed_glyphs = HashSet::new();
     let mut layer_targets = Vec::new();
     let mut layer_operations = Vec::new();
@@ -1127,38 +2085,14 @@ pub fn reinterpolate_master_layers_yjs(master_id: &str) -> Result<JsValue, JsVal
             .get_map("font")
             .ok_or_else(|| JsValue::from_str("Missing font map in cloned Y.Doc"))?;
 
-        for target in targets {
-            let regenerated_value = match build_reinterpolated_layer(
-                &font,
-                &target.glyph_name,
-                &target.layer,
-                &target.layer_id,
-                target.layer.master.clone(),
-                target.layer.location.clone(),
-                Some(&target.layer_id),
-            ) {
-                Ok(new_value) => new_value,
-                Err(error) => {
-                    warn_batch(&format!(
-                        "reinterpolate_master_layers_yjs skipped {}::{}: {}",
-                        target.glyph_name,
-                        target.layer_id,
-                        error
-                            .as_string()
-                            .unwrap_or_else(|| "unknown error".to_string())
-                    ));
-                    continue;
-                }
-            };
-
-            let old_value =
-                ydoc_get_layer_json_with_txn(&target.glyph_name, &target.layer_id, &txn)
-                    .ok_or_else(|| {
-                        JsValue::from_str(&format!(
-                            "Missing raw Y.Doc layer {}::{} during reinterpolation",
-                            target.glyph_name, target.layer_id
-                        ))
-                    })?;
+        for (target, regenerated_value) in regenerated {
+            let old_value = layer_json_from_core(&target.glyph_name, &target.layer_id, &txn)?
+                .ok_or_else(|| {
+                    JsValue::from_str(&format!(
+                        "Missing raw Y.Doc layer {}::{} during reinterpolation",
+                        target.glyph_name, target.layer_id
+                    ))
+                })?;
             let new_value = merge_reinterpolated_layer(&old_value, regenerated_value);
 
             upsert_layer_json(
@@ -1183,7 +2117,7 @@ pub fn reinterpolate_master_layers_yjs(master_id: &str) -> Result<JsValue, JsVal
         }
     }
 
-    let update = clone_doc.transact().encode_diff_v1(&base_state_vector);
+    let update = edits.packet()?;
     encode_result(
         update,
         &BatchMetadata {
@@ -1197,24 +2131,16 @@ pub fn reinterpolate_master_layers_yjs(master_id: &str) -> Result<JsValue, JsVal
     )
 }
 
+/// The rebuilt drawing as `(document id, update, metadata)`. The document id
+/// is the glyph shard the drawing lives in when shards are loaded, so the
+/// update is never routed to the font-core document by mistake.
 fn build_reinterpolate_layer_batch(
     glyph_name: &str,
     layer_id: &str,
-) -> Result<(Vec<u8>, BatchMetadata), JsValue> {
+) -> Result<(String, Vec<u8>, BatchMetadata), JsValue> {
     let font = get_or_rebuild_font_cache()?;
-    let Some(target) = find_reinterpolation_target(&font, glyph_name, layer_id) else {
-        return Ok((
-            Vec::new(),
-            BatchMetadata {
-                changed_glyphs: Vec::new(),
-                layer_targets: Vec::new(),
-                layer_operations: Vec::new(),
-                masters_operation: None,
-                axes_operation: None,
-                instances_operation: None,
-            },
-        ));
-    };
+    let target = require_reinterpolation_target(&font, glyph_name, layer_id)
+        .map_err(|error| JsValue::from_str(&error))?;
 
     let regenerated_value = build_reinterpolated_layer(
         &font,
@@ -1229,23 +2155,15 @@ fn build_reinterpolate_layer_batch(
     if glyph_shards_active() {
         let names = HashSet::from([target.glyph_name.clone()]);
         let mut clones = clone_named_glyph_docs(&names)?;
-        let Some(clone) = clones.first_mut() else {
-            return Ok((
-                Vec::new(),
-                BatchMetadata {
-                    changed_glyphs: Vec::new(),
-                    layer_targets: Vec::new(),
-                    layer_operations: Vec::new(),
-                    masters_operation: None,
-                    axes_operation: None,
-                    instances_operation: None,
-                },
-            ));
-        };
+        let clone = require_cloned_glyph_mut(
+            &mut clones,
+            &target.glyph_name,
+            "reinterpolate_layer_yjs",
+        )?;
         let (old_value, new_value) = {
             let txn = clone.doc.transact();
             let old_value =
-                layer_json_from_glyph_root(&txn, &target.layer_id).ok_or_else(|| {
+                layer_json_from_glyph_root(&txn, &target.layer_id)?.ok_or_else(|| {
                     JsValue::from_str(&format!(
                         "Missing raw Y.Doc layer {}::{} during reinterpolation",
                         target.glyph_name, target.layer_id
@@ -1258,12 +2176,13 @@ fn build_reinterpolate_layer_batch(
             let mut txn = clone.doc.transact_mut();
             upsert_layer_on_glyph_root(&mut txn, &target.layer_id, &new_value)?;
         }
-        let packets = encode_glyph_diffs(&clones);
-        let update = packets
-            .first()
-            .map(|(_, bytes)| bytes.clone())
-            .unwrap_or_default();
+        // A rebuilt drawing equal to the stored one writes nothing: that is
+        // a real no-op, answered with an empty update for this glyph's own
+        // document, never a refusal.
+        let document_id = glyph_document_id(&clone.glyph_id);
+        let update = clone.edits.packet()?;
         return Ok((
+            document_id,
             update,
             BatchMetadata {
                 changed_glyphs: vec![target.glyph_name.clone()],
@@ -1284,10 +2203,10 @@ fn build_reinterpolate_layer_batch(
         ));
     }
 
-    let (clone_doc, base_state_vector) = clone_current_ydoc()?;
+    let (clone_doc, edits) = clone_current_ydoc()?;
     let (old_value, new_value) = {
         let txn = clone_doc.transact();
-        let old_value = ydoc_get_layer_json_with_txn(&target.glyph_name, &target.layer_id, &txn)
+        let old_value = layer_json_from_core(&target.glyph_name, &target.layer_id, &txn)?
             .ok_or_else(|| {
                 JsValue::from_str(&format!(
                     "Missing raw Y.Doc layer {}::{} during reinterpolation",
@@ -1311,8 +2230,9 @@ fn build_reinterpolate_layer_batch(
         )?;
     }
 
-    let update = clone_doc.transact().encode_diff_v1(&base_state_vector);
+    let update = edits.packet()?;
     Ok((
+        FONT_CORE_DOCUMENT_ID.to_string(),
         update,
         BatchMetadata {
             changed_glyphs: vec![target.glyph_name.clone()],
@@ -1335,13 +2255,52 @@ fn build_reinterpolate_layer_batch(
 
 #[wasm_bindgen]
 pub fn reinterpolate_layer_yjs(glyph_name: &str, layer_id: &str) -> Result<JsValue, JsValue> {
-    let (update, metadata) = build_reinterpolate_layer_batch(glyph_name, layer_id)?;
-    if glyph_shards_active() {
-        if let Some(glyph_id) = GLYPH_ID_BY_NAME.lock().unwrap().get(glyph_name).cloned() {
-            return encode_result_packets(vec![(glyph_document_id(&glyph_id), update)], &metadata);
+    let (document_id, update, metadata) = build_reinterpolate_layer_batch(glyph_name, layer_id)?;
+    encode_result_packets(vec![(document_id, update)], &metadata)
+}
+
+/// The stations the document stores, in order. A document without them, or
+/// with them in any other shape, is refused.
+fn stored_stations<T: ReadTxn>(txn: &T) -> Result<Vec<JsonValue>, JsValue> {
+    match ydoc_get_top_level_json_with_txn("masters", txn).map_err(|error| JsValue::from_str(&error))? {
+        Some(JsonValue::Array(stations)) => Ok(stations),
+        Some(_) => Err(JsValue::from_str("Refusing to edit stations: they are not stored as a list")),
+        None => Err(JsValue::from_str("Refusing to edit stations: the document stores none")),
+    }
+}
+
+/// The stored stations with `new_station` appended. A station without an
+/// id, or one whose id is already stored, is refused.
+fn stations_after_adding(stations: &[JsonValue], new_station: JsonValue) -> Result<JsonValue, String> {
+    let new_id = keyed_entry_id(&new_station, "id")
+        .ok_or_else(|| "Refusing to add a station without an id".to_string())?;
+    for station in stations {
+        let id = keyed_entry_id(station, "id")
+            .ok_or_else(|| "Refusing to edit stations: a stored station has no id".to_string())?;
+        if id == new_id {
+            return Err(format!("Refusing to add station {}: it is already stored", new_id));
         }
     }
-    encode_result(update, &metadata)
+    let mut next = stations.to_vec();
+    next.push(new_station);
+    Ok(JsonValue::Array(next))
+}
+
+/// The stored stations without `removed_ids`, or `None` when none of them is
+/// stored. A stored station without an id is refused.
+fn stations_after_removing(
+    stations: &[JsonValue],
+    removed_ids: &[String],
+) -> Result<Option<JsonValue>, String> {
+    let mut next = Vec::with_capacity(stations.len());
+    for station in stations {
+        let id = keyed_entry_id(station, "id")
+            .ok_or_else(|| "Refusing to edit stations: a stored station has no id".to_string())?;
+        if !removed_ids.iter().any(|removed| removed == id) {
+            next.push(station.clone());
+        }
+    }
+    Ok((next.len() != stations.len()).then_some(JsonValue::Array(next)))
 }
 
 #[wasm_bindgen]
@@ -1350,27 +2309,28 @@ pub fn add_master_with_interpolated_layers_yjs(master_json: &str) -> Result<JsVa
         parse_add_master_batch_payload(master_json).map_err(|error| JsValue::from_str(&error))?;
     let font = get_or_rebuild_font_cache()?;
     let interpolation_font = font_with_axes(&font, next_axes.as_ref())?;
-    let (clone_doc, base_state_vector) = clone_current_ydoc()?;
+    let (clone_doc, edits) = clone_current_ydoc()?;
 
-    let (old_masters, old_axes) = {
-        let guard = Y_DOC.lock().unwrap();
-        let doc = guard
-            .as_ref()
-            .ok_or_else(|| JsValue::from_str("Y.Doc not initialized"))?;
-        let txn = doc.transact();
+    // The station list comes from the cloned document, never from the
+    // worker's font cache: a station a collaborator added that reached the
+    // document but not the cache would otherwise be removed.
+    let (old_masters, old_axes, next_masters_json) = {
+        let txn = clone_doc.transact();
+        let stations = stored_stations(&txn)?;
+        let new_master_json = serde_json::to_value(&new_master).map_err(|error| {
+            JsValue::from_str(&format!(
+                "Failed to serialize the new station for add-master batch: {}",
+                error
+            ))
+        })?;
+        let next = stations_after_adding(&stations, new_master_json)
+            .map_err(|error| JsValue::from_str(&error))?;
         (
-            ydoc_get_top_level_json_with_txn("masters", &txn),
-            ydoc_get_top_level_json_with_txn("axes", &txn),
+            Some(JsonValue::Array(stations)),
+            ydoc_get_top_level_json_with_txn("axes", &txn).map_err(|error| JsValue::from_str(&error))?,
+            next,
         )
     };
-    let mut next_masters = font.masters.clone();
-    next_masters.push(new_master.clone());
-    let next_masters_json = serde_json::to_value(&next_masters).map_err(|error| {
-        JsValue::from_str(&format!(
-            "Failed to serialize masters list for add-master batch: {}",
-            error
-        ))
-    })?;
 
     let mut changed_glyphs = HashSet::new();
     let mut layer_targets = Vec::new();
@@ -1393,10 +2353,20 @@ pub fn add_master_with_interpolated_layers_yjs(master_json: &str) -> Result<JsVa
 
         if axes_operation.is_some() {
             if let Some(axes_json) = next_axes.as_ref() {
-                set_json_map_entry(&mut txn, &font_map, "axes", axes_json)?;
+                write_keyed_list_value(
+                    &mut txn,
+                    &font_map,
+                    "axes",
+                    axes_json,
+                    "tag",
+                    KeptEntries::Merged,
+                )?;
             }
         }
-        set_json_map_entry(&mut txn, &font_map, "masters", &next_masters_json)?;
+        let JsonValue::Array(next_masters_items) = &next_masters_json else {
+            return Err(JsValue::from_str("Refusing to write stations: they are not a list"));
+        };
+        sync_keyed_array_membership(&mut txn, &font_map, "masters", next_masters_items)?;
 
         if !glyph_shards_active() {
             for glyph in interpolation_font.glyphs.iter() {
@@ -1433,12 +2403,16 @@ pub fn add_master_with_interpolated_layers_yjs(master_json: &str) -> Result<JsVa
         let mut clones = clone_all_glyph_docs()?;
         for glyph in interpolation_font.glyphs.iter() {
             let glyph_name = glyph.name.to_string();
-            if glyph_name.is_empty() {
+            // A glyph the worker holds no drawings for gets none at the new
+            // station; one with drawings must have its document loaded.
+            if glyph_name.is_empty() || glyph.layers.is_empty() {
                 continue;
             }
-            let Some(clone) = find_cloned_glyph_mut(&mut clones, &glyph_name) else {
-                continue;
-            };
+            let clone = require_cloned_glyph_mut(
+                &mut clones,
+                &glyph_name,
+                "add_master_with_interpolated_layers_yjs",
+            )?;
             let forced_location = interpolation_locations
                 .get(&glyph_name)
                 .cloned()
@@ -1463,9 +2437,9 @@ pub fn add_master_with_interpolated_layers_yjs(master_json: &str) -> Result<JsVa
                 });
             }
         }
-        let core_update = clone_doc.transact().encode_diff_v1(&base_state_vector);
+        let core_update = edits.packet()?;
         let mut packets = vec![(FONT_CORE_DOCUMENT_ID.to_string(), core_update)];
-        packets.extend(encode_glyph_diffs(&clones));
+        packets.extend(encode_glyph_edits(&clones)?);
         return encode_result_packets(
             packets,
             &BatchMetadata {
@@ -1482,7 +2456,7 @@ pub fn add_master_with_interpolated_layers_yjs(master_json: &str) -> Result<JsVa
         );
     }
 
-    let update = clone_doc.transact().encode_diff_v1(&base_state_vector);
+    let update = edits.packet()?;
     encode_result(
         update,
         &BatchMetadata {
@@ -1523,16 +2497,14 @@ pub fn refine_layer_snapshots_yjs(
         );
     }
 
-    let (clone_doc, base_state_vector) = clone_current_ydoc()?;
+    // The base batch packet is applied as the first recorded transaction, so
+    // the refined packet carries it together with the overrides.
+    let (clone_doc, edits) = clone_current_ydoc()?;
     {
-        let update = yrs::Update::decode_v1(base_update).map_err(|error| {
-            JsValue::from_str(&format!(
-                "refine_layer_snapshots_yjs decode failed: {:?}",
-                error
-            ))
-        })?;
         let mut txn = clone_doc.transact_mut();
-        txn.apply_update(update);
+        apply_update_with_integrity(&mut txn, base_update, FONT_CORE_DOCUMENT_ID).map_err(
+            |error| JsValue::from_str(&format!("refine_layer_snapshots_yjs: {}", error)),
+        )?;
     }
 
     let mut changed_glyphs = HashSet::new();
@@ -1548,29 +2520,28 @@ pub fn refine_layer_snapshots_yjs(
         // The base batch's own glyph packets first: the refined packet of a
         // glyph replaces the base one, so it must carry the base's layers
         // too (a new station's variation layer, for one).
-        let base_packets = base_glyph_packets(&base_document_updates);
+        let base_packets = base_glyph_packets(&base_document_updates)?;
         for clone in clones.iter_mut() {
             let document_id = glyph_document_id(&clone.glyph_id);
             for (packet_document_id, packet) in &base_packets {
                 if *packet_document_id != document_id {
                     continue;
                 }
-                let update = yrs::Update::decode_v1(packet).map_err(|error| {
-                    JsValue::from_str(&format!(
-                        "refine_layer_snapshots_yjs glyph decode failed: {:?}",
-                        error
-                    ))
-                })?;
-                clone.doc.transact_mut().apply_update(update);
+                apply_update_with_integrity(&mut clone.doc.transact_mut(), packet, &document_id)
+                    .map_err(|error| {
+                        JsValue::from_str(&format!("refine_layer_snapshots_yjs: {}", error))
+                    })?;
             }
         }
         for override_entry in overrides {
-            let Some(clone) = find_cloned_glyph_mut(&mut clones, &override_entry.glyph_name) else {
-                continue;
-            };
+            let clone = require_cloned_glyph_mut(
+                &mut clones,
+                &override_entry.glyph_name,
+                "refine_layer_snapshots_yjs",
+            )?;
             let old_value = {
                 let txn = clone.doc.transact();
-                layer_json_from_glyph_root(&txn, &override_entry.layer_id)
+                layer_json_from_glyph_root(&txn, &override_entry.layer_id)?
             };
             {
                 let mut txn = clone.doc.transact_mut();
@@ -1592,9 +2563,9 @@ pub fn refine_layer_snapshots_yjs(
                 new_value: Some(override_entry.layer),
             });
         }
-        let core_update = clone_doc.transact().encode_diff_v1(&base_state_vector);
+        let core_update = edits.packet()?;
         let mut packets = vec![(FONT_CORE_DOCUMENT_ID.to_string(), core_update)];
-        packets.extend(encode_glyph_diffs(&clones));
+        packets.extend(encode_glyph_edits(&clones)?);
         return encode_result_packets(
             packets,
             &BatchMetadata {
@@ -1615,11 +2586,8 @@ pub fn refine_layer_snapshots_yjs(
             .ok_or_else(|| JsValue::from_str("Missing font map in cloned Y.Doc"))?;
 
         for override_entry in overrides {
-            let old_value = ydoc_get_layer_json_with_txn(
-                &override_entry.glyph_name,
-                &override_entry.layer_id,
-                &txn,
-            );
+            let old_value =
+                layer_json_from_core(&override_entry.glyph_name, &override_entry.layer_id, &txn)?;
             upsert_layer_json(
                 &mut txn,
                 &font_map,
@@ -1642,7 +2610,7 @@ pub fn refine_layer_snapshots_yjs(
         }
     }
 
-    let update = clone_doc.transact().encode_diff_v1(&base_state_vector);
+    let update = edits.packet()?;
     encode_result(
         update,
         &BatchMetadata {
@@ -1654,6 +2622,379 @@ pub fn refine_layer_snapshots_yjs(
             instances_operation: None,
         },
     )
+}
+
+/// Marks a station drawing that was a free drawing until a station was added
+/// at its location. Shared with `FORMER_FREE_DRAWING_KEY` in the webapp.
+const FORMER_FREE_DRAWING_KEY: &str = "com.counterpunch.formerFreeDrawing";
+
+/// The free drawing a marked drawing goes back to when its station is
+/// removed: the stored location restored, a free station link, and the
+/// marker gone. `None` for a drawing without the marker; a marker without a
+/// location object is refused, never guessed.
+/// Errors are plain strings so the refusal can be tested natively; the
+/// callers turn them into `JsValue`s at the wasm border.
+fn former_free_drawing(
+    layer_id: &str,
+    drawing: Option<&JsonValue>,
+) -> Result<Option<JsonValue>, String> {
+    let Some(drawing) = drawing else {
+        return Ok(None);
+    };
+    let Some(marker) = drawing
+        .get("format_specific")
+        .and_then(|format_specific| format_specific.get(FORMER_FREE_DRAWING_KEY))
+    else {
+        return Ok(None);
+    };
+    let location = marker
+        .get("location")
+        .filter(|location| location.is_object())
+        .cloned()
+        .ok_or_else(|| {
+            format!(
+                "Refusing to restore drawing {}: “{}” has no location object",
+                layer_id, FORMER_FREE_DRAWING_KEY
+            )
+        })?;
+    let mut restored = drawing.clone();
+    let object = restored
+        .as_object_mut()
+        .ok_or_else(|| format!("drawing {} is not an object", layer_id))?;
+    object.insert(
+        "master".into(),
+        serde_json::json!({ "type": "FreeFloating" }),
+    );
+    object.insert("location".into(), location);
+    if let Some(format_specific) = object
+        .get_mut("format_specific")
+        .and_then(JsonValue::as_object_mut)
+    {
+        format_specific.remove(FORMER_FREE_DRAWING_KEY);
+    }
+    if restored.get("geometryError").is_some() {
+        return Err(format!(
+            "Refusing to write drawing {} with a geometry error",
+            layer_id
+        ));
+    }
+    crate::validate_drawing_identity(layer_id, &restored)
+        .map_err(|error| format!("Refusing to write {}", error))?;
+    Ok(Some(restored))
+}
+
+/// Turn the stored drawing back into the free drawing `restored`: replace
+/// its station link and location and remove the marker. Its id, width and
+/// outline stay as they are.
+fn restore_free_drawing(
+    txn: &mut yrs::TransactionMut,
+    layers_map: &yrs::MapRef,
+    layer_id: &str,
+    restored: &JsonValue,
+) -> Result<(), JsValue> {
+    let Some(yrs::types::Value::YMap(layer_map)) = layers_map.get(txn, layer_id) else {
+        return Err(JsValue::from_str(&format!(
+            "Refusing to restore drawing {}: it is not stored as a map",
+            layer_id
+        )));
+    };
+    for key in ["master", "location"] {
+        set_json_map_entry(txn, &layer_map, key, &restored[key])?;
+    }
+    match layer_map.get(txn, "format_specific") {
+        Some(yrs::types::Value::YMap(format_specific)) => {
+            format_specific.remove(txn, FORMER_FREE_DRAWING_KEY);
+        }
+        // The marker was read from this drawing's `format_specific` map. A
+        // drawing without that map does not hold the marker this restores;
+        // a map made here would race a collaborator's own.
+        _ => {
+            return Err(JsValue::from_str(&format!(
+                "Refusing to restore drawing {}: its format_specific is not stored as a map",
+                layer_id
+            )))
+        }
+    }
+    Ok(())
+}
+
+/// A background drawing that removing stations changes. A background
+/// belongs to the foreground drawing whose `background_layer_id` names it;
+/// it follows that drawing: it is removed with it, and it moves with it when
+/// the foreground goes back to being a free drawing.
+#[derive(Clone, Debug, PartialEq)]
+struct BackgroundEntry {
+    glyph_name: String,
+    layer_id: String,
+    /// The removed stations' drawings that own this background. Empty for a
+    /// background no drawing owns that is linked to a removed station.
+    owners: Vec<String>,
+    /// The background's own station link names a removed station.
+    names_removed_station: bool,
+    /// Drawings outside the removed stations that own this background. Set
+    /// only when the background is linked to a removed station: it then
+    /// takes over their station link and location, since it belongs to them.
+    surviving_owners: Vec<String>,
+}
+
+/// What happens to a background drawing once its owners are handled.
+#[derive(Clone, Debug, PartialEq)]
+enum BackgroundAction {
+    Keep,
+    Remove,
+    /// Moves with its restored free drawing to this location.
+    MoveTo(JsonValue),
+    /// Takes the station link and location of the drawings that own it and
+    /// stay (they all share one), read from their stored drawings.
+    FollowOwners(Vec<String>),
+}
+
+fn layer_names_station(layer: &Layer, station_ids: &[String]) -> bool {
+    match &layer.master {
+        LayerType::DefaultForMaster(id) | LayerType::AssociatedWithMaster(id) => {
+            station_ids.iter().any(|station_id| station_id == id)
+        }
+        LayerType::FreeFloating => false,
+    }
+}
+
+/// The background drawings that removing `removed_station_ids` changes,
+/// given the station drawings it removes or restores (`targets`). A
+/// background linked to a removed station whose owner stays follows that
+/// owner. One without an id, or whose staying owner has no id, is refused:
+/// either would leave a drawing that names a station that no longer exists.
+fn collect_background_entries(
+    font: &babelfont::Font,
+    removed_station_ids: &[String],
+    targets: &[ReinterpolationTarget],
+) -> Result<Vec<BackgroundEntry>, String> {
+    let target_keys: HashSet<(&str, &str)> = targets
+        .iter()
+        .map(|target| (target.glyph_name.as_str(), target.layer_id.as_str()))
+        .collect();
+    let mut entries = Vec::new();
+    for glyph in font.glyphs.iter() {
+        let glyph_name = glyph.name.to_string();
+        for background in glyph.layers.iter().filter(|layer| layer.is_background) {
+            let names_removed_station = layer_names_station(background, removed_station_ids);
+            let Some(background_id) = background.id.as_deref().filter(|id| !id.is_empty()) else {
+                if names_removed_station {
+                    return Err(format!(
+                        "Refusing to remove the station: glyph {} has a background drawing without an id linked to it",
+                        glyph_name
+                    ));
+                }
+                continue;
+            };
+            let mut owners = Vec::new();
+            let mut surviving_owners = Vec::new();
+            for owner in glyph.layers.iter().filter(|layer| {
+                !layer.is_background && layer.background_layer_id.as_deref() == Some(background_id)
+            }) {
+                match owner.id.as_deref() {
+                    Some(owner_id) if target_keys.contains(&(glyph_name.as_str(), owner_id)) => {
+                        owners.push(owner_id.to_string())
+                    }
+                    Some(owner_id) if !owner_id.is_empty() => {
+                        surviving_owners.push(owner_id.to_string())
+                    }
+                    _ if names_removed_station => {
+                        return Err(format!(
+                            "Refusing to remove the station: background drawing {}::{} is linked to it, and a drawing without an id that stays owns it",
+                            glyph_name, background_id
+                        ));
+                    }
+                    _ => surviving_owners.push(String::new()),
+                }
+            }
+            // A background another drawing still owns stays with that one;
+            // when it is linked to a removed station, it follows that owner.
+            if !surviving_owners.is_empty() && !names_removed_station {
+                continue;
+            }
+            if owners.is_empty() && !names_removed_station {
+                continue;
+            }
+            entries.push(BackgroundEntry {
+                glyph_name: glyph_name.clone(),
+                layer_id: background_id.to_string(),
+                owners,
+                names_removed_station,
+                surviving_owners,
+            });
+        }
+    }
+    Ok(entries)
+}
+
+/// What happens to `entry` once its owners are handled. `restored` maps
+/// each handled `(glyph, drawing)` to the location it was restored at, or
+/// `None` when it was removed. A background no drawing owns is removed with
+/// its station. A background whose owners were all removed is removed too.
+/// One whose owner went back to being a free drawing moves with it when it
+/// was linked to a removed station, and otherwise stays as it is. One that
+/// a staying drawing owns follows that drawing.
+fn background_action(
+    entry: &BackgroundEntry,
+    restored: &HashMap<(String, String), Option<JsonValue>>,
+) -> Result<BackgroundAction, String> {
+    if !entry.surviving_owners.is_empty() {
+        return Ok(BackgroundAction::FollowOwners(entry.surviving_owners.clone()));
+    }
+    let mut locations = Vec::new();
+    for owner in &entry.owners {
+        let outcome = restored
+            .get(&(entry.glyph_name.clone(), owner.clone()))
+            .ok_or_else(|| {
+                format!(
+                    "background drawing {}::{}: its drawing {} was not handled",
+                    entry.glyph_name, entry.layer_id, owner
+                )
+            })?;
+        if let Some(location) = outcome {
+            locations.push(location);
+        }
+    }
+    let Some(first) = locations.first() else {
+        return Ok(BackgroundAction::Remove);
+    };
+    if !entry.names_removed_station {
+        return Ok(BackgroundAction::Keep);
+    }
+    if locations.iter().any(|location| location != first) {
+        return Err(format!(
+            "Refusing to restore background drawing {}::{}: its drawings go back to different locations",
+            entry.glyph_name, entry.layer_id
+        ));
+    }
+    Ok(BackgroundAction::MoveTo((*first).clone()))
+}
+
+/// The stored background `old` moved to the free location `location`:
+/// a free station link and that location; everything else stays.
+fn moved_background(
+    layer_id: &str,
+    old: Option<&JsonValue>,
+    location: &JsonValue,
+) -> Result<JsonValue, String> {
+    if !location.is_object() {
+        return Err(format!(
+            "Refusing to restore background drawing {}: the location is not an object",
+            layer_id
+        ));
+    }
+    relinked_background(
+        layer_id,
+        old,
+        &serde_json::json!({ "type": "FreeFloating" }),
+        Some(location),
+    )
+}
+
+/// The station link and location the staying drawings `owners` share, read
+/// from their stored drawings. An owner that is not stored, has no station
+/// link, or differs from the others is refused. A missing location is not a
+/// missing value: a drawing at a station stores none.
+fn owners_link(
+    glyph_name: &str,
+    background_id: &str,
+    owners: &[(String, Option<JsonValue>)],
+) -> Result<(JsonValue, Option<JsonValue>), String> {
+    let mut link: Option<(JsonValue, Option<JsonValue>)> = None;
+    for (owner_id, stored) in owners {
+        let stored = stored.as_ref().ok_or_else(|| {
+            format!(
+                "Refusing to relink background drawing {}::{}: its drawing {} is not stored",
+                glyph_name, background_id, owner_id
+            )
+        })?;
+        let master = crate::drawing_station_link(owner_id, stored).map_err(|error| {
+            format!(
+                "Refusing to relink background drawing {}::{}: {}",
+                glyph_name, background_id, error
+            )
+        })?;
+        let location = stored.get("location").cloned();
+        match &link {
+            None => link = Some((master, location)),
+            Some((first_master, first_location)) => {
+                if *first_master != master || *first_location != location {
+                    return Err(format!(
+                        "Refusing to relink background drawing {}::{}: the drawings that own it sit at different locations",
+                        glyph_name, background_id
+                    ));
+                }
+            }
+        }
+    }
+    link.ok_or_else(|| {
+        format!(
+            "Refusing to relink background drawing {}::{}: no drawing owns it",
+            glyph_name, background_id
+        )
+    })
+}
+
+/// The stored background `old` with the station link `master` and the
+/// location `location` (removed when `None`); everything else stays.
+fn relinked_background(
+    layer_id: &str,
+    old: Option<&JsonValue>,
+    master: &JsonValue,
+    location: Option<&JsonValue>,
+) -> Result<JsonValue, String> {
+    let old = old.ok_or_else(|| {
+        format!(
+            "Refusing to restore background drawing {}: it is not stored",
+            layer_id
+        )
+    })?;
+    let mut moved = old.clone();
+    let object = moved
+        .as_object_mut()
+        .ok_or_else(|| format!("drawing {} is not an object", layer_id))?;
+    object.insert("master".into(), master.clone());
+    match location {
+        Some(location) => {
+            object.insert("location".into(), location.clone());
+        }
+        None => {
+            object.remove("location");
+        }
+    }
+    if moved.get("geometryError").is_some() {
+        return Err(format!(
+            "Refusing to write drawing {} with a geometry error",
+            layer_id
+        ));
+    }
+    crate::validate_drawing_identity(layer_id, &moved)
+        .map_err(|error| format!("Refusing to write {}", error))?;
+    Ok(moved)
+}
+
+/// Write the station link and location of `moved` into the stored drawing,
+/// removing a stored location that `moved` does not have.
+fn write_moved_background(
+    txn: &mut yrs::TransactionMut,
+    layers_map: &yrs::MapRef,
+    layer_id: &str,
+    moved: &JsonValue,
+) -> Result<(), JsValue> {
+    let Some(yrs::types::Value::YMap(layer_map)) = layers_map.get(txn, layer_id) else {
+        return Err(JsValue::from_str(&format!(
+            "Refusing to restore background drawing {}: it is not stored as a map",
+            layer_id
+        )));
+    };
+    set_json_map_entry(txn, &layer_map, "master", &moved["master"])?;
+    match moved.get("location") {
+        Some(location) => set_json_map_entry(txn, &layer_map, "location", location)?,
+        None => {
+            layer_map.remove(txn, "location");
+        }
+    }
+    Ok(())
 }
 
 #[wasm_bindgen]
@@ -1685,22 +3026,18 @@ pub fn remove_masters_yjs(master_ids_json: &str) -> Result<JsValue, JsValue> {
     }
 
     let font = get_or_rebuild_font_cache()?;
-    let old_masters = {
-        let guard = Y_DOC.lock().unwrap();
-        let doc = guard
-            .as_ref()
-            .ok_or_else(|| JsValue::from_str("Y.Doc not initialized"))?;
-        let txn = doc.transact();
-        ydoc_get_top_level_json_with_txn("masters", &txn)
+    let (clone_doc, edits) = clone_current_ydoc()?;
+    // The station list comes from the cloned document, never from the
+    // worker's font cache: a station a collaborator added that reached the
+    // document but not the cache would otherwise be removed.
+    let (old_masters, next_masters_json) = {
+        let txn = clone_doc.transact();
+        let stations = stored_stations(&txn)?;
+        let next = stations_after_removing(&stations, &normalized_master_ids)
+            .map_err(|error| JsValue::from_str(&error))?;
+        (JsonValue::Array(stations), next)
     };
-
-    let next_masters: Vec<Master> = font
-        .masters
-        .iter()
-        .filter(|master| !normalized_master_ids.iter().any(|id| id == &master.id))
-        .cloned()
-        .collect();
-    if next_masters.len() == font.masters.len() {
+    let Some(next_masters_json) = next_masters_json else {
         return encode_result(
             Vec::new(),
             &BatchMetadata {
@@ -1712,21 +3049,22 @@ pub fn remove_masters_yjs(master_ids_json: &str) -> Result<JsValue, JsValue> {
                 instances_operation: None,
             },
         );
-    }
-
-    let next_masters_json = serde_json::to_value(&next_masters).map_err(|error| {
-        JsValue::from_str(&format!(
-            "Failed to serialize masters list for remove-master batch: {}",
-            error
-        ))
-    })?;
+    };
+    let old_masters = Some(old_masters);
 
     let mut targets = Vec::new();
     for master_id in &normalized_master_ids {
-        targets.extend(collect_reinterpolation_targets(&font, master_id));
+        targets.extend(
+            collect_reinterpolation_targets(&font, master_id)
+                .map_err(|error| JsValue::from_str(&error))?,
+        );
     }
+    let background_entries = collect_background_entries(&font, &normalized_master_ids, &targets)
+        .map_err(|error| JsValue::from_str(&error))?;
+    // Where each removed station drawing went: its restored location, or
+    // `None` when it was removed. Its background follows it.
+    let mut restored_locations: HashMap<(String, String), Option<JsonValue>> = HashMap::new();
 
-    let (clone_doc, base_state_vector) = clone_current_ydoc()?;
     let mut changed_glyphs = HashSet::new();
     let mut layer_targets = Vec::new();
     let mut layer_operations = Vec::new();
@@ -1737,14 +3075,36 @@ pub fn remove_masters_yjs(master_ids_json: &str) -> Result<JsValue, JsValue> {
             .get_map("font")
             .ok_or_else(|| JsValue::from_str("Missing font map in cloned Y.Doc"))?;
 
-        set_json_map_entry(&mut txn, &font_map, "masters", &next_masters_json)?;
+        let JsonValue::Array(next_masters_items) = &next_masters_json else {
+            return Err(JsValue::from_str("Refusing to write stations: they are not a list"));
+        };
+        sync_keyed_array_membership(&mut txn, &font_map, "masters", next_masters_items)?;
 
         if !glyph_shards_active() {
             for target in &targets {
-                let old_value =
-                    ydoc_get_layer_json_with_txn(&target.glyph_name, &target.layer_id, &txn);
-                remove_layer_json(&mut txn, &font_map, &target.glyph_name, &target.layer_id)?;
+                let old_value = layer_json_from_core(&target.glyph_name, &target.layer_id, &txn)?;
+                let restored = former_free_drawing(&target.layer_id, old_value.as_ref())
+                    .map_err(|error| JsValue::from_str(&error))?;
+                match &restored {
+                    Some(restored) => {
+                        let (_, layers_map) =
+                            glyph_maps_for_layer_edit(&txn, &font_map, &target.glyph_name)?;
+                        restore_free_drawing(&mut txn, &layers_map, &target.layer_id, restored)?;
+                    }
+                    None => {
+                        remove_layer_json(
+                            &mut txn,
+                            &font_map,
+                            &target.glyph_name,
+                            &target.layer_id,
+                        )?;
+                    }
+                }
 
+                restored_locations.insert(
+                    (target.glyph_name.clone(), target.layer_id.clone()),
+                    restored.as_ref().map(|restored| restored["location"].clone()),
+                );
                 changed_glyphs.insert(target.glyph_name.clone());
                 layer_targets.push(BatchLayerTarget {
                     glyph_name: target.glyph_name.clone(),
@@ -1754,27 +3114,96 @@ pub fn remove_masters_yjs(master_ids_json: &str) -> Result<JsValue, JsValue> {
                     glyph_name: target.glyph_name.clone(),
                     layer_id: target.layer_id.clone(),
                     old_value,
-                    new_value: None,
+                    new_value: restored,
+                });
+            }
+            for entry in &background_entries {
+                let action = background_action(entry, &restored_locations)
+                    .map_err(|error| JsValue::from_str(&error))?;
+                let old_value = layer_json_from_core(&entry.glyph_name, &entry.layer_id, &txn)?;
+                let new_value = match action {
+                    BackgroundAction::Keep => continue,
+                    BackgroundAction::Remove => {
+                        remove_layer_json(&mut txn, &font_map, &entry.glyph_name, &entry.layer_id)?;
+                        None
+                    }
+                    BackgroundAction::MoveTo(location) => {
+                        let moved =
+                            moved_background(&entry.layer_id, old_value.as_ref(), &location)
+                                .map_err(|error| JsValue::from_str(&error))?;
+                        let (_, layers_map) =
+                            glyph_maps_for_layer_edit(&txn, &font_map, &entry.glyph_name)?;
+                        write_moved_background(&mut txn, &layers_map, &entry.layer_id, &moved)?;
+                        Some(moved)
+                    }
+                    BackgroundAction::FollowOwners(owner_ids) => {
+                        let mut owners = Vec::with_capacity(owner_ids.len());
+                        for owner_id in owner_ids {
+                            let stored =
+                                layer_json_from_core(&entry.glyph_name, &owner_id, &txn)?;
+                            owners.push((owner_id, stored));
+                        }
+                        let (master, location) =
+                            owners_link(&entry.glyph_name, &entry.layer_id, &owners)
+                                .map_err(|error| JsValue::from_str(&error))?;
+                        let moved = relinked_background(
+                            &entry.layer_id,
+                            old_value.as_ref(),
+                            &master,
+                            location.as_ref(),
+                        )
+                        .map_err(|error| JsValue::from_str(&error))?;
+                        let (_, layers_map) =
+                            glyph_maps_for_layer_edit(&txn, &font_map, &entry.glyph_name)?;
+                        write_moved_background(&mut txn, &layers_map, &entry.layer_id, &moved)?;
+                        Some(moved)
+                    }
+                };
+                changed_glyphs.insert(entry.glyph_name.clone());
+                layer_targets.push(BatchLayerTarget {
+                    glyph_name: entry.glyph_name.clone(),
+                    layer_id: entry.layer_id.clone(),
+                });
+                layer_operations.push(BatchLayerOperation {
+                    glyph_name: entry.glyph_name.clone(),
+                    layer_id: entry.layer_id.clone(),
+                    old_value,
+                    new_value,
                 });
             }
         }
     }
 
     if glyph_shards_active() {
-        let names: HashSet<String> = targets.iter().map(|t| t.glyph_name.clone()).collect();
+        let names: HashSet<String> = targets
+            .iter()
+            .map(|t| t.glyph_name.clone())
+            .chain(background_entries.iter().map(|entry| entry.glyph_name.clone()))
+            .collect();
         let mut clones = clone_named_glyph_docs(&names)?;
         for target in targets {
-            let Some(clone) = find_cloned_glyph_mut(&mut clones, &target.glyph_name) else {
-                continue;
-            };
+            let clone =
+                require_cloned_glyph_mut(&mut clones, &target.glyph_name, "remove_masters_yjs")?;
             let old_value = {
                 let txn = clone.doc.transact();
-                layer_json_from_glyph_root(&txn, &target.layer_id)
+                layer_json_from_glyph_root(&txn, &target.layer_id)?
             };
+            let restored = former_free_drawing(&target.layer_id, old_value.as_ref())
+                .map_err(|error| JsValue::from_str(&error))?;
             {
                 let mut txn = clone.doc.transact_mut();
-                remove_layer_on_glyph_root(&mut txn, &target.layer_id)?;
+                match &restored {
+                    Some(restored) => {
+                        let (_, layers_map) = glyph_root_maps(&txn)?;
+                        restore_free_drawing(&mut txn, &layers_map, &target.layer_id, restored)?;
+                    }
+                    None => remove_layer_on_glyph_root(&mut txn, &target.layer_id)?,
+                }
             }
+            restored_locations.insert(
+                (target.glyph_name.clone(), target.layer_id.clone()),
+                restored.as_ref().map(|restored| restored["location"].clone()),
+            );
             changed_glyphs.insert(target.glyph_name.clone());
             layer_targets.push(BatchLayerTarget {
                 glyph_name: target.glyph_name.clone(),
@@ -1784,12 +3213,78 @@ pub fn remove_masters_yjs(master_ids_json: &str) -> Result<JsValue, JsValue> {
                 glyph_name: target.glyph_name,
                 layer_id: target.layer_id,
                 old_value,
-                new_value: None,
+                new_value: restored,
             });
         }
-        let core_update = clone_doc.transact().encode_diff_v1(&base_state_vector);
+        for entry in &background_entries {
+            let action = background_action(entry, &restored_locations)
+                .map_err(|error| JsValue::from_str(&error))?;
+            if action == BackgroundAction::Keep {
+                continue;
+            }
+            let clone =
+                require_cloned_glyph_mut(&mut clones, &entry.glyph_name, "remove_masters_yjs")?;
+            let (old_value, owners) = {
+                let txn = clone.doc.transact();
+                let mut owners = Vec::new();
+                if let BackgroundAction::FollowOwners(owner_ids) = &action {
+                    for owner_id in owner_ids {
+                        owners.push((
+                            owner_id.clone(),
+                            layer_json_from_glyph_root(&txn, owner_id)?,
+                        ));
+                    }
+                }
+                (layer_json_from_glyph_root(&txn, &entry.layer_id)?, owners)
+            };
+            let new_value = {
+                let mut txn = clone.doc.transact_mut();
+                match action {
+                    BackgroundAction::Keep => None,
+                    BackgroundAction::Remove => {
+                        remove_layer_on_glyph_root(&mut txn, &entry.layer_id)?;
+                        None
+                    }
+                    BackgroundAction::MoveTo(location) => {
+                        let moved =
+                            moved_background(&entry.layer_id, old_value.as_ref(), &location)
+                                .map_err(|error| JsValue::from_str(&error))?;
+                        let (_, layers_map) = glyph_root_maps(&txn)?;
+                        write_moved_background(&mut txn, &layers_map, &entry.layer_id, &moved)?;
+                        Some(moved)
+                    }
+                    BackgroundAction::FollowOwners(_) => {
+                        let (master, location) =
+                            owners_link(&entry.glyph_name, &entry.layer_id, &owners)
+                                .map_err(|error| JsValue::from_str(&error))?;
+                        let moved = relinked_background(
+                            &entry.layer_id,
+                            old_value.as_ref(),
+                            &master,
+                            location.as_ref(),
+                        )
+                        .map_err(|error| JsValue::from_str(&error))?;
+                        let (_, layers_map) = glyph_root_maps(&txn)?;
+                        write_moved_background(&mut txn, &layers_map, &entry.layer_id, &moved)?;
+                        Some(moved)
+                    }
+                }
+            };
+            changed_glyphs.insert(entry.glyph_name.clone());
+            layer_targets.push(BatchLayerTarget {
+                glyph_name: entry.glyph_name.clone(),
+                layer_id: entry.layer_id.clone(),
+            });
+            layer_operations.push(BatchLayerOperation {
+                glyph_name: entry.glyph_name.clone(),
+                layer_id: entry.layer_id.clone(),
+                old_value,
+                new_value,
+            });
+        }
+        let core_update = edits.packet()?;
         let mut packets = vec![(FONT_CORE_DOCUMENT_ID.to_string(), core_update)];
-        packets.extend(encode_glyph_diffs(&clones));
+        packets.extend(encode_glyph_edits(&clones)?);
         return encode_result_packets(
             packets,
             &BatchMetadata {
@@ -1806,7 +3301,7 @@ pub fn remove_masters_yjs(master_ids_json: &str) -> Result<JsValue, JsValue> {
         );
     }
 
-    let update = clone_doc.transact().encode_diff_v1(&base_state_vector);
+    let update = edits.packet()?;
     encode_result(
         update,
         &BatchMetadata {
@@ -1881,7 +3376,16 @@ fn set_location_coordinate(layer: &mut JsonValue, tag: &str, value: f64) {
 /// its source master: the default layer becomes the copy's default layer (id =
 /// new master id), associated layers get derived ids, and background layers
 /// referenced by copied layers are copied too so no two layers share one.
-fn layer_copy_edits(layers: &[(String, JsonValue)], plan: &AxisMasterCopyPlan) -> Vec<LayerEdit> {
+///
+/// Every source and copied drawing must be whole (`id`, `width`, `master`);
+/// an invalid one is refused, never copied.
+fn layer_copy_edits(
+    layers: &[(String, JsonValue)],
+    plan: &AxisMasterCopyPlan,
+) -> Result<Vec<LayerEdit>, String> {
+    for (layer_id, layer) in layers {
+        crate::validate_drawing_identity(layer_id, layer)?;
+    }
     let mut edits = Vec::new();
     for (layer_id, layer) in layers {
         let has_location = layer.get("location").is_some_and(JsonValue::is_object);
@@ -1946,9 +3450,9 @@ fn layer_copy_edits(layers: &[(String, JsonValue)], plan: &AxisMasterCopyPlan) -
 
         for &old_id in &selected {
             let mut next = by_id[old_id].clone();
-            let Some(object) = next.as_object_mut() else {
-                continue;
-            };
+            let object = next
+                .as_object_mut()
+                .ok_or_else(|| format!("drawing {} is not an object", old_id))?;
             object.insert("id".into(), JsonValue::String(new_ids[old_id].clone()));
             if let Some(master) = object.get_mut("master").and_then(JsonValue::as_object_mut) {
                 if master.get("master").and_then(JsonValue::as_str) == Some(&copy.source_master_id)
@@ -1977,6 +3481,7 @@ fn layer_copy_edits(layers: &[(String, JsonValue)], plan: &AxisMasterCopyPlan) -
                 None => {}
             }
             set_location_coordinate(&mut next, &plan.axis_tag, copy.value);
+            crate::validate_drawing_identity(&new_ids[old_id], &next)?;
             edits.push(LayerEdit {
                 layer_id: new_ids[old_id].clone(),
                 old_value: None,
@@ -1984,7 +3489,7 @@ fn layer_copy_edits(layers: &[(String, JsonValue)], plan: &AxisMasterCopyPlan) -
             });
         }
     }
-    edits
+    Ok(edits)
 }
 
 fn record_layer_edits(
@@ -2020,7 +3525,7 @@ pub fn add_axis_with_master_copies_yjs(plan_json: &str) -> Result<JsValue, JsVal
         JsValue::from_str(&format!("Axis master copy plan parse failed: {}", error))
     })?;
     let font = get_or_rebuild_font_cache()?;
-    let (clone_doc, base_state_vector) = clone_current_ydoc()?;
+    let (clone_doc, edits) = clone_current_ydoc()?;
     let (old_masters, old_axes, old_instances) = {
         let guard = Y_DOC.lock().unwrap();
         let doc = guard
@@ -2028,9 +3533,9 @@ pub fn add_axis_with_master_copies_yjs(plan_json: &str) -> Result<JsValue, JsVal
             .ok_or_else(|| JsValue::from_str("Y.Doc not initialized"))?;
         let txn = doc.transact();
         (
-            ydoc_get_top_level_json_with_txn("masters", &txn),
-            ydoc_get_top_level_json_with_txn("axes", &txn),
-            ydoc_get_top_level_json_with_txn("instances", &txn),
+            ydoc_get_top_level_json_with_txn("masters", &txn).map_err(|error| JsValue::from_str(&error))?,
+            ydoc_get_top_level_json_with_txn("axes", &txn).map_err(|error| JsValue::from_str(&error))?,
+            ydoc_get_top_level_json_with_txn("instances", &txn).map_err(|error| JsValue::from_str(&error))?,
         )
     };
     let glyph_layer_ids: Vec<(String, Vec<String>)> = font
@@ -2038,12 +3543,16 @@ pub fn add_axis_with_master_copies_yjs(plan_json: &str) -> Result<JsValue, JsVal
         .iter()
         .filter(|glyph| !glyph.name.is_empty())
         .map(|glyph| {
-            (
-                glyph.name.to_string(),
-                glyph.layers.iter().filter_map(layer_id_for_batch).collect(),
-            )
+            let name = glyph.name.to_string();
+            let ids = glyph
+                .layers
+                .iter()
+                .map(|layer| layer_id_for_batch(&name, layer))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((name, ids))
         })
-        .collect();
+        .collect::<Result<_, String>>()
+        .map_err(|error| JsValue::from_str(&error))?;
 
     let mut changed_glyphs = HashSet::new();
     let mut layer_targets = Vec::new();
@@ -2055,21 +3564,47 @@ pub fn add_axis_with_master_copies_yjs(plan_json: &str) -> Result<JsValue, JsVal
         let font_map = txn
             .get_map("font")
             .ok_or_else(|| JsValue::from_str("Missing font map in cloned Y.Doc"))?;
-        set_json_map_entry(&mut txn, &font_map, "axes", &plan.axes)?;
-        set_json_map_entry(&mut txn, &font_map, "masters", &plan.masters)?;
+        // Existing axes stay as stored; existing stations and instances
+        // only gain the new axis in their location. Each is edited in place,
+        // so a collaborator's concurrent kerning or metrics edit survives.
+        write_keyed_list_value(
+            &mut txn,
+            &font_map,
+            "axes",
+            &plan.axes,
+            "tag",
+            KeptEntries::Untouched,
+        )?;
+        write_keyed_list_value(
+            &mut txn,
+            &font_map,
+            "masters",
+            &plan.masters,
+            "id",
+            KeptEntries::Fields(&["location"]),
+        )?;
         if let Some(instances) = plan.instances.as_ref() {
-            set_json_map_entry(&mut txn, &font_map, "instances", instances)?;
+            write_keyed_list_value(
+                &mut txn,
+                &font_map,
+                "instances",
+                instances,
+                "id",
+                KeptEntries::Fields(&["location"]),
+            )?;
         }
         if !sharded {
             for (glyph_name, layer_ids) in &glyph_layer_ids {
                 let layers: Vec<(String, JsonValue)> = layer_ids
                     .iter()
-                    .filter_map(|id| {
-                        ydoc_get_layer_json_with_txn(glyph_name, id, &txn)
-                            .map(|json| (id.clone(), json))
+                    .map(|id| {
+                        Ok(layer_json_from_core(glyph_name, id, &txn)?
+                            .map(|json| (id.clone(), json)))
                     })
-                    .collect();
-                let edits = layer_copy_edits(&layers, &plan);
+                    .filter_map(Result::transpose)
+                    .collect::<Result<_, JsValue>>()?;
+                let edits = layer_copy_edits(&layers, &plan)
+                    .map_err(|error| JsValue::from_str(&format!("{}: {}", glyph_name, error)))?;
                 for edit in &edits {
                     upsert_layer_json(
                         &mut txn,
@@ -2118,18 +3653,26 @@ pub fn add_axis_with_master_copies_yjs(plan_json: &str) -> Result<JsValue, JsVal
             .map(|(index, clone)| (clone.glyph_name.clone(), index))
             .collect();
         for (glyph_name, layer_ids) in &glyph_layer_ids {
-            let Some(&index) = clone_index.get(glyph_name) else {
+            if layer_ids.is_empty() {
                 continue;
-            };
+            }
+            let &index = clone_index.get(glyph_name).ok_or_else(|| {
+                JsValue::from_str(&format!(
+                    "add_axis_with_master_copies_yjs: glyph {} has drawings to copy but its glyph document is not loaded",
+                    glyph_name
+                ))
+            })?;
             let edits = {
                 let mut txn = clones[index].doc.transact_mut();
                 let layers: Vec<(String, JsonValue)> = layer_ids
                     .iter()
-                    .filter_map(|id| {
-                        layer_json_from_glyph_root(&txn, id).map(|json| (id.clone(), json))
+                    .map(|id| {
+                        Ok(layer_json_from_glyph_root(&txn, id)?.map(|json| (id.clone(), json)))
                     })
-                    .collect();
-                let edits = layer_copy_edits(&layers, &plan);
+                    .filter_map(Result::transpose)
+                    .collect::<Result<_, JsValue>>()?;
+                let edits = layer_copy_edits(&layers, &plan)
+                    .map_err(|error| JsValue::from_str(&format!("{}: {}", glyph_name, error)))?;
                 for edit in &edits {
                     upsert_layer_on_glyph_root(&mut txn, &edit.layer_id, &edit.new_value)?;
                 }
@@ -2143,16 +3686,16 @@ pub fn add_axis_with_master_copies_yjs(plan_json: &str) -> Result<JsValue, JsVal
                 &mut layer_operations,
             );
         }
-        let core_update = clone_doc.transact().encode_diff_v1(&base_state_vector);
+        let core_update = edits.packet()?;
         let mut packets = vec![(FONT_CORE_DOCUMENT_ID.to_string(), core_update)];
-        packets.extend(encode_glyph_diffs(&clones));
+        packets.extend(encode_glyph_edits(&clones)?);
         return encode_result_packets(
             packets,
             &metadata(changed_glyphs, layer_targets, layer_operations),
         );
     }
 
-    let update = clone_doc.transact().encode_diff_v1(&base_state_vector);
+    let update = edits.packet()?;
     encode_result(
         update,
         &metadata(changed_glyphs, layer_targets, layer_operations),
@@ -2162,10 +3705,1154 @@ pub fn add_axis_with_master_copies_yjs(plan_json: &str) -> Result<JsValue, JsVal
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn whole_drawing(id: &str, width: f64) -> JsonValue {
+        serde_json::json!({
+            "id": id,
+            "width": width,
+            "master": { "type": "DefaultForMaster", "master": "m" },
+            "shapes": []
+        })
+    }
+
+    #[test]
+    fn a_batch_packet_carries_only_its_own_edit_and_keeps_a_gapped_width() {
+        // Source state S1 (width 500), then S2 (width 510, deleting 500).
+        let source = Doc::new();
+        let layer = source.get_or_insert_map("layer");
+        {
+            let mut txn = source.transact_mut();
+            layer.insert(&mut txn, "id", "L0");
+            layer.insert(&mut txn, "width", 500.0);
+        }
+        let s1 = source
+            .transact()
+            .encode_state_as_update_v1(&StateVector::default());
+        {
+            let mut txn = source.transact_mut();
+            layer.insert(&mut txn, "width", 510.0);
+        }
+        // A batch clones S2 and edits a different key.
+        let (clone, edits) = load_batch_clone(&source, "glyph:test").unwrap();
+        {
+            let clone_layer = clone.get_or_insert_map("layer");
+            let mut txn = clone.transact_mut();
+            clone_layer.insert(&mut txn, "name", "Regular");
+        }
+        let packet = edits.packet().unwrap();
+        let old_diff = clone
+            .transact()
+            .encode_diff_v1(&source.transact().state_vector());
+
+        // A receiver that missed the 510 write keeps its width with the
+        // per-transaction packet; the old diff deleted it.
+        for (bytes, keeps_width) in [(packet, true), (old_diff, false)] {
+            let receiver = Doc::new();
+            let receiver_layer = receiver.get_or_insert_map("layer");
+            {
+                let mut txn = receiver.transact_mut();
+                txn.apply_update(yrs::updates::decoder::Decode::decode_v1(&s1).unwrap());
+                txn.apply_update(yrs::updates::decoder::Decode::decode_v1(&bytes).unwrap());
+            }
+            let txn = receiver.transact();
+            assert_eq!(receiver_layer.get(&txn, "width").is_some(), keeps_width);
+            assert!(receiver_layer.get(&txn, "name").is_some());
+        }
+    }
+
+    #[test]
+    fn a_batch_with_no_edits_sends_an_empty_update() {
+        let source = Doc::new();
+        let (_clone, edits) = load_batch_clone(&source, "glyph:empty").unwrap();
+        assert!(!edits.has_edits());
+        assert_eq!(edits.packet().unwrap(), vec![0, 0]);
+    }
+
+    #[test]
+    fn writing_an_equal_drawing_again_creates_no_item() {
+        let source = Doc::new();
+        let (clone, edits) = load_batch_clone(&source, "glyph:equal").unwrap();
+        let layers = clone.get_or_insert_map("layers");
+        let drawing = whole_drawing("L0", 500.0);
+        {
+            let mut txn = clone.transact_mut();
+            set_json_map_entry(&mut txn, &layers, "L0", &drawing).unwrap();
+        }
+        let after_first = clone.transact().state_vector();
+        let updates_after_first = edits.updates.borrow().len();
+        {
+            let mut txn = clone.transact_mut();
+            let Some(yrs::types::Value::YMap(layer)) = layers.get(&txn, "L0") else {
+                panic!("drawing map missing");
+            };
+            // 500 and 500.0 are the same width; equal arrays are not rewritten.
+            merge_json_map(
+                &mut txn,
+                &layer,
+                serde_json::json!({ "id": "L0", "width": 500, "shapes": [] })
+                    .as_object()
+                    .unwrap(),
+            )
+            .unwrap();
+            set_json_map_entry(&mut txn, &layers, "L0", &drawing).unwrap();
+        }
+        assert_eq!(clone.transact().state_vector(), after_first);
+        assert_eq!(edits.updates.borrow().len(), updates_after_first);
+    }
+
+    #[test]
+    fn a_width_that_is_not_a_number_is_refused() {
+        assert!(invalid_width_write("width", &serde_json::json!(500)).is_none());
+        assert!(invalid_width_write("width", &serde_json::json!("500")).is_some());
+        assert!(invalid_width_write("width", &JsonValue::Null).is_some());
+        assert!(invalid_width_write("name", &serde_json::json!("Regular")).is_none());
+    }
+
+    #[test]
+    fn a_drawing_write_needs_its_whole_identity() {
+        assert!(crate::validate_drawing_identity("L0", &whole_drawing("L0", 500.0)).is_ok());
+        let mut without_width = whole_drawing("L0", 500.0);
+        without_width.as_object_mut().unwrap().remove("width");
+        assert!(crate::validate_drawing_identity("L0", &without_width)
+            .unwrap_err()
+            .contains("width"));
+        // Babelfont writes a FreeFloating link by leaving `master` out.
+        let mut without_master = whole_drawing("L0", 500.0);
+        without_master.as_object_mut().unwrap().remove("master");
+        assert!(crate::validate_drawing_identity("L0", &without_master).is_ok());
+        // A `master` that is present but malformed is refused.
+        let mut malformed = whole_drawing("L0", 500.0);
+        malformed["master"] = json!("M0");
+        assert!(crate::validate_drawing_identity("L0", &malformed)
+            .unwrap_err()
+            .contains("master"));
+        malformed["master"] = json!({ "master": "M0" });
+        assert!(crate::validate_drawing_identity("L0", &malformed)
+            .unwrap_err()
+            .contains("master"));
+    }
+
+    #[test]
+    fn a_drawing_written_without_master_is_stored_as_free_floating() {
+        let (doc, glyph, layers) = glyph_doc();
+        let mut drawing = whole_drawing("L0", 500.0);
+        drawing.as_object_mut().unwrap().remove("master");
+        {
+            let mut txn = doc.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L0", &drawing).unwrap();
+        }
+        let stored = stored_drawing(&doc, &layers, "L0");
+        assert_eq!(stored["master"], json!({ "type": "FreeFloating" }));
+        // Rewriting a stored station link without `master` makes it
+        // FreeFloating by name, never a drawing without a link.
+        let at_station = whole_drawing("L1", 500.0);
+        {
+            let mut txn = doc.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L1", &at_station).unwrap();
+            let mut free = at_station.clone();
+            free.as_object_mut().unwrap().remove("master");
+            write_drawing(&mut txn, &glyph, &layers, "L1", &free).unwrap();
+        }
+        let stored = stored_drawing(&doc, &layers, "L1");
+        assert_eq!(stored["master"], json!({ "type": "FreeFloating" }));
+        // A present but malformed link is refused before anything is written.
+        let mut malformed = whole_drawing("L2", 500.0);
+        malformed["master"] = json!(["M0"]);
+        assert!(crate::validate_drawing_identity("L2", &malformed).is_err());
+    }
+
+    #[test]
+    fn invalid_drawings_are_never_copied() {
+        let mut layers = copy_test_layers();
+        layers[0].1.as_object_mut().unwrap().remove("width");
+        let error = layer_copy_edits(&layers, &copy_plan(false)).unwrap_err();
+        assert!(error.contains("missing its width"), "{error}");
+    }
     use babelfont::Font;
     use serde_json::json;
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::wasm_bindgen_test;
+
+    /// A glyph document's `glyph` map with an empty `layers` map.
+    fn glyph_doc() -> (Doc, yrs::MapRef, yrs::MapRef) {
+        let doc = Doc::new();
+        let glyph = doc.get_or_insert_map("glyph");
+        let layers = {
+            let mut txn = doc.transact_mut();
+            glyph.insert(&mut txn, "layers", MapPrelim::<Any>::new())
+        };
+        (doc, glyph, layers)
+    }
+
+    fn stored_drawing(doc: &Doc, layers: &yrs::MapRef, layer_id: &str) -> JsonValue {
+        let txn = doc.transact();
+        let value = layers.get(&txn, layer_id).expect("drawing is stored");
+        crate::ydoc_layer_to_json(layer_id, value, &txn).unwrap()
+    }
+
+    fn stored_keys(doc: &Doc, layers: &yrs::MapRef, layer_id: &str) -> Vec<String> {
+        let txn = doc.transact();
+        let Some(yrs::types::Value::YMap(layer)) = layers.get(&txn, layer_id) else {
+            panic!("drawing map missing");
+        };
+        let mut keys: Vec<String> = layer.keys(&txn).map(str::to_string).collect();
+        keys.sort();
+        keys
+    }
+
+    /// The stored drawing map as JSON, exactly as stored (geometry maps and
+    /// indexed pairs included), like `Y.Map.toJSON()` in JS.
+    fn raw_drawing(doc: &Doc, layers: &yrs::MapRef, layer_id: &str) -> JsonValue {
+        let txn = doc.transact();
+        let value = layers.get(&txn, layer_id).expect("drawing is stored");
+        crate::yrs_value_to_json(value, &txn).unwrap()
+    }
+
+    fn write(doc: &Doc, glyph: &yrs::MapRef, layers: &yrs::MapRef, id: &str, drawing: &JsonValue) {
+        let mut txn = doc.transact_mut();
+        write_drawing(&mut txn, glyph, layers, id, drawing).unwrap();
+    }
+
+    #[test]
+    fn drawing_geometry_matches_the_js_golden_fixture() {
+        // Written by `tests/fixtures/generate-drawing-geometry-golden.test.js`
+        // with the webapp's `drawingToYMap` and `applyDrawingDelta`.
+        let input: JsonValue = serde_json::from_str(include_str!(
+            "../tests/fixtures/drawing-geometry-golden.input.json"
+        ))
+        .unwrap();
+        let expected: JsonValue = serde_json::from_str(include_str!(
+            "../tests/fixtures/drawing-geometry-golden.expected.json"
+        ))
+        .unwrap();
+        let id = input["drawingId"].as_str().unwrap();
+        let (doc, glyph, layers) = glyph_doc();
+        for step in ["created", "rewritten"] {
+            write(&doc, &glyph, &layers, id, &input[step]);
+            let stored = raw_drawing(&doc, &layers, id);
+            assert!(
+                json_values_equal(&stored, &expected[step]),
+                "{step}:\nRust {}\nJS   {}",
+                serde_json::to_string_pretty(&stored).unwrap(),
+                serde_json::to_string_pretty(&expected[step]).unwrap()
+            );
+        }
+    }
+
+    fn drawing_with_outline(x: f64) -> JsonValue {
+        json!({
+            "id": "L0",
+            "width": 500,
+            "master": { "type": "DefaultForMaster", "master": "m" },
+            "shapes": [{ "id": "p", "closed": true, "nodes": [
+                { "id": "n1", "x": x, "y": 0, "nodetype": "Line" },
+                { "id": "n2", "x": 100, "y": 100, "nodetype": "Line" }
+            ]}]
+        })
+    }
+
+    #[test]
+    fn a_worker_rewrite_edits_the_geometry_maps_in_place() {
+        let (doc, glyph, layers) = glyph_doc();
+        write(&doc, &glyph, &layers, "L0", &drawing_with_outline(0.0));
+        let positions_id = |doc: &Doc| {
+            let txn = doc.transact();
+            let Some(yrs::types::Value::YMap(layer)) = layers.get(&txn, "L0") else {
+                panic!("drawing map missing");
+            };
+            let Some(yrs::types::Value::YMap(positions)) =
+                layer.get(&txn, DRAWING_NODE_POSITIONS_KEY)
+            else {
+                panic!("positions missing");
+            };
+            positions
+        };
+        let before = positions_id(&doc);
+        // The outline read back without ids, as Babelfont serializes an
+        // interpolated layer: the stored ids are reused in place.
+        let mut rewritten = drawing_with_outline(40.0);
+        for node in rewritten["shapes"][0]["nodes"].as_array_mut().unwrap() {
+            node.as_object_mut().unwrap().remove("id");
+        }
+        rewritten["shapes"][0].as_object_mut().unwrap().remove("id");
+        write(&doc, &glyph, &layers, "L0", &rewritten);
+        assert_eq!(positions_id(&doc), before);
+        let stored = raw_drawing(&doc, &layers, "L0");
+        assert_eq!(stored["nodePositionsById"]["n1"], json!("40 0"));
+        assert!(stored.get("shapes").is_none());
+        // The generation did not move: the topology is the same.
+        assert!(stored["geometryTopology"].as_str().unwrap().contains("\"g\":1,"));
+        let read = stored_drawing(&doc, &layers, "L0");
+        assert_eq!(read["shapes"][0]["nodes"][0]["x"], json!(40.0));
+    }
+
+    #[test]
+    fn a_worker_rewrite_keeps_a_node_a_collaborator_moves_at_the_same_time() {
+        let (doc, glyph, layers) = glyph_doc();
+        write(&doc, &glyph, &layers, "L0", &drawing_with_outline(0.0));
+        let collaborator = Doc::new();
+        sync_into(&doc, &collaborator);
+        {
+            let glyph = collaborator.get_or_insert_map("glyph");
+            let mut txn = collaborator.transact_mut();
+            let Some(yrs::types::Value::YMap(layers)) = glyph.get(&txn, "layers") else {
+                panic!("layers missing");
+            };
+            let Some(yrs::types::Value::YMap(layer)) = layers.get(&txn, "L0") else {
+                panic!("drawing missing");
+            };
+            let Some(yrs::types::Value::YMap(positions)) =
+                layer.get(&txn, DRAWING_NODE_POSITIONS_KEY)
+            else {
+                panic!("positions missing");
+            };
+            positions.insert(&mut txn, "n2", "120 130");
+        }
+        write(&doc, &glyph, &layers, "L0", &drawing_with_outline(40.0));
+        sync_into(&collaborator, &doc);
+        let stored = raw_drawing(&doc, &layers, "L0");
+        assert_eq!(stored["nodePositionsById"]["n1"], json!("40 0"));
+        assert_eq!(stored["nodePositionsById"]["n2"], json!("120 130"));
+    }
+
+    /// Normal concurrent editing never damages a drawing: whichever
+    /// topology wins, every node it names has its position and every shape
+    /// its data, and a key the worker never saw is not removed.
+    #[test]
+    fn a_worker_rewrite_and_a_collaborator_outline_change_merge_into_a_readable_drawing() {
+        for worker_wins in [false, true] {
+            let (doc, glyph, layers) = glyph_doc();
+            write(&doc, &glyph, &layers, "L0", &drawing_with_outline(0.0));
+            let collaborator = Doc::new();
+            sync_into(&doc, &collaborator);
+            {
+                // The collaborator adds a path and a component, removes
+                // nothing, and sets a key the worker's drawing lacks.
+                let glyph = collaborator.get_or_insert_map("glyph");
+                let mut txn = collaborator.transact_mut();
+                let Some(yrs::types::Value::YMap(layers)) = glyph.get(&txn, "layers") else {
+                    panic!("layers missing");
+                };
+                let mut drawing = drawing_with_outline(0.0);
+                drawing["color"] = json!(4);
+                let shapes = drawing["shapes"].as_array_mut().unwrap();
+                shapes.push(json!({ "id": "q", "closed": false, "nodes": [
+                    { "id": "q1", "x": 5, "y": 6, "nodetype": "Move" }
+                ]}));
+                shapes.push(json!({ "id": "c", "reference": "b" }));
+                write_drawing(&mut txn, &glyph, &layers, "L0", &drawing).unwrap();
+            }
+            let mut rewritten = drawing_with_outline(40.0);
+            // The worker's outline drops the second node and adds one.
+            rewritten["shapes"][0]["nodes"] = json!([
+                { "id": "n1", "x": 40, "y": 0, "nodetype": "Line" },
+                { "id": "n9", "x": 70, "y": 80, "nodetype": "Line" }
+            ]);
+            if worker_wins {
+                sync_into(&collaborator, &doc);
+                // Applied after the collaborator's edit: the worker's
+                // topology is the later one.
+            }
+            write(&doc, &glyph, &layers, "L0", &rewritten);
+            sync_into(&collaborator, &doc);
+            sync_into(&doc, &collaborator);
+            for merged in [&doc, &collaborator] {
+                let layers = {
+                    let glyph = merged.get_or_insert_map("glyph");
+                    let txn = merged.transact();
+                    let Some(yrs::types::Value::YMap(layers)) = glyph.get(&txn, "layers") else {
+                        panic!("layers missing");
+                    };
+                    layers
+                };
+                let read = stored_drawing(merged, &layers, "L0");
+                let shape_ids: Vec<&str> = read["shapes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|shape| shape["id"].as_str().unwrap())
+                    .collect();
+                if worker_wins {
+                    // The worker saw the collaborator's shapes and wrote
+                    // its own outline over them, as any later edit does.
+                    assert_eq!(shape_ids, vec!["p"]);
+                    assert!(read.get("color").is_none(), "{read}");
+                } else {
+                    assert!(shape_ids.contains(&"p"), "{read}");
+                    assert_eq!(read["color"], json!(4), "{read}");
+                }
+                let raw = raw_drawing(merged, &layers, "L0");
+                assert!(raw.get("shapes").is_none(), "{raw}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_drawing_stored_with_a_flat_outline_gets_geometry_maps_and_loses_the_flat_list() {
+        let (doc, glyph, layers) = glyph_doc();
+        {
+            // An older worker's drawing: a flat `shapes` list, no topology.
+            let mut txn = doc.transact_mut();
+            let mut legacy = drawing_with_outline(0.0);
+            legacy["anchorsById"] = json!({});
+            legacy["anchorOrder"] = json!([]);
+            legacy["guidesById"] = json!({});
+            legacy["guideOrder"] = json!([]);
+            legacy["format_specific"] = json!({});
+            set_json_map_entry(&mut txn, &layers, "L0", &legacy).unwrap();
+        }
+        write(&doc, &glyph, &layers, "L0", &drawing_with_outline(5.0));
+        let stored = raw_drawing(&doc, &layers, "L0");
+        assert!(stored.get("shapes").is_none());
+        assert_eq!(stored["nodePositionsById"]["n1"], json!("5 0"));
+        assert_eq!(stored["shapeDataById"]["p"], json!({}));
+    }
+
+    #[test]
+    fn a_new_drawing_without_shapes_gets_empty_geometry_maps() {
+        let (doc, glyph, layers) = glyph_doc();
+        let mut drawing = whole_drawing("L0", 500.0);
+        drawing.as_object_mut().unwrap().remove("shapes");
+        write(&doc, &glyph, &layers, "L0", &drawing);
+        let stored = raw_drawing(&doc, &layers, "L0");
+        assert_eq!(stored["geometryTopology"], json!(r#"{"v":1,"g":1,"shapes":[]}"#));
+        assert_eq!(stored["nodePositionsById"], json!({}));
+        assert_eq!(stored["shapeDataById"], json!({}));
+        assert!(stored.get("shapes").is_none());
+    }
+
+    #[test]
+    fn a_rewrite_removes_keys_the_written_drawing_lacks() {
+        let (doc, glyph, layers) = glyph_doc();
+        let mut drawing = whole_drawing("L0", 500.0);
+        drawing["master"] = json!({ "type": "AssociatedWithMaster", "master": "m" });
+        drawing["location"] = json!({ "wght": 650 });
+        drawing["color"] = json!(3);
+        drawing["format_specific"] = json!({ "com.example": "x" });
+        drawing["anchors"] = json!([{ "id": "a1", "name": "top", "x": 1, "y": 2 }]);
+        write(&doc, &glyph, &layers, "L0", &drawing);
+        let rewritten = json!({
+            "id": "L0",
+            "width": 500,
+            "master": { "type": "FreeFloating" },
+            "shapes": []
+        });
+        write(&doc, &glyph, &layers, "L0", &rewritten);
+        let stored = raw_drawing(&doc, &layers, "L0");
+        assert!(stored.get("location").is_none(), "{stored}");
+        assert!(stored.get("color").is_none(), "{stored}");
+        assert_eq!(stored["master"], json!({ "type": "FreeFloating" }));
+        assert_eq!(stored["format_specific"], json!({}));
+        assert_eq!(stored["anchorsById"], json!({}));
+        assert_eq!(stored["anchorOrder"], json!([]));
+        for key in ["geometryTopology", "nodePositionsById", "shapeDataById"] {
+            assert!(stored.get(key).is_some(), "{key} kept");
+        }
+    }
+
+    #[test]
+    fn a_rewrite_edits_the_link_map_in_place() {
+        let (doc, glyph, layers) = glyph_doc();
+        write(&doc, &glyph, &layers, "L0", &whole_drawing("L0", 500.0));
+        let link_id = |doc: &Doc| {
+            let txn = doc.transact();
+            let Some(yrs::types::Value::YMap(layer)) = layers.get(&txn, "L0") else {
+                panic!("drawing map missing");
+            };
+            let Some(yrs::types::Value::YMap(link)) = layer.get(&txn, "master") else {
+                panic!("link missing");
+            };
+            link
+        };
+        let before = link_id(&doc);
+        let mut rewritten = whole_drawing("L0", 500.0);
+        rewritten["master"] = json!({ "type": "FreeFloating" });
+        write(&doc, &glyph, &layers, "L0", &rewritten);
+        assert_eq!(link_id(&doc), before);
+        assert_eq!(
+            raw_drawing(&doc, &layers, "L0")["master"],
+            json!({ "type": "FreeFloating" })
+        );
+    }
+
+    #[test]
+    fn station_lists_come_from_the_stored_stations() {
+        let stored = vec![json!({ "id": "m1" }), json!({ "id": "m-collaborator" })];
+        assert_eq!(
+            stations_after_adding(&stored, json!({ "id": "m2" })).unwrap(),
+            json!([{ "id": "m1" }, { "id": "m-collaborator" }, { "id": "m2" }])
+        );
+        assert!(stations_after_adding(&stored, json!({ "id": "m1" })).is_err());
+        assert!(stations_after_adding(&stored, json!({})).is_err());
+        assert_eq!(
+            stations_after_removing(&stored, &["m1".to_string()]).unwrap(),
+            Some(json!([{ "id": "m-collaborator" }]))
+        );
+        assert_eq!(stations_after_removing(&stored, &["m9".to_string()]).unwrap(), None);
+        assert!(stations_after_removing(&[json!({ "name": "x" })], &[]).is_err());
+    }
+
+    #[test]
+    fn stored_stations_are_read_from_the_document() {
+        let doc = Doc::new();
+        let font = doc.get_or_insert_map("font");
+        {
+            let mut txn = doc.transact_mut();
+            set_json_map_entry(
+                &mut txn,
+                &font,
+                "masters",
+                &json!([{ "id": "m1" }, { "id": "m-collaborator" }]),
+            )
+            .unwrap();
+        }
+        let txn = doc.transact();
+        let stations = stored_stations(&txn).unwrap();
+        let ids: Vec<&str> = stations
+            .iter()
+            .map(|station| station["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["m1", "m-collaborator"]);
+    }
+
+    #[test]
+    fn a_new_drawing_is_created_with_its_anchor_and_guide_maps() {
+        let (doc, glyph, layers) = glyph_doc();
+        {
+            let mut txn = doc.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L0", &whole_drawing("L0", 500.0)).unwrap();
+        }
+        let keys = stored_keys(&doc, &layers, "L0");
+        for key in ["anchorsById", "anchorOrder", "guidesById", "guideOrder"] {
+            assert!(keys.iter().any(|stored| stored == key), "{key} in {keys:?}");
+        }
+        assert!(!keys.iter().any(|key| key == "anchors" || key == "guides"));
+        {
+            let txn = doc.transact();
+            let Some(yrs::types::Value::YMap(layer)) = layers.get(&txn, "L0") else {
+                panic!("drawing map missing");
+            };
+            assert!(matches!(
+                layer.get(&txn, "anchorsById"),
+                Some(yrs::types::Value::YMap(_))
+            ));
+            assert!(matches!(
+                layer.get(&txn, "guideOrder"),
+                Some(yrs::types::Value::YArray(_))
+            ));
+        }
+        let drawing = stored_drawing(&doc, &layers, "L0");
+        assert_eq!(drawing["anchors"], json!([]));
+        assert_eq!(drawing["guides"], json!([]));
+        assert_eq!(drawing["width"], json!(500));
+    }
+
+    fn sync_into(from: &Doc, to: &Doc) {
+        use yrs::updates::decoder::Decode;
+        let update = from
+            .transact()
+            .encode_state_as_update_v1(&to.transact().state_vector());
+        to.transact_mut()
+            .apply_update(yrs::Update::decode_v1(&update).unwrap());
+    }
+
+    /// A collaborator adding an anchor the way `drawingToYMap` stores one:
+    /// the item in `anchorsById` and its id appended to `anchorOrder`.
+    fn collaborator_adds_anchor(doc: &Doc, layer_id: &str, id: &str, name: &str) {
+        let layers = {
+            let glyph = doc.get_or_insert_map("glyph");
+            let txn = doc.transact();
+            let Some(yrs::types::Value::YMap(layers)) = glyph.get(&txn, "layers") else {
+                panic!("layers missing");
+            };
+            layers
+        };
+        let mut txn = doc.transact_mut();
+        let Some(yrs::types::Value::YMap(layer)) = layers.get(&txn, layer_id) else {
+            panic!("drawing missing");
+        };
+        let Some(yrs::types::Value::YMap(by_id)) = layer.get(&txn, "anchorsById") else {
+            panic!("anchorsById missing");
+        };
+        let Some(yrs::types::Value::YArray(order)) = layer.get(&txn, "anchorOrder") else {
+            panic!("anchorOrder missing");
+        };
+        let anchor: yrs::MapRef = by_id.insert(&mut txn, id, MapPrelim::<Any>::new());
+        anchor.insert(&mut txn, "id", id);
+        anchor.insert(&mut txn, "name", name);
+        anchor.insert(&mut txn, "x", 1.0);
+        anchor.insert(&mut txn, "y", 2.0);
+        order.push_back(&mut txn, id);
+    }
+
+    #[test]
+    fn array_edits_follow_the_longest_common_subsequence() {
+        let ids = |list: &[&str]| list.iter().map(|id| json!(id)).collect::<Vec<_>>();
+        assert_eq!(
+            array_edits(&ids(&["a", "b", "c"]), &ids(&["a", "b", "c"])),
+            vec![ArrayEdit::Keep, ArrayEdit::Keep, ArrayEdit::Keep]
+        );
+        // Moving `a` to the end deletes and re-inserts only `a`.
+        assert_eq!(
+            array_edits(&ids(&["a", "b", "c"]), &ids(&["b", "c", "a"])),
+            vec![ArrayEdit::Delete, ArrayEdit::Keep, ArrayEdit::Keep, ArrayEdit::Insert(2)]
+        );
+        assert_eq!(
+            array_edits(&ids(&["a"]), &ids(&["a", "d"])),
+            vec![ArrayEdit::Keep, ArrayEdit::Insert(1)]
+        );
+        // 434 and 434.0 are one number, as after a Yjs round trip.
+        assert_eq!(array_edits(&[json!(434)], &[json!(434.0)]), vec![ArrayEdit::Keep]);
+    }
+
+    #[test]
+    fn a_rewrite_keeps_an_anchor_a_collaborator_adds_at_the_same_time() {
+        let worker = Doc::with_client_id(1);
+        let collaborator = Doc::with_client_id(2);
+        let glyph = worker.get_or_insert_map("glyph");
+        let layers: yrs::MapRef = {
+            let mut txn = worker.transact_mut();
+            glyph.insert(&mut txn, "layers", MapPrelim::<Any>::new())
+        };
+        let mut drawing = whole_drawing("L0", 500.0);
+        drawing["anchors"] = json!([
+            { "id": "a-top", "name": "top", "x": 10, "y": 700 },
+            { "id": "a-bottom", "name": "bottom", "x": 10, "y": 0 }
+        ]);
+        {
+            let mut txn = worker.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L0", &drawing).unwrap();
+        }
+        sync_into(&worker, &collaborator);
+
+        // Concurrently: the collaborator adds an anchor, and the worker
+        // rewrites the drawing with its anchors reordered and one added.
+        collaborator_adds_anchor(&collaborator, "L0", "a-theirs", "theirs");
+        drawing["anchors"] = json!([
+            { "id": "a-bottom", "name": "bottom", "x": 10, "y": 0 },
+            { "id": "a-top", "name": "top", "x": 12, "y": 700 },
+            { "id": "a-ours", "name": "ours", "x": 5, "y": 5 }
+        ]);
+        drawing["width"] = json!(510.0);
+        {
+            let mut txn = worker.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L0", &drawing).unwrap();
+        }
+        sync_into(&collaborator, &worker);
+        sync_into(&worker, &collaborator);
+
+        for doc in [&worker, &collaborator] {
+            let layers = {
+                let glyph = doc.get_or_insert_map("glyph");
+                let txn = doc.transact();
+                let Some(yrs::types::Value::YMap(layers)) = glyph.get(&txn, "layers") else {
+                    panic!("layers missing");
+                };
+                layers
+            };
+            // Read the way the webapp and worker read it: every id in
+            // `anchorsById` must be listed in `anchorOrder` and back.
+            let stored = stored_drawing(doc, &layers, "L0");
+            let mut names: Vec<&str> = stored["anchors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|anchor| anchor["name"].as_str().unwrap())
+                .collect();
+            names.sort();
+            assert_eq!(names, vec!["bottom", "ours", "theirs", "top"]);
+            assert_eq!(stored["width"], json!(510));
+        }
+    }
+
+    #[test]
+    fn rewriting_an_unchanged_order_writes_nothing_to_it() {
+        let (doc, glyph, layers) = glyph_doc();
+        let mut drawing = whole_drawing("L0", 500.0);
+        drawing["anchors"] = json!([{ "id": "a-top", "name": "top", "x": 10, "y": 700 }]);
+        {
+            let mut txn = doc.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L0", &drawing).unwrap();
+        }
+        let before = doc.transact().state_vector();
+        {
+            let mut txn = doc.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L0", &drawing).unwrap();
+        }
+        assert_eq!(doc.transact().state_vector(), before);
+    }
+
+    #[test]
+    fn stations_are_added_and_removed_without_rewriting_the_others() {
+        let worker = Doc::with_client_id(1);
+        let collaborator = Doc::with_client_id(2);
+        let font = worker.get_or_insert_map("font");
+        let station = |id: &str| json!({ "id": id, "name": id, "kerning": {} });
+        {
+            let mut txn = worker.transact_mut();
+            sync_keyed_array_membership(
+                &mut txn,
+                &font,
+                "masters",
+                &[station("M1"), station("M2")],
+            )
+            .unwrap();
+        }
+        sync_into(&worker, &collaborator);
+
+        // The collaborator kerns in M2 while the worker removes M1 and adds
+        // M3 from its own copy of the stations, whose M2 has no kerning.
+        {
+            let font = collaborator.get_or_insert_map("font");
+            let mut txn = collaborator.transact_mut();
+            let Some(yrs::types::Value::YArray(masters)) = font.get(&txn, "masters") else {
+                panic!("masters missing");
+            };
+            let Some(yrs::types::Value::YMap(m2)) = masters.get(&txn, 1) else {
+                panic!("M2 missing");
+            };
+            let Some(yrs::types::Value::YMap(kerning)) = m2.get(&txn, "kerning") else {
+                panic!("kerning missing");
+            };
+            kerning.insert(&mut txn, "A|V", -40.0);
+        }
+        {
+            let mut txn = worker.transact_mut();
+            sync_keyed_array_membership(
+                &mut txn,
+                &font,
+                "masters",
+                &[station("M2"), station("M3")],
+            )
+            .unwrap();
+        }
+        sync_into(&collaborator, &worker);
+
+        let txn = worker.transact();
+        let masters = crate::yrs_value_to_json(font.get(&txn, "masters").unwrap(), &txn).unwrap();
+        let ids: Vec<&str> = masters
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|master| master["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["M2", "M3"]);
+        assert_eq!(masters[0]["kerning"]["A|V"], json!(-40));
+    }
+
+    #[test]
+    fn a_new_axis_edits_kept_stations_in_place_and_keeps_a_concurrent_kern() {
+        let worker = Doc::with_client_id(1);
+        let collaborator = Doc::with_client_id(2);
+        let font = worker.get_or_insert_map("font");
+        let station = |id: &str, location: JsonValue| {
+            json!({ "id": id, "name": id, "location": location, "kerning": {} })
+        };
+        {
+            let mut txn = worker.transact_mut();
+            write_keyed_list_value(
+                &mut txn,
+                &font,
+                "axes",
+                &json!([{ "tag": "wght", "name": { "dflt": "Weight" } }]),
+                "tag",
+                KeptEntries::Untouched,
+            )
+            .unwrap();
+            sync_keyed_array_membership(
+                &mut txn,
+                &font,
+                "masters",
+                &[station("M1", json!({ "wght": 400 }))],
+            )
+            .unwrap();
+        }
+        sync_into(&worker, &collaborator);
+
+        // The collaborator kerns in M1 while the worker adds a width axis
+        // from a plan whose copy of M1 has no kerning.
+        {
+            let font = collaborator.get_or_insert_map("font");
+            let mut txn = collaborator.transact_mut();
+            let Some(yrs::types::Value::YArray(masters)) = font.get(&txn, "masters") else {
+                panic!("masters missing");
+            };
+            let Some(yrs::types::Value::YMap(m1)) = masters.get(&txn, 0) else {
+                panic!("M1 missing");
+            };
+            let Some(yrs::types::Value::YMap(kerning)) = m1.get(&txn, "kerning") else {
+                panic!("kerning missing");
+            };
+            kerning.insert(&mut txn, "A:V", -40.0);
+        }
+        {
+            let mut txn = worker.transact_mut();
+            write_keyed_list_value(
+                &mut txn,
+                &font,
+                "axes",
+                &json!([
+                    { "tag": "wght", "name": { "dflt": "Weight (stale copy)" } },
+                    { "tag": "wdth", "name": { "dflt": "Width" } }
+                ]),
+                "tag",
+                KeptEntries::Untouched,
+            )
+            .unwrap();
+            write_keyed_list_value(
+                &mut txn,
+                &font,
+                "masters",
+                &json!([
+                    station("M1", json!({ "wght": 400, "wdth": 100 })),
+                    station("M2", json!({ "wght": 400, "wdth": 50 }))
+                ]),
+                "id",
+                KeptEntries::Fields(&["location"]),
+            )
+            .unwrap();
+        }
+        sync_into(&collaborator, &worker);
+
+        let txn = worker.transact();
+        let masters = crate::yrs_value_to_json(font.get(&txn, "masters").unwrap(), &txn).unwrap();
+        assert_eq!(masters[0]["id"], json!("M1"));
+        assert_eq!(masters[0]["location"], json!({ "wght": 400, "wdth": 100 }));
+        assert_eq!(masters[0]["kerning"]["A:V"], json!(-40));
+        assert_eq!(masters[1]["id"], json!("M2"));
+        let axes = crate::yrs_value_to_json(font.get(&txn, "axes").unwrap(), &txn).unwrap();
+        assert_eq!(axes[0]["name"]["dflt"], json!("Weight"));
+        assert_eq!(axes[1]["tag"], json!("wdth"));
+    }
+
+    #[test]
+    fn a_merged_axis_is_edited_in_place() {
+        let doc = Doc::with_client_id(1);
+        let font = doc.get_or_insert_map("font");
+        {
+            let mut txn = doc.transact_mut();
+            write_keyed_list_value(
+                &mut txn,
+                &font,
+                "axes",
+                &json!([{ "tag": "wght", "min": 400, "max": 700 }]),
+                "tag",
+                KeptEntries::Merged,
+            )
+            .unwrap();
+        }
+        let axis_before = {
+            let txn = doc.transact();
+            let Some(yrs::types::Value::YArray(axes)) = font.get(&txn, "axes") else {
+                panic!("axes missing");
+            };
+            let Some(yrs::types::Value::YMap(axis)) = axes.get(&txn, 0) else {
+                panic!("axis missing");
+            };
+            axis
+        };
+        {
+            let mut txn = doc.transact_mut();
+            write_keyed_list_value(
+                &mut txn,
+                &font,
+                "axes",
+                &json!([{ "tag": "wght", "min": 100, "max": 700 }]),
+                "tag",
+                KeptEntries::Merged,
+            )
+            .unwrap();
+        }
+        let txn = doc.transact();
+        let Some(yrs::types::Value::YArray(axes)) = font.get(&txn, "axes") else {
+            panic!("axes missing");
+        };
+        let Some(yrs::types::Value::YMap(axis)) = axes.get(&txn, 0) else {
+            panic!("axis missing");
+        };
+        assert_eq!(axis, axis_before, "the axis map was replaced");
+        let axes = crate::yrs_value_to_json(font.get(&txn, "axes").unwrap(), &txn).unwrap();
+        assert_eq!(axes, json!([{ "tag": "wght", "min": 100, "max": 700 }]));
+    }
+
+    #[test]
+    fn a_new_drawing_is_created_with_an_empty_format_specific_map() {
+        let (doc, glyph, layers) = glyph_doc();
+        {
+            let mut txn = doc.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L0", &whole_drawing("L0", 500.0)).unwrap();
+        }
+        let txn = doc.transact();
+        let Some(yrs::types::Value::YMap(layer)) = layers.get(&txn, "L0") else {
+            panic!("drawing map missing");
+        };
+        let Some(yrs::types::Value::YMap(format_specific)) = layer.get(&txn, "format_specific")
+        else {
+            panic!("format_specific is not created with the drawing as a Y.Map");
+        };
+        assert_eq!(format_specific.len(&txn), 0);
+    }
+
+    #[test]
+    fn a_drawing_without_an_id_is_refused_never_given_its_station_id() {
+        let mut layer = Layer::new(500.0);
+        layer.master = LayerType::DefaultForMaster("M1".into());
+        layer.id = None;
+        let error = layer_id_for_batch("A", &layer).unwrap_err();
+        assert!(error.contains("has no id"), "{error}");
+        layer.id = Some("L1".into());
+        assert_eq!(layer_id_for_batch("A", &layer).unwrap(), "L1");
+    }
+
+    #[test]
+    fn a_new_drawing_stores_its_anchors_by_id_in_order() {
+        let (doc, glyph, layers) = glyph_doc();
+        let mut drawing = whole_drawing("L0", 500.0);
+        drawing["anchors"] = json!([
+            { "id": "a-top", "name": "top", "x": 10, "y": 700 },
+            { "name": "bottom", "x": 10, "y": 0 }
+        ]);
+        drawing["guides"] = json!([{ "name": "baseline", "pos": { "x": 0, "y": 0 } }]);
+        {
+            let mut txn = doc.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L0", &drawing).unwrap();
+        }
+        let stored = stored_drawing(&doc, &layers, "L0");
+        let anchors = stored["anchors"].as_array().unwrap();
+        assert_eq!(anchors.len(), 2);
+        assert_eq!(anchors[0]["id"], json!("a-top"));
+        assert_eq!(anchors[0]["name"], json!("top"));
+        assert_eq!(anchors[1]["name"], json!("bottom"));
+        let new_id = anchors[1]["id"].as_str().expect("a new anchor gets an id");
+        assert!(new_id.starts_with("L0-"), "{new_id}");
+        assert_eq!(stored["guides"][0]["name"], json!("baseline"));
+        assert!(stored["guides"][0]["id"].is_string());
+    }
+
+    #[test]
+    fn rewriting_a_drawing_keeps_its_anchor_ids_and_drops_a_flat_list() {
+        let (doc, glyph, layers) = glyph_doc();
+        let mut drawing = whole_drawing("L0", 500.0);
+        drawing["anchors"] = json!([{ "id": "a-top", "name": "top", "x": 10, "y": 700 }]);
+        {
+            let mut txn = doc.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L0", &drawing).unwrap();
+            // A flat list from an older writer, beside the indexed pair.
+            let Some(yrs::types::Value::YMap(layer)) = layers.get(&txn, "L0") else {
+                panic!("drawing map missing");
+            };
+            let flat: yrs::ArrayRef =
+                layer.insert(&mut txn, "anchors", ArrayPrelim::from(Vec::<Any>::new()));
+            fill_json_array(&mut txn, &flat, &[json!({ "id": "a-top", "name": "top" })]).unwrap();
+        }
+        // An interpolated rewrite carries the anchor without its id.
+        let mut rewritten = whole_drawing("L0", 520.0);
+        rewritten["anchors"] = json!([{ "name": "top", "x": 15, "y": 710 }]);
+        {
+            let mut txn = doc.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L0", &rewritten).unwrap();
+        }
+        assert!(!stored_keys(&doc, &layers, "L0")
+            .iter()
+            .any(|key| key == "anchors"));
+        let stored = stored_drawing(&doc, &layers, "L0");
+        assert_eq!(
+            stored["anchors"],
+            json!([{ "id": "a-top", "name": "top", "x": 15, "y": 710 }])
+        );
+        assert_eq!(stored["width"], json!(520));
+    }
+
+    #[test]
+    fn rewriting_a_drawing_without_an_anchor_removes_its_stored_entry() {
+        let (doc, glyph, layers) = glyph_doc();
+        let mut drawing = whole_drawing("L0", 500.0);
+        drawing["anchors"] = json!([
+            { "id": "a-top", "name": "top", "x": 10, "y": 700 },
+            { "id": "a-bottom", "name": "bottom", "x": 10, "y": 0 }
+        ]);
+        {
+            let mut txn = doc.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L0", &drawing).unwrap();
+        }
+        let mut rewritten = whole_drawing("L0", 500.0);
+        rewritten["anchors"] = json!([{ "id": "a-top", "name": "top", "x": 12, "y": 700 }]);
+        {
+            let mut txn = doc.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L0", &rewritten).unwrap();
+        }
+        let txn = doc.transact();
+        let Some(yrs::types::Value::YMap(layer)) = layers.get(&txn, "L0") else {
+            panic!("drawing map missing");
+        };
+        let Some(yrs::types::Value::YMap(by_id)) = layer.get(&txn, "anchorsById") else {
+            panic!("anchorsById missing");
+        };
+        let keys: Vec<String> = by_id.keys(&txn).map(str::to_string).collect();
+        assert_eq!(keys, vec!["a-top".to_string()]);
+    }
+
+    fn marked_station_drawing() -> JsonValue {
+        json!({
+            "id": "M2",
+            "width": 610,
+            "master": { "type": "DefaultForMaster", "master": "M2" },
+            "shapes": [],
+            "format_specific": {
+                "com.example.kept": true,
+                (FORMER_FREE_DRAWING_KEY): { "location": { "wght": 650 } }
+            }
+        })
+    }
+
+    #[test]
+    fn removing_a_station_turns_its_former_free_drawing_back_into_one() {
+        let (doc, glyph, layers) = glyph_doc();
+        // Adding station M2 at wght 650 made the free drawing there M2's
+        // drawing and marked it with the free drawing's location.
+        {
+            let mut txn = doc.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "M2", &marked_station_drawing()).unwrap();
+        }
+        let old_value = stored_drawing(&doc, &layers, "M2");
+        let restored = former_free_drawing("M2", Some(&old_value))
+            .unwrap()
+            .expect("a marked drawing is restored, not removed");
+        {
+            let mut txn = doc.transact_mut();
+            restore_free_drawing(&mut txn, &layers, "M2", &restored).unwrap();
+        }
+        let stored = stored_drawing(&doc, &layers, "M2");
+        assert_eq!(stored["master"], json!({ "type": "FreeFloating" }));
+        assert_eq!(stored["location"], json!({ "wght": 650 }));
+        assert_eq!(stored["id"], json!("M2"));
+        assert_eq!(stored["width"], json!(610));
+        assert!(stored["format_specific"]
+            .get(FORMER_FREE_DRAWING_KEY)
+            .is_none());
+        assert_eq!(stored["format_specific"]["com.example.kept"], json!(true));
+        let mut expected = restored.clone();
+        expected["anchors"] = json!([]);
+        expected["guides"] = json!([]);
+        assert_eq!(stored, expected, "the batch metadata names what was stored");
+        crate::validate_drawing_identity("M2", &stored).unwrap();
+        // It is a free drawing in the font again.
+        let layer: Layer = serde_json::from_value(stored).unwrap();
+        assert!(matches!(layer.master, LayerType::FreeFloating));
+        assert!(layer.location.is_some());
+    }
+
+    #[test]
+    fn a_station_drawing_without_the_marker_is_removed_as_before() {
+        assert!(former_free_drawing("M2", Some(&whole_drawing("M2", 500.0)))
+            .unwrap()
+            .is_none());
+        assert!(former_free_drawing("M2", None).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_marked_drawing_gets_its_stored_location_back_exactly() {
+        let mut drawing = marked_station_drawing();
+        let stored_location = json!({ "wght": 650.25, "wdth": 87.5, "opsz": 12 });
+        drawing["format_specific"][FORMER_FREE_DRAWING_KEY] =
+            json!({ "location": stored_location.clone() });
+        // The station location it carried while it was a station drawing is
+        // replaced, not merged.
+        drawing["location"] = json!({ "wght": 650, "ital": 1 });
+        let restored = former_free_drawing("M2", Some(&drawing))
+            .unwrap()
+            .expect("restored");
+        assert_eq!(restored["location"], stored_location);
+        assert_eq!(restored["master"], json!({ "type": "FreeFloating" }));
+        assert_eq!(restored["id"], json!("M2"));
+        assert_eq!(restored["width"], json!(610));
+        assert!(restored["format_specific"]
+            .get(FORMER_FREE_DRAWING_KEY)
+            .is_none());
+        assert_eq!(restored["format_specific"]["com.example.kept"], json!(true));
+    }
+
+    #[test]
+    fn a_marker_without_a_location_object_is_refused() {
+        for marker in [
+            json!({}),
+            json!({ "location": null }),
+            json!({ "location": [["wght", 650]] }),
+            json!({ "location": 650 }),
+            json!(true),
+        ] {
+            let mut drawing = marked_station_drawing();
+            drawing["format_specific"][FORMER_FREE_DRAWING_KEY] = marker.clone();
+            let error = former_free_drawing("M2", Some(&drawing)).unwrap_err();
+            assert!(error.contains("no location object"), "{marker}: {error}");
+        }
+    }
+
+    #[test]
+    fn a_marked_drawing_missing_its_identity_is_refused() {
+        let mut drawing = marked_station_drawing();
+        drawing.as_object_mut().unwrap().remove("width");
+        let error = former_free_drawing("M2", Some(&drawing)).unwrap_err();
+        assert!(error.contains("width"), "{error}");
+    }
+
+    #[test]
+    fn removing_station_m1_restores_marked_drawings_and_removes_the_rest() {
+        let mut font = make_test_font();
+        font.glyphs.push(
+            serde_json::from_value(json!({
+                "name": "A",
+                "category": "Base",
+                "exported": true,
+                "layers": [
+                    { "id": "M0", "width": 400, "master": { "type": "DefaultForMaster", "master": "M0" } },
+                    { "id": "M1", "width": 900, "master": { "type": "DefaultForMaster", "master": "M1" },
+                      "format_specific": { (FORMER_FREE_DRAWING_KEY): { "location": { "wght": 900 } } } },
+                    { "id": "M1.alt", "width": 905, "master": { "type": "AssociatedWithMaster", "master": "M1" } }
+                ]
+            }))
+            .unwrap(),
+        );
+        let (doc, glyph, layers) = glyph_doc();
+        {
+            let mut txn = doc.transact_mut();
+            for layer in &font.glyphs.get("A").unwrap().layers {
+                let json = serde_json::to_value(layer).unwrap();
+                let id = json["id"].as_str().unwrap().to_string();
+                write_drawing(&mut txn, &glyph, &layers, &id, &json).unwrap();
+            }
+        }
+        let targets = collect_reinterpolation_targets(&font, "M1").unwrap();
+        let ids: Vec<&str> = targets.iter().map(|t| t.layer_id.as_str()).collect();
+        assert_eq!(ids, vec!["M1", "M1.alt"]);
+        // The same steps remove_masters_yjs takes per target.
+        for target in &targets {
+            let old_value = stored_drawing(&doc, &layers, &target.layer_id);
+            let mut txn = doc.transact_mut();
+            match former_free_drawing(&target.layer_id, Some(&old_value)).unwrap() {
+                Some(restored) => {
+                    restore_free_drawing(&mut txn, &layers, &target.layer_id, &restored).unwrap()
+                }
+                None => {
+                    layers.remove(&mut txn, &target.layer_id);
+                }
+            }
+        }
+        let txn = doc.transact();
+        let mut remaining: Vec<String> = layers.keys(&txn).map(str::to_string).collect();
+        remaining.sort();
+        assert_eq!(remaining, vec!["M0".to_string(), "M1".to_string()]);
+        drop(txn);
+        let restored = stored_drawing(&doc, &layers, "M1");
+        assert_eq!(restored["master"], json!({ "type": "FreeFloating" }));
+        assert_eq!(restored["location"], json!({ "wght": 900 }));
+        assert_eq!(restored["width"], json!(900));
+        let untouched = stored_drawing(&doc, &layers, "M0");
+        assert_eq!(
+            untouched["master"],
+            json!({ "type": "DefaultForMaster", "master": "M0" })
+        );
+    }
 
     fn make_design_location(value: f64) -> fontdrasil::coords::DesignLocation {
         serde_json::from_value(json!([["wght", value]])).unwrap()
@@ -2245,7 +4932,8 @@ mod tests {
         let glyph = font.glyphs.get("A").unwrap().clone();
         let master = Master::new("Semibold", "M2", make_design_location(650.0));
 
-        let layers = layers_for_new_master(&font, &glyph, &master, make_design_location(650.0)).unwrap();
+        let layers =
+            layers_for_new_master(&font, &glyph, &master, make_design_location(650.0)).unwrap();
 
         assert_eq!(layers.len(), 2, "{layers:?}");
         let (base_id, base) = &layers[0];
@@ -2256,10 +4944,18 @@ mod tests {
         // Interpolated from the variation's layers (500 → 1000), not the
         // glyph's master layers.
         assert_eq!(variation["width"], json!(750.0));
-        assert_eq!(variation["master"], json!({ "type": "AssociatedWithMaster", "master": "M2" }));
-        assert!(variation.get("location").is_none_or(|location| location.is_null()));
+        assert_eq!(
+            variation["master"],
+            json!({ "type": "AssociatedWithMaster", "master": "M2" })
+        );
+        assert!(variation
+            .get("location")
+            .is_none_or(|location| location.is_null()));
         let parsed: Layer = serde_json::from_value(variation.clone()).unwrap();
-        assert_eq!(parsed.feature_variation_rules(), Some(&vec![json!({ "min": 600 })]));
+        assert_eq!(
+            parsed.feature_variation_rules(),
+            Some(&vec![json!({ "min": 600 })])
+        );
     }
 
     fn copy_plan(copy_intermediate_layers: bool) -> AxisMasterCopyPlan {
@@ -2304,7 +5000,7 @@ mod tests {
 
     #[test]
     fn copies_default_and_background_layers_with_new_ids() {
-        let edits = layer_copy_edits(&copy_test_layers(), &copy_plan(false));
+        let edits = layer_copy_edits(&copy_test_layers(), &copy_plan(false)).unwrap();
         let created: Vec<&LayerEdit> = edits
             .iter()
             .filter(|edit| edit.old_value.is_none())
@@ -2332,7 +5028,7 @@ mod tests {
 
     #[test]
     fn existing_intermediate_layers_get_the_existing_axis_position() {
-        let edits = layer_copy_edits(&copy_test_layers(), &copy_plan(false));
+        let edits = layer_copy_edits(&copy_test_layers(), &copy_plan(false)).unwrap();
         let patched = edits.iter().find(|edit| edit.layer_id == "brace").unwrap();
         assert_eq!(
             patched.new_value["location"],
@@ -2344,7 +5040,7 @@ mod tests {
 
     #[test]
     fn intermediate_layers_are_copied_at_the_copy_position_when_requested() {
-        let edits = layer_copy_edits(&copy_test_layers(), &copy_plan(true));
+        let edits = layer_copy_edits(&copy_test_layers(), &copy_plan(true)).unwrap();
         let copied = edits
             .iter()
             .find(|edit| edit.layer_id == "M1w-brace")
@@ -2361,7 +5057,7 @@ mod tests {
 
     #[test]
     fn layers_of_other_masters_are_not_copied() {
-        let edits = layer_copy_edits(&copy_test_layers(), &copy_plan(true));
+        let edits = layer_copy_edits(&copy_test_layers(), &copy_plan(true)).unwrap();
         assert!(!edits.iter().any(|edit| edit.layer_id.contains("M0")));
     }
 
@@ -2582,7 +5278,7 @@ mod tests {
         assert!(glyph
             .layers
             .iter()
-            .all(|layer| { layer_id_for_batch(layer).as_deref() != Some("brace-1") }));
+            .all(|layer| { layer.id.as_deref() != Some("brace-1") }));
     }
 
     #[test]
@@ -2652,9 +5348,712 @@ mod tests {
         );
     }
 
+    fn reinterpolation_target(glyph_name: &str, layer_id: &str) -> ReinterpolationTarget {
+        ReinterpolationTarget {
+            glyph_name: glyph_name.to_string(),
+            layer_id: layer_id.to_string(),
+            layer: serde_json::from_value(json!({
+                "id": layer_id,
+                "width": 500,
+                "master": { "type": "DefaultForMaster", "master": "M1" }
+            }))
+            .unwrap(),
+        }
+    }
+
+    #[test]
+    fn one_drawing_that_cannot_be_rebuilt_refuses_the_whole_station_edit() {
+        let targets = vec![
+            reinterpolation_target("A", "M1"),
+            reinterpolation_target("B", "M1"),
+            reinterpolation_target("C", "M1"),
+        ];
+        let mut built = Vec::new();
+        let error = regenerate_reinterpolation_targets(targets, |target| {
+            built.push(target.glyph_name.clone());
+            if target.glyph_name == "B" {
+                Err("incompatible drawings".to_string())
+            } else {
+                Ok(json!({ "id": target.layer_id }))
+            }
+        })
+        .unwrap_err();
+        assert!(error.contains("B::M1"), "{error}");
+        assert!(error.contains("no drawing was changed"), "{error}");
+        assert!(error.contains("incompatible drawings"), "{error}");
+        // Nothing after the failure is rebuilt, and nothing is returned to write.
+        assert_eq!(built, vec!["A".to_string(), "B".to_string()]);
+
+        let all = regenerate_reinterpolation_targets(
+            vec![reinterpolation_target("A", "M1"), reinterpolation_target("C", "M1")],
+            |target| Ok(json!({ "id": target.layer_id })),
+        )
+        .unwrap();
+        let names: Vec<&str> = all.iter().map(|(t, _)| t.glyph_name.as_str()).collect();
+        assert_eq!(names, vec!["A", "C"]);
+    }
+
+    #[test]
+    fn reinterpolating_a_drawing_the_font_does_not_have_is_refused() {
+        let mut font = make_test_font();
+        font.glyphs.push(
+            serde_json::from_value(json!({
+                "name": "A", "category": "Base", "exported": true,
+                "layers": [{ "id": "M0", "width": 400, "master": { "type": "DefaultForMaster", "master": "M0" } }]
+            }))
+            .unwrap(),
+        );
+        assert!(require_reinterpolation_target(&font, "A", "M0").is_ok());
+        let error = require_reinterpolation_target(&font, "A", "brace-1").unwrap_err();
+        assert!(error.contains("A::brace-1"), "{error}");
+        let error = require_reinterpolation_target(&font, "Z", "M0").unwrap_err();
+        assert!(error.contains("Z::M0"), "{error}");
+    }
+
+    /// Glyph A: M1's drawing is a former free drawing with a background
+    /// linked to M1, M1.alt is removed with its Glyphs-style background
+    /// (`<id>.bg`, linked to no station), and M0's drawing keeps its own.
+    fn font_with_backgrounds() -> Font {
+        let mut font = make_test_font();
+        font.glyphs.push(
+            serde_json::from_value(json!({
+                "name": "A",
+                "category": "Base",
+                "exported": true,
+                "layers": [
+                    { "id": "M0", "width": 400, "master": { "type": "DefaultForMaster", "master": "M0" },
+                      "background_layer_id": "M0-bg" },
+                    { "id": "M0-bg", "width": 400, "master": { "type": "DefaultForMaster", "master": "M0" },
+                      "is_background": true, "background_layer_id": "M0" },
+                    { "id": "M1", "width": 900, "master": { "type": "DefaultForMaster", "master": "M1" },
+                      "background_layer_id": "M1-bg",
+                      "format_specific": { (FORMER_FREE_DRAWING_KEY): { "location": { "wght": 870 } } } },
+                    { "id": "M1-bg", "width": 900, "master": { "type": "DefaultForMaster", "master": "M1" },
+                      "location": { "wght": 900 },
+                      "is_background": true, "background_layer_id": "M1" },
+                    { "id": "M1.alt", "width": 905, "master": { "type": "AssociatedWithMaster", "master": "M1" },
+                      "background_layer_id": "M1.alt.bg" },
+                    { "id": "M1.alt.bg", "width": 905, "master": { "type": "DefaultForMaster", "master": "" },
+                      "is_background": true },
+                    { "id": "orphan-bg", "width": 900, "master": { "type": "AssociatedWithMaster", "master": "M1" },
+                      "is_background": true }
+                ]
+            }))
+            .unwrap(),
+        );
+        font
+    }
+
+    #[test]
+    fn backgrounds_follow_the_drawings_they_belong_to() {
+        let font = font_with_backgrounds();
+        let removed = vec!["M1".to_string()];
+        let targets = collect_reinterpolation_targets(&font, "M1").unwrap();
+        let entries = collect_background_entries(&font, &removed, &targets).unwrap();
+        let summary: Vec<(&str, Vec<&str>, bool)> = entries
+            .iter()
+            .map(|entry| {
+                (
+                    entry.layer_id.as_str(),
+                    entry.owners.iter().map(String::as_str).collect(),
+                    entry.names_removed_station,
+                )
+            })
+            .collect();
+        // M0's background is not touched.
+        assert_eq!(
+            summary,
+            vec![
+                ("M1-bg", vec!["M1"], true),
+                ("M1.alt.bg", vec!["M1.alt"], false),
+                ("orphan-bg", vec![], true),
+            ]
+        );
+        let mut restored = HashMap::new();
+        restored.insert(("A".to_string(), "M1".to_string()), Some(json!({ "wght": 870 })));
+        restored.insert(("A".to_string(), "M1.alt".to_string()), None);
+        let actions: Vec<BackgroundAction> = entries
+            .iter()
+            .map(|entry| background_action(entry, &restored).unwrap())
+            .collect();
+        assert_eq!(
+            actions,
+            vec![
+                BackgroundAction::MoveTo(json!({ "wght": 870 })),
+                BackgroundAction::Remove,
+                BackgroundAction::Remove,
+            ]
+        );
+        // A background linked to another station stays with its restored
+        // free drawing as it is.
+        let unlinked = BackgroundEntry {
+            names_removed_station: false,
+            ..entries[0].clone()
+        };
+        assert_eq!(
+            background_action(&unlinked, &restored).unwrap(),
+            BackgroundAction::Keep
+        );
+        // An owner that was not handled is an error, never a guess.
+        let error = background_action(&entries[0], &HashMap::new()).unwrap_err();
+        assert!(error.contains("was not handled"), "{error}");
+    }
+
+    #[test]
+    fn a_background_at_a_removed_station_whose_drawing_stays_follows_that_drawing() {
+        let mut font = font_with_backgrounds();
+        // M0's background points at M1, while M0's drawing stays.
+        let glyph = font.glyphs.get_mut("A").unwrap();
+        glyph.layers[1].master = LayerType::DefaultForMaster("M1".to_string());
+        let targets = collect_reinterpolation_targets(&font, "M1").unwrap();
+        let entries = collect_background_entries(&font, &["M1".to_string()], &targets).unwrap();
+        let entry = entries
+            .iter()
+            .find(|entry| entry.layer_id == "M0-bg")
+            .expect("M0's background is handled");
+        assert_eq!(entry.surviving_owners, vec!["M0".to_string()]);
+        assert_eq!(
+            background_action(entry, &HashMap::new()).unwrap(),
+            BackgroundAction::FollowOwners(vec!["M0".to_string()])
+        );
+
+        // It takes over M0's stored station link, and a location M0 does
+        // not store is removed, never kept naming M1's place.
+        let (doc, glyph_map, layers) = glyph_doc();
+        {
+            let mut txn = doc.transact_mut();
+            for layer in &font.glyphs.get("A").unwrap().layers[..2] {
+                let mut json = serde_json::to_value(layer).unwrap();
+                if json["id"] == json!("M0-bg") {
+                    json["location"] = json!({ "wght": 900 });
+                }
+                let id = json["id"].as_str().unwrap().to_string();
+                write_drawing(&mut txn, &glyph_map, &layers, &id, &json).unwrap();
+            }
+        }
+        let owner = stored_drawing(&doc, &layers, "M0");
+        let old_background = stored_drawing(&doc, &layers, "M0-bg");
+        let (master, location) =
+            owners_link("A", "M0-bg", &[("M0".to_string(), Some(owner.clone()))]).unwrap();
+        let moved =
+            relinked_background("M0-bg", Some(&old_background), &master, location.as_ref())
+                .unwrap();
+        {
+            let mut txn = doc.transact_mut();
+            write_moved_background(&mut txn, &layers, "M0-bg", &moved).unwrap();
+        }
+        let background = stored_drawing(&doc, &layers, "M0-bg");
+        assert_eq!(background["master"], owner["master"]);
+        assert_eq!(background["master"]["master"], json!("M0"));
+        assert!(background.get("location").is_none(), "{background}");
+        assert_eq!(background["is_background"], json!(true));
+        assert_eq!(background["width"], old_background["width"]);
+    }
+
+    #[test]
+    fn a_background_follows_only_owners_that_are_stored_and_agree() {
+        let at_m0 = json!({ "id": "M0", "master": { "type": "DefaultForMaster", "master": "M0" } });
+        let at_m2 = json!({ "id": "M2", "master": { "type": "DefaultForMaster", "master": "M2" } });
+        let error = owners_link("A", "bg", &[("M0".to_string(), None)]).unwrap_err();
+        assert!(error.contains("not stored"), "{error}");
+        // An owner without `master` is FreeFloating, Babelfont's encoding.
+        let (free, _) =
+            owners_link("A", "bg", &[("M0".to_string(), Some(json!({ "id": "M0" })))]).unwrap();
+        assert_eq!(free, json!({ "type": "FreeFloating" }));
+        let error = owners_link(
+            "A",
+            "bg",
+            &[("M0".to_string(), Some(json!({ "id": "M0", "master": "M0" })))],
+        )
+        .unwrap_err();
+        assert!(error.contains("not a station link"), "{error}");
+        let error = owners_link(
+            "A",
+            "bg",
+            &[("M0".to_string(), Some(at_m0.clone())), ("M2".to_string(), Some(at_m2))],
+        )
+        .unwrap_err();
+        assert!(error.contains("different locations"), "{error}");
+        let error = owners_link("A", "bg", &[]).unwrap_err();
+        assert!(error.contains("no drawing owns it"), "{error}");
+        let (master, location) =
+            owners_link("A", "bg", &[("M0".to_string(), Some(at_m0))]).unwrap();
+        assert_eq!(master["master"], json!("M0"));
+        assert!(location.is_none());
+    }
+
+    #[test]
+    fn a_background_whose_staying_owner_has_no_id_is_refused() {
+        let mut font = font_with_backgrounds();
+        let glyph = font.glyphs.get_mut("A").unwrap();
+        glyph.layers[1].master = LayerType::DefaultForMaster("M1".to_string());
+        glyph.layers[0].id = None;
+        let targets = collect_reinterpolation_targets(&font, "M1").unwrap();
+        let error =
+            collect_background_entries(&font, &["M1".to_string()], &targets).unwrap_err();
+        assert!(error.contains("A::M0-bg"), "{error}");
+    }
+
+    #[test]
+    fn a_background_shared_with_a_drawing_that_stays_is_kept() {
+        let mut font = font_with_backgrounds();
+        let glyph = font.glyphs.get_mut("A").unwrap();
+        // M0's drawing also names M1.alt's background.
+        glyph.layers[0].background_layer_id = Some("M1.alt.bg".to_string());
+        let targets = collect_reinterpolation_targets(&font, "M1").unwrap();
+        let entries = collect_background_entries(&font, &["M1".to_string()], &targets).unwrap();
+        assert!(entries.iter().all(|entry| entry.layer_id != "M1.alt.bg"));
+    }
+
+    #[test]
+    fn restored_drawings_going_to_different_locations_refuse_their_shared_background() {
+        let entry = BackgroundEntry {
+            glyph_name: "A".to_string(),
+            layer_id: "bg".to_string(),
+            owners: vec!["M1".to_string(), "M1.alt".to_string()],
+            names_removed_station: true,
+            surviving_owners: Vec::new(),
+        };
+        let mut restored = HashMap::new();
+        restored.insert(("A".to_string(), "M1".to_string()), Some(json!({ "wght": 870 })));
+        restored.insert(("A".to_string(), "M1.alt".to_string()), Some(json!({ "wght": 880 })));
+        let error = background_action(&entry, &restored).unwrap_err();
+        assert!(error.contains("different locations"), "{error}");
+    }
+
+    #[test]
+    fn a_moved_background_must_be_stored_and_whole() {
+        let location = json!({ "wght": 870 });
+        let error = moved_background("bg", None, &location).unwrap_err();
+        assert!(error.contains("not stored"), "{error}");
+        let mut no_width = whole_drawing("bg", 500.0);
+        no_width["is_background"] = json!(true);
+        no_width.as_object_mut().unwrap().remove("width");
+        let error = moved_background("bg", Some(&no_width), &location).unwrap_err();
+        assert!(error.contains("width"), "{error}");
+        let mut background = whole_drawing("bg", 500.0);
+        background["is_background"] = json!(true);
+        let error = moved_background("bg", Some(&background), &json!(870)).unwrap_err();
+        assert!(error.contains("not an object"), "{error}");
+    }
+
+    #[test]
+    fn removing_station_m1_takes_or_moves_the_backgrounds_of_its_drawings() {
+        let font = font_with_backgrounds();
+        let (doc, glyph, layers) = glyph_doc();
+        {
+            let mut txn = doc.transact_mut();
+            for layer in &font.glyphs.get("A").unwrap().layers {
+                let json = serde_json::to_value(layer).unwrap();
+                let id = json["id"].as_str().unwrap().to_string();
+                write_drawing(&mut txn, &glyph, &layers, &id, &json).unwrap();
+            }
+        }
+        let removed = vec!["M1".to_string()];
+        let targets = collect_reinterpolation_targets(&font, "M1").unwrap();
+        let entries = collect_background_entries(&font, &removed, &targets).unwrap();
+        // The same steps remove_masters_yjs takes on a glyph document.
+        let mut restored_locations = HashMap::new();
+        for target in &targets {
+            let old_value = stored_drawing(&doc, &layers, &target.layer_id);
+            let restored = former_free_drawing(&target.layer_id, Some(&old_value)).unwrap();
+            let mut txn = doc.transact_mut();
+            match &restored {
+                Some(restored) => {
+                    restore_free_drawing(&mut txn, &layers, &target.layer_id, restored).unwrap()
+                }
+                None => {
+                    layers.remove(&mut txn, &target.layer_id);
+                }
+            }
+            restored_locations.insert(
+                (target.glyph_name.clone(), target.layer_id.clone()),
+                restored.as_ref().map(|restored| restored["location"].clone()),
+            );
+        }
+        for entry in &entries {
+            match background_action(entry, &restored_locations).unwrap() {
+                BackgroundAction::Keep => {}
+                BackgroundAction::Remove => {
+                    let mut txn = doc.transact_mut();
+                    layers.remove(&mut txn, &entry.layer_id);
+                }
+                BackgroundAction::MoveTo(location) => {
+                    let old_value = stored_drawing(&doc, &layers, &entry.layer_id);
+                    let moved =
+                        moved_background(&entry.layer_id, Some(&old_value), &location).unwrap();
+                    let mut txn = doc.transact_mut();
+                    write_moved_background(&mut txn, &layers, &entry.layer_id, &moved).unwrap();
+                }
+                BackgroundAction::FollowOwners(owners) => {
+                    panic!("no drawing that stays owns {}: {:?}", entry.layer_id, owners)
+                }
+            }
+        }
+        let mut remaining: Vec<String> = {
+            let txn = doc.transact();
+            layers.keys(&txn).map(str::to_string).collect()
+        };
+        remaining.sort();
+        assert_eq!(remaining, vec!["M0", "M0-bg", "M1", "M1-bg"]);
+        let free = stored_drawing(&doc, &layers, "M1");
+        let background = stored_drawing(&doc, &layers, "M1-bg");
+        assert_eq!(free["master"], json!({ "type": "FreeFloating" }));
+        assert_eq!(background["master"], json!({ "type": "FreeFloating" }));
+        assert_eq!(background["location"], free["location"]);
+        assert_eq!(background["location"], json!({ "wght": 870 }));
+        assert_eq!(background["is_background"], json!(true));
+        assert_eq!(free["background_layer_id"], json!("M1-bg"));
+        // Nothing left names the removed station.
+        let txn = doc.transact();
+        for id in &remaining {
+            let drawing = crate::ydoc_layer_to_json(id, layers.get(&txn, id).unwrap(), &txn).unwrap();
+            assert_ne!(drawing["master"]["master"], json!("M1"), "{id}");
+        }
+    }
+
+    #[test]
+    fn a_stored_anchor_without_its_id_is_refused_never_taken_from_its_key() {
+        let (doc, glyph, layers) = glyph_doc();
+        let mut drawing = whole_drawing("L0", 500.0);
+        drawing["anchors"] = json!([{ "id": "a-top", "name": "top", "x": 10, "y": 700 }]);
+        {
+            let mut txn = doc.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L0", &drawing).unwrap();
+            let Some(yrs::types::Value::YMap(layer)) = layers.get(&txn, "L0") else {
+                panic!("drawing map missing");
+            };
+            let Some(yrs::types::Value::YMap(by_id)) = layer.get(&txn, "anchorsById") else {
+                panic!("anchorsById missing");
+            };
+            let Some(yrs::types::Value::YMap(anchor)) = by_id.get(&txn, "a-top") else {
+                panic!("anchor missing");
+            };
+            anchor.remove(&mut txn, "id");
+        }
+        // The id a rewrite would reuse for the anchor named "top" is never
+        // taken from the key.
+        let txn = doc.transact();
+        let Some(yrs::types::Value::YMap(layer)) = layers.get(&txn, "L0") else {
+            panic!("drawing map missing");
+        };
+        let error = stored_collection_items(&txn, &layer, &DRAWING_INDEXED_COLLECTIONS[0], "L0")
+            .unwrap_err();
+        assert!(error.contains("anchorsById.a-top does not store its id"), "{error}");
+        // The reader refuses the drawing too.
+        let error = crate::ydoc_layer_to_json("L0", layers.get(&txn, "L0").unwrap(), &txn)
+            .unwrap_err();
+        assert!(error.contains("anchorsById.a-top has no id"), "{error}");
+    }
+
+    /// A replica of `doc` with its own client id.
+    fn replica(doc: &Doc) -> (Doc, yrs::MapRef) {
+        let other = Doc::new();
+        sync_into(doc, &other);
+        let glyph = other.get_or_insert_map("glyph");
+        let layers = {
+            let txn = other.transact();
+            match glyph.get(&txn, "layers") {
+                Some(yrs::types::Value::YMap(layers)) => layers,
+                _ => panic!("layers missing"),
+            }
+        };
+        (other, layers)
+    }
+
+    fn anchor_pair(
+        txn: &yrs::TransactionMut,
+        layers: &yrs::MapRef,
+    ) -> (yrs::MapRef, yrs::ArrayRef) {
+        let Some(yrs::types::Value::YMap(layer)) = layers.get(txn, "L0") else {
+            panic!("drawing map missing");
+        };
+        let Some(yrs::types::Value::YMap(by_id)) = layer.get(txn, "anchorsById") else {
+            panic!("anchorsById missing");
+        };
+        let Some(yrs::types::Value::YArray(order)) = layer.get(txn, "anchorOrder") else {
+            panic!("anchorOrder missing");
+        };
+        (by_id, order)
+    }
+
+    fn stored_anchor_order(doc: &Doc, layers: &yrs::MapRef) -> Vec<JsonValue> {
+        let txn = doc.transact_mut();
+        let (_, order) = anchor_pair(&txn, layers);
+        order.iter(&txn).map(|value| crate::yrs_value_to_json(value, &txn).unwrap()).collect()
+    }
+
+    #[test]
+    fn a_concurrent_delete_and_move_of_an_anchor_reads_as_deleted() {
+        let (doc, glyph, layers) = glyph_doc();
+        let mut drawing = whole_drawing("L0", 500.0);
+        drawing["anchors"] = json!([
+            { "id": "a1", "name": "top", "x": 10, "y": 700 },
+            { "id": "a2", "name": "bottom", "x": 10, "y": 0 },
+        ]);
+        {
+            let mut txn = doc.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L0", &drawing).unwrap();
+        }
+        let (other, other_layers) = replica(&doc);
+        // A deletes a1: the item and its order entry, in one transaction.
+        {
+            let mut txn = doc.transact_mut();
+            let (by_id, order) = anchor_pair(&txn, &layers);
+            by_id.remove(&mut txn, "a1");
+            order.remove(&mut txn, 0);
+        }
+        // B moves a1 after a2 at the same time, the way an LCS diff does.
+        {
+            let mut txn = other.transact_mut();
+            let (_, order) = anchor_pair(&txn, &other_layers);
+            order.remove(&mut txn, 0);
+            order.insert(&mut txn, 1, "a1");
+        }
+        sync_into(&doc, &other);
+        sync_into(&other, &doc);
+        assert_eq!(stored_anchor_order(&doc, &layers), vec![json!("a2"), json!("a1")]);
+        for (replica, replica_layers) in [(&doc, &layers), (&other, &other_layers)] {
+            let read = stored_drawing(replica, replica_layers, "L0");
+            assert_eq!(read["anchors"], json!([{ "id": "a2", "name": "bottom", "x": 10, "y": 0 }]));
+            let txn = replica.transact();
+            let Some(yrs::types::Value::YMap(layer)) = replica_layers.get(&txn, "L0") else {
+                panic!("drawing map missing");
+            };
+            let items =
+                stored_collection_items(&txn, &layer, &DRAWING_INDEXED_COLLECTIONS[0], "L0").unwrap();
+            assert_eq!(items, vec![("a2".to_string(), Some("bottom".to_string()))]);
+        }
+        // The next write of the list drops the order entry left behind.
+        let read = stored_drawing(&doc, &layers, "L0");
+        {
+            let mut txn = doc.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L0", &read).unwrap();
+        }
+        assert_eq!(stored_anchor_order(&doc, &layers), vec![json!("a2")]);
+    }
+
+    #[test]
+    fn an_anchor_two_collaborators_move_at_once_reads_once() {
+        let (doc, glyph, layers) = glyph_doc();
+        let mut drawing = whole_drawing("L0", 500.0);
+        drawing["anchors"] = json!([
+            { "id": "a1", "name": "top", "x": 10, "y": 700 },
+            { "id": "a2", "name": "bottom", "x": 10, "y": 0 },
+        ]);
+        {
+            let mut txn = doc.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L0", &drawing).unwrap();
+        }
+        let (other, other_layers) = replica(&doc);
+        for (replica, replica_layers) in [(&doc, &layers), (&other, &other_layers)] {
+            let mut txn = replica.transact_mut();
+            let (_, order) = anchor_pair(&txn, replica_layers);
+            order.remove(&mut txn, 0);
+            order.insert(&mut txn, 1, "a1");
+        }
+        sync_into(&doc, &other);
+        sync_into(&other, &doc);
+        assert_eq!(
+            stored_anchor_order(&doc, &layers),
+            vec![json!("a2"), json!("a1"), json!("a1")]
+        );
+        let read = stored_drawing(&doc, &layers, "L0");
+        assert_eq!(
+            read["anchors"],
+            json!([
+                { "id": "a2", "name": "bottom", "x": 10, "y": 0 },
+                { "id": "a1", "name": "top", "x": 10, "y": 700 },
+            ])
+        );
+        {
+            let mut txn = doc.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L0", &read).unwrap();
+        }
+        assert_eq!(stored_anchor_order(&doc, &layers), vec![json!("a2"), json!("a1")]);
+    }
+
+    /// The anchor list of `doc` after a merge, as every reader reads it.
+    fn read_anchors(doc: &Doc, layers: &yrs::MapRef) -> JsonValue {
+        stored_drawing(doc, layers, "L0")["anchors"].clone()
+    }
+
+    #[test]
+    fn an_anchor_added_again_while_a_collaborator_drops_its_leftover_place_stays_listed() {
+        let (doc, glyph, layers) = glyph_doc();
+        let mut drawing = whole_drawing("L0", 500.0);
+        drawing["anchors"] = json!([
+            { "id": "a1", "name": "top", "x": 10, "y": 700 },
+            { "id": "a2", "name": "bottom", "x": 10, "y": 0 },
+        ]);
+        {
+            let mut txn = doc.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L0", &drawing).unwrap();
+        }
+        // A deletes a1 while B moves it: the order keeps B's place for a1.
+        let (other, other_layers) = replica(&doc);
+        {
+            let mut txn = doc.transact_mut();
+            let (by_id, order) = anchor_pair(&txn, &layers);
+            by_id.remove(&mut txn, "a1");
+            order.remove(&mut txn, 0);
+        }
+        {
+            let mut txn = other.transact_mut();
+            let (_, order) = anchor_pair(&txn, &other_layers);
+            order.remove(&mut txn, 0);
+            order.insert(&mut txn, 0, "a1");
+        }
+        sync_into(&doc, &other);
+        sync_into(&other, &doc);
+        assert_eq!(stored_anchor_order(&doc, &layers), vec![json!("a1"), json!("a2")]);
+        // Now A adds a1 again with its id (an undo, say), and at the same
+        // time B drops the leftover place, as `tidyKeyedPairOrder` does.
+        let mut again = drawing.clone();
+        again["anchors"][0]["x"] = json!(20);
+        {
+            let mut txn = doc.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L0", &again).unwrap();
+        }
+        {
+            let mut txn = other.transact_mut();
+            let (_, order) = anchor_pair(&txn, &other_layers);
+            order.remove(&mut txn, 0);
+        }
+        sync_into(&doc, &other);
+        sync_into(&other, &doc);
+        // The added anchor got a place of its own, so it stays listed.
+        for (replica, replica_layers) in [(&doc, &layers), (&other, &other_layers)] {
+            assert_eq!(
+                read_anchors(replica, replica_layers),
+                json!([
+                    { "id": "a1", "name": "top", "x": 20, "y": 700 },
+                    { "id": "a2", "name": "bottom", "x": 10, "y": 0 },
+                ])
+            );
+        }
+    }
+
+    #[test]
+    fn a_write_drops_the_repeated_place_every_client_drops() {
+        let (doc, glyph, layers) = glyph_doc();
+        let mut drawing = whole_drawing("L0", 500.0);
+        drawing["anchors"] = json!([
+            { "id": "a1", "name": "top", "x": 10, "y": 700 },
+            { "id": "a2", "name": "bottom", "x": 10, "y": 0 },
+        ]);
+        {
+            let mut txn = doc.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L0", &drawing).unwrap();
+        }
+        // Two collaborators move a1 after a2 at once: [a2, a1, a1].
+        let (other, other_layers) = replica(&doc);
+        for (replica, replica_layers) in [(&doc, &layers), (&other, &other_layers)] {
+            let mut txn = replica.transact_mut();
+            let (_, order) = anchor_pair(&txn, replica_layers);
+            order.remove(&mut txn, 0);
+            order.insert(&mut txn, 1, "a1");
+        }
+        sync_into(&doc, &other);
+        sync_into(&other, &doc);
+        assert_eq!(
+            stored_anchor_order(&doc, &layers),
+            vec![json!("a2"), json!("a1"), json!("a1")]
+        );
+        // A writes the list from Rust while B drops the repeat, keeping the
+        // first place, as `tidyKeyedPairOrder` does. Both keep the same place.
+        let mut read = stored_drawing(&doc, &layers, "L0");
+        read["anchors"][0]["x"] = json!(30);
+        {
+            let mut txn = doc.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L0", &read).unwrap();
+        }
+        {
+            let mut txn = other.transact_mut();
+            let (_, order) = anchor_pair(&txn, &other_layers);
+            order.remove(&mut txn, 2);
+        }
+        sync_into(&doc, &other);
+        sync_into(&other, &doc);
+        assert_eq!(stored_anchor_order(&doc, &layers), vec![json!("a2"), json!("a1")]);
+        for (replica, replica_layers) in [(&doc, &layers), (&other, &other_layers)] {
+            assert_eq!(
+                read_anchors(replica, replica_layers),
+                json!([
+                    { "id": "a2", "name": "bottom", "x": 30, "y": 0 },
+                    { "id": "a1", "name": "top", "x": 10, "y": 700 },
+                ])
+            );
+        }
+    }
+
+    // A refused write returns a `JsValue`, which only exists under wasm.
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen_test]
+    fn a_written_list_naming_one_anchor_twice_is_refused() {
+        let (doc, glyph, layers) = glyph_doc();
+        let mut drawing = whole_drawing("L0", 500.0);
+        drawing["anchors"] = json!([
+            { "id": "a1", "name": "top", "x": 10, "y": 700 },
+            { "id": "a1", "name": "top", "x": 20, "y": 700 },
+        ]);
+        let mut txn = doc.transact_mut();
+        let error = write_drawing(&mut txn, &glyph, &layers, "L0", &drawing).unwrap_err();
+        assert!(
+            error.as_string().unwrap_or_default().contains("appears twice"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_stored_anchor_order_naming_a_deleted_anchor_skips_it() {
+        let (doc, glyph, layers) = glyph_doc();
+        let mut drawing = whole_drawing("L0", 500.0);
+        drawing["anchors"] = json!([{ "id": "a-top", "name": "top", "x": 10, "y": 700 }]);
+        {
+            let mut txn = doc.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L0", &drawing).unwrap();
+            let Some(yrs::types::Value::YMap(layer)) = layers.get(&txn, "L0") else {
+                panic!("drawing map missing");
+            };
+            let Some(yrs::types::Value::YArray(order)) = layer.get(&txn, "anchorOrder") else {
+                panic!("anchorOrder missing");
+            };
+            order.push_back(&mut txn, "ghost");
+        }
+        let txn = doc.transact();
+        let Some(yrs::types::Value::YMap(layer)) = layers.get(&txn, "L0") else {
+            panic!("drawing map missing");
+        };
+        let items = stored_collection_items(&txn, &layer, &DRAWING_INDEXED_COLLECTIONS[0], "L0")
+            .unwrap();
+        assert_eq!(items, vec![("a-top".to_string(), Some("top".to_string()))]);
+    }
+
+    #[test]
+    fn a_stored_anchor_the_order_does_not_list_is_refused() {
+        let (doc, glyph, layers) = glyph_doc();
+        let mut drawing = whole_drawing("L0", 500.0);
+        drawing["anchors"] = json!([{ "id": "a-top", "name": "top", "x": 10, "y": 700 }]);
+        {
+            let mut txn = doc.transact_mut();
+            write_drawing(&mut txn, &glyph, &layers, "L0", &drawing).unwrap();
+            let (_, order) = anchor_pair(&txn, &layers);
+            order.remove(&mut txn, 0);
+        }
+        let txn = doc.transact();
+        let Some(yrs::types::Value::YMap(layer)) = layers.get(&txn, "L0") else {
+            panic!("drawing map missing");
+        };
+        let error = stored_collection_items(&txn, &layer, &DRAWING_INDEXED_COLLECTIONS[0], "L0")
+            .unwrap_err();
+        assert!(error.contains("anchorsById holds a-top, which anchorOrder does not list"), "{error}");
+    }
+
     #[cfg(target_arch = "wasm32")]
     #[wasm_bindgen_test]
     fn wasm_reinterpolation_packet_preserves_raw_metadata_on_receiver() {
+        use yrs::updates::decoder::Decode;
         let mut font_json = serde_json::to_value(make_test_font()).unwrap();
         font_json["glyphs"] = json!([{
             "name": "A", "category": "Base", "codepoints": [],
@@ -2720,7 +6119,9 @@ mod tests {
         }
         let receiver_layer = {
             let txn = receiver.transact();
-            ydoc_get_layer_json_with_txn("A", "brace-1", &txn).unwrap()
+            ydoc_get_layer_json_with_txn("A", "brace-1", &txn)
+                .unwrap()
+                .expect("the receiver stores the drawing")
         };
         assert_eq!(receiver_layer["width"], json!(600));
         assert_eq!(receiver_layer["guides"][0]["name"], json!("baseline"));

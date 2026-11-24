@@ -8,6 +8,22 @@
 
 import type { PatchSyncEngine } from './patch-sync-engine';
 import type { ChangeLogEntry } from './change-log';
+import { assertEncodableDocumentState } from './cloud-document-encode-gate';
+import {
+    documentIsLoaded,
+    HeldDocumentDeltas,
+    subscribeDocumentLoaded
+} from './cloud-adapter-held-deltas';
+import { isCompleteDocumentState } from './yjs-update-integrity';
+import {
+    documentInstanceOf,
+    unsentRowIsIntegrated
+} from './cloud-adapter-wal-restore';
+import {
+    isReadOnlyFontError,
+    noticeReadOnlyRefusal
+} from './glyph-canvas/edit-refusal-notice';
+import { recordCollabTrace } from './collab-trace';
 import { Logger } from './logger';
 import APP_SETTINGS from './settings';
 import {
@@ -148,6 +164,12 @@ type CloudConnectionRelayState = {
     notice?: { kind: string; title: string; tone: 'warning' | 'error' };
     /** The offline strip’s level (offline-edit-limit.ts). */
     offlineLevel?: 'none' | 'offline' | 'paused';
+    /**
+     * Why main's engine refuses local edits to this font (the user may only
+     * view it), or null when it accepts them. Linked windows' engines follow
+     * it; absent when the message is about another font.
+     */
+    readOnlyReason?: string | null;
 };
 
 // ── Protocol message types ──────────────────────────────────────────
@@ -291,6 +313,51 @@ interface ClaimMainMsg {
     sessionId: string;
 }
 
+/**
+ * An undo or redo failed part way in the sending window and its history
+ * entry was taken back there (the engine's `history-replay-failed`). The
+ * entry may already have reached the other windows with the replay's
+ * packets; each takes it back too, so every window's history matches.
+ */
+export type HistoryEntryTakeBack = {
+    historyAction: 'undo' | 'redo';
+    /** The history item the failed undo or redo was for. */
+    targetHistoryItemId: string;
+    /**
+     * The taken-back entry's own history item id, when the engine names it
+     * (`takenBackHistoryItemId` in the event detail); null when it does not.
+     */
+    entryHistoryItemId: string | null;
+    /** The window whose replay failed: the entry's author. */
+    windowId: string;
+};
+
+/** What the engine's `history-replay-failed` event carries. */
+export type HistoryReplayFailedDetail = {
+    historyAction?: 'undo' | 'redo';
+    historyItemId?: string;
+    reason?: string;
+    documentIdsNotRolledBack?: string[];
+    /** The taken-back entry's own history item id, if the engine names it. */
+    takenBackHistoryItemId?: string;
+};
+
+/**
+ * The engine hook that takes a relayed entry back: true when it found and
+ * removed the entry, false when this window does not hold it. Optional
+ * until the engine provides it.
+ */
+type HistoryTakeBackEngine = {
+    takeBackHistoryEntry?: (takeBack: HistoryEntryTakeBack) => boolean;
+};
+
+interface HistoryEntryTakenBackMsg {
+    type: 'history-entry-taken-back';
+    takeBack: HistoryEntryTakeBack;
+    windowId: string;
+    sessionId: string;
+}
+
 /** A drag or key burst in progress; the commit follows as a `yjs-update`. */
 interface LivePreviewMsg {
     type: 'live-preview';
@@ -308,6 +375,7 @@ interface LivePreviewEndMsg {
 }
 
 type SyncMessage =
+    | HistoryEntryTakenBackMsg
     | LivePreviewMsg
     | LivePreviewEndMsg
     | YjsUpdateMsg
@@ -374,7 +442,8 @@ const WINDOW_SYNC_MESSAGE_TYPES = new Set([
     'main-detached',
     'claim-main',
     'live-preview',
-    'live-preview-end'
+    'live-preview-end',
+    'history-entry-taken-back'
 ]);
 
 export function parseWindowSyncMessage(raw: unknown): SyncMessage | null {
@@ -401,6 +470,26 @@ export class WindowSync {
     private _channel: BroadcastChannel | null = null;
     private _bridge: PatchSyncEngine;
     private _peers = new Set<string>();
+    /** Documents whose packet failed to apply here; later ones are refused. */
+    private readonly _stoppedDocuments = new Set<string>();
+    /**
+     * Main only: linked-window packets main refused because the font was
+     * read-only, per document in arrival order. Each one went on to the
+     * cloud relay, which keeps it in main's write-ahead log unsent. Once
+     * main accepts edits again they go into main's document, in order,
+     * before that document's next linked packet, so it builds on them.
+     */
+    private readonly _refusedWhileReadOnly = new Map<
+        string,
+        YjsUpdatePacket[]
+    >();
+    /**
+     * Packets for a glyph or layout document this window has not loaded:
+     * they wait, in arrival order, for its full load (a catch-up state, a
+     * snapshot, or a load by another path), then apply in that order.
+     */
+    private readonly _heldUntilLoaded =
+        new HeldDocumentDeltas<YjsUpdatePacket>();
     private _awaitingFullState = false;
     private _hasAppliedFullState = false;
     private _fullStateBootstrapResolve: (() => void) | null = null;
@@ -410,6 +499,8 @@ export class WindowSync {
     private _mainWindowClosingListeners = new Set<() => void>();
     private _pendingOutboundPackets: YjsUpdatePacket[] = [];
     private _outboundFlushScheduled = false;
+    /** Take-backs that wait for the inbound packets queued before them. */
+    private _pendingHistoryTakeBacks: HistoryEntryTakeBack[] = [];
     private _livePreviewReceiver: LinkedLivePreviewReceiver | null = null;
     private _livePreviewId: string | null = null;
     private _livePreviewSerial = 0;
@@ -467,6 +558,8 @@ export class WindowSync {
     private _mainMissingLatched = false;
     private _mainDetached = false;
     private _destroyed = false;
+    private _documentLoadedUnsubscribe: () => void = () => {};
+    private _readOnlyChangedUnsubscribe: () => void = () => {};
 
     static enableTimingLogging(): void {
         WindowSync._timingLoggingEnabled = true;
@@ -509,13 +602,146 @@ export class WindowSync {
             bridge.onGlyphRevisionFeed?.((glyphIds) => {
                 this._sendGlyphRevisions(glyphIds);
             });
+            // Packets held until their document loads apply as soon as it
+            // does, not only when the next packet arrives.
+            this._documentLoadedUnsubscribe = subscribeDocumentLoaded(
+                bridge,
+                () => this.drainDeltasHeldUntilLoaded()
+            );
+            // Linked packets main refused while read-only go into main's
+            // document as soon as it accepts edits again, not only before
+            // that document's next linked packet.
+            this._readOnlyChangedUnsubscribe =
+                bridge.onReadOnlyChanged?.((reason) => {
+                    if (reason === null && this._refusedWhileReadOnly.size) {
+                        queueMicrotask(() =>
+                            this._replayAllRefusedLinkedPackets()
+                        );
+                    }
+                }) ?? (() => {});
             window.addEventListener?.(
                 'cloud-persist-failed',
                 this._onCloudPersistFailed
             );
+            window.addEventListener?.(
+                'history-replay-failed',
+                this._onHistoryReplayFailed
+            );
         }
 
         this._startMainLiveness();
+    }
+
+    /**
+     * This window's undo or redo failed and its entry was taken back. Tell
+     * the other windows, after every packet queued before it (the replay's
+     * own and its rollback), so each takes the entry back after it arrived.
+     */
+    private _onHistoryReplayFailed = (event: Event): void => {
+        const detail =
+            (event as CustomEvent<HistoryReplayFailedDetail | undefined>)
+                .detail ?? {};
+        const { historyAction, historyItemId } = detail;
+        if (
+            (historyAction !== 'undo' && historyAction !== 'redo') ||
+            typeof historyItemId !== 'string' ||
+            !historyItemId
+        ) {
+            console.error(
+                'history-replay-failed without its history item; linked windows can’t take the entry back',
+                detail
+            );
+            recordCollabTrace('history-take-back-unsent', [], {
+                historyAction: historyAction ?? null,
+                historyItemId: historyItemId ?? null
+            });
+            return;
+        }
+        const takeBack: HistoryEntryTakeBack = {
+            historyAction,
+            targetHistoryItemId: historyItemId,
+            entryHistoryItemId:
+                typeof detail.takenBackHistoryItemId === 'string' &&
+                detail.takenBackHistoryItemId
+                    ? detail.takenBackHistoryItemId
+                    : null,
+            windowId: this._bridge.windowId
+        };
+        this._flushOutboundBroadcast();
+        const sent = this._send({
+            type: 'history-entry-taken-back',
+            takeBack,
+            windowId: this._bridge.windowId,
+            sessionId: this._sessionId
+        });
+        recordCollabTrace('history-take-back-sent', [], {
+            ...takeBack,
+            sent
+        });
+    };
+
+    /** Take back relayed history entries once the packets before them applied. */
+    private _applyHistoryTakeBacks(): void {
+        if (!this._pendingHistoryTakeBacks.length) {
+            return;
+        }
+        const takeBacks = this._pendingHistoryTakeBacks;
+        this._pendingHistoryTakeBacks = [];
+        const engine = this._bridge as PatchSyncEngine & HistoryTakeBackEngine;
+        for (const takeBack of takeBacks) {
+            if (typeof engine.takeBackHistoryEntry !== 'function') {
+                console.error(
+                    'This window can’t take back a history entry another window took back; its history may still list it',
+                    takeBack
+                );
+                recordCollabTrace('history-take-back-unsupported', [], {
+                    ...takeBack
+                });
+                continue;
+            }
+            const removed = engine.takeBackHistoryEntry(takeBack);
+            if (removed) {
+                recordCollabTrace('history-entry-taken-back', [], {
+                    ...takeBack
+                });
+            } else if (this._heldUntilLoaded.documentIds().length) {
+                // The entry may come with a packet still held until its
+                // document loads: try again after those apply.
+                this._pendingHistoryTakeBacks.push(takeBack);
+            } else {
+                // This window never got the entry (it opened after it, or
+                // the replay failed before anything was sent).
+                recordCollabTrace('history-take-back-unmatched', [], {
+                    ...takeBack
+                });
+            }
+        }
+    }
+
+    private _receiveHistoryTakeBack(takeBack: HistoryEntryTakeBack): void {
+        if (
+            !takeBack ||
+            (takeBack.historyAction !== 'undo' &&
+                takeBack.historyAction !== 'redo') ||
+            typeof takeBack.targetHistoryItemId !== 'string' ||
+            typeof takeBack.windowId !== 'string' ||
+            (takeBack.entryHistoryItemId !== null &&
+                typeof takeBack.entryHistoryItemId !== 'string')
+        ) {
+            console.warn('WindowSync: ignored a malformed history take-back');
+            return;
+        }
+        this._pendingHistoryTakeBacks.push(takeBack);
+        if (
+            this._inboundFlushScheduled ||
+            this._fullStateBootstrapResolve ||
+            this._pendingYjsMessages.length
+        ) {
+            // Packets that arrived before it apply first; the inbound
+            // flush takes it back after them.
+            return;
+        }
+        this._applyHistoryTakeBacks();
     }
 
     private _onCloudPersistFailed = (event: Event): void => {
@@ -675,6 +901,20 @@ export class WindowSync {
         ) {
             this._inboundFlushScheduled = true;
             queueMicrotask(() => this._flushPendingYjsUpdates());
+        } else if (
+            this._pendingHistoryTakeBacks.length > 0 &&
+            !this._inboundFlushScheduled
+        ) {
+            // A take-back that arrived during the bootstrap waited for it;
+            // with no packets left to apply first, it runs now.
+            queueMicrotask(() => {
+                if (
+                    !this._inboundFlushScheduled &&
+                    !this._fullStateBootstrapResolve
+                ) {
+                    this._applyHistoryTakeBacks();
+                }
+            });
         }
     }
 
@@ -873,10 +1113,23 @@ export class WindowSync {
         };
     }
 
+    /**
+     * The whole state of one document for a linked window. Throws while the
+     * document is broken or holds changes it could not place: a linked
+     * window must never start from a copy with a hole.
+     */
+    private _encodeWholeDocument(documentId: string): Uint8Array | undefined {
+        const bytes = this._bridge.encodeDocumentState?.(documentId);
+        if (bytes?.byteLength) {
+            assertEncodableDocumentState(bytes, documentId);
+        }
+        return bytes;
+    }
+
     private _encodeDocuments(documentIds: string[]): SnapshotDocument[] {
         const documents: SnapshotDocument[] = [];
         for (const documentId of documentIds) {
-            const bytes = this._bridge.encodeDocumentState?.(documentId);
+            const bytes = this._encodeWholeDocument(documentId);
             if (bytes?.byteLength) {
                 documents.push({ documentId, state: bytes });
             }
@@ -1139,7 +1392,7 @@ export class WindowSync {
             ) {
                 continue;
             }
-            const bytes = this._bridge.encodeDocumentState?.(documentId);
+            const bytes = this._encodeWholeDocument(documentId);
             if (!bytes?.byteLength) {
                 continue;
             }
@@ -1230,7 +1483,7 @@ export class WindowSync {
         if (window.windowRole?.isMainWindow?.() !== true) {
             return;
         }
-        const bytes = this._bridge.encodeDocumentState?.(FONT_CORE_DOCUMENT_ID);
+        const bytes = this._encodeWholeDocument(FONT_CORE_DOCUMENT_ID);
         if (bytes?.byteLength) {
             this.broadcastDocumentCatchUp(FONT_CORE_DOCUMENT_ID, bytes);
         }
@@ -1368,9 +1621,15 @@ export class WindowSync {
             return;
         }
         this._destroyed = true;
+        this._documentLoadedUnsubscribe();
+        this._readOnlyChangedUnsubscribe();
         window.removeEventListener?.(
             'cloud-persist-failed',
             this._onCloudPersistFailed
+        );
+        window.removeEventListener?.(
+            'history-replay-failed',
+            this._onHistoryReplayFailed
         );
         if (this._missingGlyphHydrationTimer !== null) {
             clearTimeout(this._missingGlyphHydrationTimer);
@@ -1587,7 +1846,8 @@ export class WindowSync {
             this._pendingResidency = null;
             this._applySparseResidency(residency, { unload: true });
         }
-        if (!messages.length) {
+        if (!messages.length && !this._hasLoadedHeldDeltas()) {
+            this._applyHistoryTakeBacks();
             return;
         }
 
@@ -1606,14 +1866,87 @@ export class WindowSync {
             updateBytes: stats.updateBytes,
             durationMs: this._elapsed(startTime)
         });
+        this._applyHistoryTakeBacks();
+    }
+
+    /**
+     * The packets to apply now for one that arrived: none while its
+     * document is not loaded here (it is held), the held ones first once
+     * the document is loaded, or a full state followed by what waited for
+     * it. Font-core and font-deps are always loaded.
+     */
+    private _packetsReadyToApply(packet: YjsUpdatePacket): YjsUpdatePacket[] {
+        const documentId = packet.documentId || FONT_CORE_DOCUMENT_ID;
+        if (documentIsLoaded(this._bridge, documentId)) {
+            return this._heldUntilLoaded.has(documentId)
+                ? [...this._heldUntilLoaded.take(documentId), packet]
+                : [packet];
+        }
+        if (
+            packet.collaborationMessage?.source === 'window-sync.catch-up' ||
+            (!this._heldUntilLoaded.has(documentId) &&
+                isCompleteDocumentState(
+                    toUint8Array(packet.update),
+                    documentId
+                ))
+        ) {
+            // The document’s complete state (a catch-up, or the first
+            // packet of a document another window just made): it loads the
+            // document, and what waited for it applies after it, in order.
+            return [packet, ...this._heldUntilLoaded.take(documentId)];
+        }
+        this._heldUntilLoaded.hold(documentId, packet);
+        console.log(
+            `holding a packet for ${documentId} until it is loaded (${this._heldUntilLoaded.count(documentId)} waiting)`
+        );
+        return [];
+    }
+
+    private _hasLoadedHeldDeltas(): boolean {
+        return this._heldUntilLoaded
+            .documentIds()
+            .some((documentId) => documentIsLoaded(this._bridge, documentId));
+    }
+
+    /**
+     * A document was loaded by another path (a hydrate, a cloud catch-up):
+     * apply the packets that waited for it, in order.
+     */
+    drainDeltasHeldUntilLoaded(): void {
+        if (!this._hasLoadedHeldDeltas() || this._inboundFlushScheduled) {
+            return;
+        }
+        this._inboundFlushScheduled = true;
+        queueMicrotask(() => this._flushPendingYjsUpdates());
+    }
+
+    /** How many packets wait for `documentId` to load (tests, diagnostics). */
+    heldUntilLoadedCount(documentId: string): number {
+        return this._heldUntilLoaded.count(documentId);
     }
 
     private _applyInboundYjsMessages(
         messages: YjsUpdateMsg[],
         stats: { updateBytes: number; collaborationMessageCount: number }
     ): void {
-        for (const msg of messages) {
-            for (const packet of msg.updates) {
+        // Documents loaded since their packets were held go first.
+        const ready: YjsUpdatePacket[] = [];
+        for (const documentId of this._heldUntilLoaded.documentIds()) {
+            if (documentIsLoaded(this._bridge, documentId)) {
+                ready.push(...this._heldUntilLoaded.take(documentId));
+            }
+        }
+        const incoming = [...ready, ...messages.flatMap((msg) => msg.updates)];
+        for (const arrived of incoming) {
+            for (const packet of this._packetsReadyToApply(arrived)) {
+                const packetDocumentId =
+                    packet.documentId || FONT_CORE_DOCUMENT_ID;
+                if (this._stoppedDocuments.has(packetDocumentId)) {
+                    // An earlier packet of this document failed to apply:
+                    // nothing after it applies or goes on to the room ahead
+                    // of it. The document is broken until reload.
+                    continue;
+                }
                 const update = toUint8Array(packet.update);
                 stats.updateBytes += update.byteLength;
                 if (packet.collaborationMessage) {
@@ -1624,11 +1957,18 @@ export class WindowSync {
                 )
                     ? [packet.collaborationMessage]
                     : undefined;
+                const isCatchUp =
+                    packet.collaborationMessage?.source ===
+                    'window-sync.catch-up';
+                const fromLinkedWindow =
+                    !isCatchUp &&
+                    packet.fromCollaborator !== true &&
+                    window.windowRole?.isMainWindow?.() === true;
                 try {
-                    if (
-                        packet.collaborationMessage?.source ===
-                        'window-sync.catch-up'
-                    ) {
+                    if (fromLinkedWindow) {
+                        this._replayRefusedLinkedPackets(packetDocumentId);
+                    }
+                    if (isCatchUp) {
                         this._bridge.applyDocumentCatchUp(
                             packet.documentId || FONT_CORE_DOCUMENT_ID,
                             update,
@@ -1654,60 +1994,188 @@ export class WindowSync {
                                   : undefined
                         );
                         if (window.windowRole?.isMainWindow()) {
-                            // The room gets the wire form, not the full
-                            // replay values meant for linked windows.
-                            const wireEnvelope = isCollaborationMessageEnvelope(
-                                packet.collaborationMessage
-                            )
-                                ? toWireReplayValues(
-                                      packet.collaborationMessage
-                                  )
-                                : null;
-                            if (
-                                typeof this._bridge.relayPeerPacketToCloud ===
-                                'function'
-                            ) {
-                                this._bridge.relayPeerPacketToCloud(
-                                    update,
-                                    wireEnvelope,
-                                    packet.documentId,
-                                    packet.burstKey,
-                                    packet.dependsOn
-                                );
-                            } else {
-                                window.cloudPlugin?.relayPeerWindowUpdateToCloud?.(
-                                    update,
-                                    wireEnvelope,
-                                    packet.documentId
-                                );
-                            }
+                            this._relayLinkedPacketToCloud(packet, update);
                         }
                     }
                 } catch (error) {
-                    console.warn(
-                        'WindowSync: failed to apply inbound Yjs update:',
-                        error
-                    );
-                    if (
-                        window.windowRole?.isMainWindow?.() === true &&
-                        window.fontManager?.currentFont?.isCloudBacked?.() ===
-                            true
-                    ) {
-                        // The edit never reached the cloud relay; say so in
-                        // every window instead of dropping it quietly.
-                        window.dispatchEvent(
-                            new CustomEvent('cloud-persist-failed', {
-                                detail: {
-                                    documentId: packet.documentId,
-                                    reason: String(error),
-                                    storageFull: false
-                                }
-                            })
-                        );
+                    if (fromLinkedWindow && isReadOnlyFontError(error)) {
+                        // Main is read-only and refused its linked window's
+                        // edit before anything changed. Nothing is damaged:
+                        // the edit goes on to the cloud relay, which keeps
+                        // it in main's write-ahead log unsent.
+                        try {
+                            this._keepRefusedLinkedPacket(
+                                packet,
+                                packetDocumentId,
+                                update,
+                                error
+                            );
+                            continue;
+                        } catch (relayError) {
+                            this._stopDocument(packetDocumentId, relayError);
+                            continue;
+                        }
                     }
+                    this._stopDocument(packetDocumentId, error);
                 }
             }
         }
+    }
+
+    /**
+     * The edit is in no copy but its author’s: the document is incomplete
+     * from here on, so stop it loudly.
+     */
+    private _stopDocument(packetDocumentId: string, error: unknown): void {
+        this._stoppedDocuments.add(packetDocumentId);
+        this._refusedWhileReadOnly.delete(packetDocumentId);
+        this._bridge.markDocumentBroken(
+            packetDocumentId,
+            error instanceof Error ? error : new Error(String(error))
+        );
+        if (
+            window.windowRole?.isMainWindow?.() === true &&
+            window.fontManager?.currentFont?.isCloudBacked?.() === true
+        ) {
+            // The edit never reached the cloud relay; say so in every window
+            // instead of dropping it quietly.
+            window.dispatchEvent(
+                new CustomEvent('cloud-persist-failed', {
+                    detail: {
+                        documentId: packetDocumentId,
+                        reason: String(error),
+                        storageFull: false
+                    }
+                })
+            );
+        }
+    }
+
+    /** Main hands a linked window's packet to the room relay. */
+    private _relayLinkedPacketToCloud(
+        packet: YjsUpdatePacket,
+        update: Uint8Array
+    ): void {
+        // The room gets the wire form, not the full replay values meant for
+        // linked windows.
+        const wireEnvelope = isCollaborationMessageEnvelope(
+            packet.collaborationMessage
+        )
+            ? toWireReplayValues(packet.collaborationMessage)
+            : null;
+        if (typeof this._bridge.relayPeerPacketToCloud === 'function') {
+            this._bridge.relayPeerPacketToCloud(
+                update,
+                wireEnvelope,
+                packet.documentId,
+                packet.burstKey,
+                packet.dependsOn
+            );
+        } else {
+            window.cloudPlugin?.relayPeerWindowUpdateToCloud?.(
+                update,
+                wireEnvelope,
+                packet.documentId
+            );
+        }
+    }
+
+    /**
+     * Main refused a linked window's packet because the font is read-only.
+     * The packet still goes to the cloud relay, which keeps it in main's
+     * write-ahead log without sending it (never lost), and it is remembered
+     * here, in order, to go into main's document once main accepts edits
+     * again. The reason is shown once. The document is not broken.
+     */
+    private _keepRefusedLinkedPacket(
+        packet: YjsUpdatePacket,
+        documentId: string,
+        update: Uint8Array,
+        error: Error
+    ): void {
+        this._relayLinkedPacketToCloud(packet, update);
+        const kept = this._refusedWhileReadOnly.get(documentId) ?? [];
+        kept.push(packet);
+        this._refusedWhileReadOnly.set(documentId, kept);
+        recordCollabTrace('linked-edit-kept-read-only', [], {
+            document: documentId,
+            kept: kept.length
+        });
+        noticeReadOnlyRefusal(error);
+    }
+
+    /**
+     * Before a linked packet of `documentId` applies in main, put the
+     * packets main refused earlier while read-only into the document, in
+     * arrival order, so the new packet builds on them. While main is still
+     * read-only they wait. A packet the document already holds (the cloud
+     * session restored it from the write-ahead log) is skipped. They are
+     * not relayed again: their rows are in the write-ahead log already.
+     */
+    private _replayRefusedLinkedPackets(documentId: string): void {
+        const kept = this._refusedWhileReadOnly.get(documentId);
+        if (!kept?.length || this._bridge.isReadOnly?.() === true) {
+            return;
+        }
+        let applied = 0;
+        let skipped = 0;
+        while (kept.length) {
+            const packet = kept[0];
+            const update = toUint8Array(packet.update);
+            const doc = documentInstanceOf(this._bridge, documentId);
+            if (doc && unsentRowIsIntegrated(doc, update)) {
+                skipped += 1;
+            } else {
+                this._bridge.applyRemoteUpdate(
+                    update,
+                    undefined,
+                    isCollaborationMessageEnvelope(packet.collaborationMessage)
+                        ? [packet.collaborationMessage]
+                        : undefined,
+                    packet.documentId,
+                    { fromLinkedWindow: true }
+                );
+                applied += 1;
+            }
+            kept.shift();
+        }
+        this._refusedWhileReadOnly.delete(documentId);
+        recordCollabTrace('linked-edit-kept-replayed', [], {
+            document: documentId,
+            applied,
+            skipped
+        });
+    }
+
+    /**
+     * Main became writable again: put every document's refused linked
+     * packets into main now, in order. A document that fails to take them
+     * for any reason but read-only is stopped loudly; one that turned
+     * read-only again keeps them for later.
+     */
+    private _replayAllRefusedLinkedPackets(): void {
+        if (this._destroyed) {
+            return;
+        }
+        for (const documentId of [...this._refusedWhileReadOnly.keys()]) {
+            if (this._stoppedDocuments.has(documentId)) {
+                this._refusedWhileReadOnly.delete(documentId);
+                continue;
+            }
+            try {
+                this._replayRefusedLinkedPackets(documentId);
+            } catch (error) {
+                if (isReadOnlyFontError(error)) {
+                    return;
+                }
+                this._stopDocument(documentId, error);
+            }
+        }
+    }
+
+    /** Linked packets main refused while read-only and still holds, per document (tests, diagnostics). */
+    refusedWhileReadOnlyCount(documentId: string): number {
+        return this._refusedWhileReadOnly.get(documentId)?.length ?? 0;
     }
 
     private _elapsed(startTime: number): number {
@@ -1830,6 +2298,8 @@ export class WindowSync {
                     });
                     this._inboundResidency = null;
                 }
+                // Packets that waited for a document the snapshot loaded.
+                this.drainDeltasHeldUntilLoaded();
                 try {
                     const fontData = this._bridge.materializeSnapshotFont?.();
                     if (fontData) {
@@ -1947,6 +2417,11 @@ export class WindowSync {
             case 'cloud-connection-status':
                 if (msg.windowId === this._bridge.windowId) return;
                 window.cloudPlugin?.applyRelayedConnectionState?.(msg.state);
+                break;
+
+            case 'history-entry-taken-back':
+                if (msg.windowId === this._bridge.windowId) return;
+                this._receiveHistoryTakeBack(msg.takeBack);
                 break;
 
             case 'cloud-persist-failed':

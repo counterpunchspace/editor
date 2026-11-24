@@ -884,6 +884,7 @@ describe('lean cascading layer recomposition', () => {
 
     test('finalizer writes only recomposed dependents for width cascade', () => {
         const fontJson = {
+            masters: [makeStation()],
             glyphs: [
                 {
                     name: 'a',
@@ -891,6 +892,10 @@ describe('lean cascading layer recomposition', () => {
                         {
                             id: 'a0',
                             width: 500,
+                            master: {
+                                type: 'DefaultForMaster',
+                                master: 'M0'
+                            },
                             anchors: [],
                             shapes: []
                         }
@@ -902,6 +907,10 @@ describe('lean cascading layer recomposition', () => {
                         {
                             id: 'adm0',
                             width: 520,
+                            master: {
+                                type: 'DefaultForMaster',
+                                master: 'M0'
+                            },
                             anchors: [],
                             shapes: []
                         }
@@ -913,6 +922,10 @@ describe('lean cascading layer recomposition', () => {
                         {
                             id: 'ada0',
                             width: 500,
+                            master: {
+                                type: 'DefaultForMaster',
+                                master: 'M0'
+                            },
                             anchors: [],
                             shapes: []
                         }
@@ -924,6 +937,10 @@ describe('lean cascading layer recomposition', () => {
                         {
                             id: 'n0',
                             width: 480,
+                            master: {
+                                type: 'DefaultForMaster',
+                                master: 'M0'
+                            },
                             anchors: [],
                             shapes: []
                         }
@@ -1016,6 +1033,7 @@ describe('lean cascading layer recomposition', () => {
 
     test('finalizer does not run metrics for anchor-only packets', () => {
         const fontJson = {
+            masters: [makeStation()],
             glyphs: [
                 {
                     name: 'a',
@@ -1023,6 +1041,10 @@ describe('lean cascading layer recomposition', () => {
                         {
                             id: 'a0',
                             width: 500,
+                            master: {
+                                type: 'DefaultForMaster',
+                                master: 'M0'
+                            },
                             anchors: [{ name: 'orphan', x: 1, y: 2 }],
                             shapes: []
                         }
@@ -1034,6 +1056,10 @@ describe('lean cascading layer recomposition', () => {
                         {
                             id: 'adm0',
                             width: 520,
+                            master: {
+                                type: 'DefaultForMaster',
+                                master: 'M0'
+                            },
                             anchors: [],
                             shapes: []
                         }
@@ -1149,6 +1175,10 @@ describe('undo/redo derived-layer resettle helpers', () => {
                             newValue: {
                                 id: 'layer-2',
                                 width: 777,
+                                master: {
+                                    type: 'DefaultForMaster',
+                                    master: 'M0'
+                                },
                                 shapes: [{ type: 'component' }]
                             }
                         }

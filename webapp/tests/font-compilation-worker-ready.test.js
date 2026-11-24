@@ -525,4 +525,144 @@ describe('FontCompilation worker document readiness', () => {
             expect(posted).toHaveLength(1);
         });
     });
+
+    describe('glyph documents and terminal worker errors', () => {
+        function createAnsweringFontCompilation(answer) {
+            const fontCompilation = new FontCompilation({
+                connectInterpolation: false
+            });
+            const posted = [];
+            fontCompilation.worker = {
+                postMessage: jest.fn((message) => {
+                    posted.push(message);
+                    Promise.resolve().then(() =>
+                        fontCompilation.handleWorkerMessage({
+                            data: {
+                                id: message.id,
+                                type: message.type,
+                                ...answer(message)
+                            }
+                        })
+                    );
+                })
+            };
+            fontCompilation.isInitialized = true;
+            return { fontCompilation, posted };
+        }
+
+        test('a new glyph document reaches the worker whole before its first update', async () => {
+            const { fontCompilation, posted } = createAnsweringFontCompilation(
+                () => ({ success: true })
+            );
+            await fontCompilation.seedWorkerDocumentSet([
+                { documentId: 'font-core', bytes: new Uint8Array([0, 0]) }
+            ]);
+            const wholeState = new Uint8Array([9, 9, 9]);
+            const originalBridge = window.patchSyncEngine;
+            window.patchSyncEngine = {
+                encodeDocumentState: jest.fn(() => wholeState)
+            };
+            try {
+                await fontCompilation.mirrorYjsUpdate({
+                    update: new Uint8Array([4, 5, 6]),
+                    changedGlyphs: ['a'],
+                    documentId: 'glyph:1'
+                });
+                await fontCompilation.mirrorYjsUpdate({
+                    update: new Uint8Array([7, 8]),
+                    changedGlyphs: ['a'],
+                    documentId: 'glyph:1'
+                });
+            } finally {
+                window.patchSyncEngine = originalBridge;
+            }
+            expect(posted.map((message) => message.type)).toEqual([
+                'seedYdoc',
+                'replaceYdocDocuments',
+                'applyYjsUpdate',
+                'applyYjsUpdate'
+            ]);
+            expect(posted[1].documents).toEqual([
+                { documentId: 'glyph:1', state: wholeState }
+            ]);
+            expect(fontCompilation.workerHoldsDocument('glyph:1')).toBe(true);
+        });
+
+        test('an update for a glyph document the editor cannot send whole is refused', async () => {
+            const { fontCompilation, posted } = createAnsweringFontCompilation(
+                () => ({ success: true })
+            );
+            await expect(
+                fontCompilation.ensureWorkerHoldsDocument('glyph:2', () => null)
+            ).rejects.toThrow(/does not hold that document/);
+            expect(posted).toEqual([]);
+        });
+
+        test('a ClockGapError marks the named document broken and is not retried', async () => {
+            const { fontCompilation, posted } = createAnsweringFontCompilation(
+                (message) =>
+                    message.type === 'applyYjsUpdate'
+                        ? {
+                              error: 'apply_yjs_update: ClockGapError: document glyph:3: client 7 needs clock 4, have 2'
+                          }
+                        : { success: true }
+            );
+            await fontCompilation.seedWorkerDocumentSet([
+                { documentId: 'font-core', bytes: new Uint8Array([0, 0]) },
+                { documentId: 'glyph:3', bytes: new Uint8Array([3]) }
+            ]);
+            const originalBridge = window.patchSyncEngine;
+            const markDocumentBroken = jest.fn();
+            window.patchSyncEngine = { markDocumentBroken };
+            try {
+                await expect(
+                    fontCompilation.mirrorYjsUpdate({
+                        update: new Uint8Array([4, 5, 6]),
+                        changedGlyphs: ['a'],
+                        documentId: 'glyph:3'
+                    })
+                ).rejects.toThrow('ClockGapError');
+            } finally {
+                window.patchSyncEngine = originalBridge;
+            }
+            expect(markDocumentBroken).toHaveBeenCalledWith(
+                'glyph:3',
+                expect.any(Error)
+            );
+            expect(posted.map((message) => message.type)).toEqual([
+                'seedYdoc',
+                'applyYjsUpdate'
+            ]);
+        });
+
+        test('a failed catch-up replace is surfaced to the compile that waits for it', async () => {
+            const { fontCompilation } = createAnsweringFontCompilation(() => ({
+                error: 'seed_ydoc_document: BrokenDocumentError: document glyph:4 is broken: gap'
+            }));
+            const originalBridge = window.patchSyncEngine;
+            const markDocumentBroken = jest.fn();
+            window.patchSyncEngine = { markDocumentBroken };
+            const errorSpy = jest
+                .spyOn(console, 'error')
+                .mockImplementation(() => undefined);
+            try {
+                fontCompilation.scheduleReplaceWorkerDocument(
+                    'glyph:4',
+                    new Uint8Array([1])
+                );
+                await expect(
+                    fontCompilation.awaitWorkerDocumentReadyForCompile()
+                ).rejects.toThrow('BrokenDocumentError');
+                await new Promise((resolve) => setTimeout(resolve, 0));
+                expect(markDocumentBroken).toHaveBeenCalledWith(
+                    'glyph:4',
+                    expect.any(Error)
+                );
+                expect(fontCompilation.hasWorkerCacheDocument()).toBe(false);
+            } finally {
+                window.patchSyncEngine = originalBridge;
+                errorSpy.mockRestore();
+            }
+        });
+    });
 });

@@ -6,6 +6,12 @@ export const cloudPluginLiveMethods = {
         const bridge = window.patchSyncEngine;
         this._disconnectCurrent();
         this._activeAssetId = assetId;
+        // Reconnecting the open font: it stays read-only through the token
+        // fetch when this user was a viewer (the fetched role decides next).
+        if (bridge) {
+            this._readOnlyEngine = bridge;
+            this._syncEngineReadOnly();
+        }
         void this._fetchAssetLimits(assetId);
 
         if (!bridge) {

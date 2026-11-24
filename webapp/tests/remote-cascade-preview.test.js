@@ -134,6 +134,46 @@ async function settled() {
 }
 
 describe('RemoteCascadePreview', () => {
+    it('lets a failed recompose, settle or composite check throw', () => {
+        const failing = (what) => () => {
+            throw new Error(`${what} read an incomplete drawing`);
+        };
+        const time = fakeClock();
+        const host = fakeHost();
+        host.recompose = failing('recompose');
+        const preview = new RemoteCascadePreview(host, time.clock);
+        preview.noteCollaboratorEdit(anchorEdit);
+        expect(() => time.flush()).toThrow(/recompose read an incomplete/);
+        preview.destroy();
+
+        const settleTime = fakeClock();
+        const settleHost = fakeHost([[aacute]]);
+        settleHost.settle = failing('settle');
+        const settlePreview = new RemoteCascadePreview(
+            settleHost,
+            settleTime.clock
+        );
+        settlePreview.noteCollaboratorEdit(anchorEdit);
+        settleTime.flush();
+        expect(() => settleTime.advance(REMOTE_CASCADE_PREVIEW_MAX_MS)).toThrow(
+            /settle read an incomplete/
+        );
+        settlePreview.destroy();
+
+        const checkTime = fakeClock();
+        const checkHost = fakeHost();
+        checkHost.repairComposites = failing('check');
+        const checkPreview = new RemoteCascadePreview(
+            checkHost,
+            checkTime.clock
+        );
+        checkPreview.noteStoredChange(anchorEdit);
+        expect(() => checkTime.advance(REMOTE_CASCADE_PREVIEW_MAX_MS)).toThrow(
+            /check read an incomplete/
+        );
+        checkPreview.destroy();
+    });
+
     it('recomposes a collaborator’s edit, stages the dependents and compiles', async () => {
         const time = fakeClock();
         const host = fakeHost([[aacute]]);

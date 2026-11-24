@@ -7,7 +7,7 @@
  * updates to other windows via BroadcastChannel.
  */
 
-import { cloudPacketBytesForLimit } from './cloud-update-split';
+import { MAX_YJS_PACKET_BYTES } from './generated/collab-protocol-limits';
 import * as Y from 'yjs';
 import { assertCompileStamp } from './edit-intent';
 import { rebasePythonExecutionBaseline } from './python-execution-baseline';
@@ -30,15 +30,20 @@ import {
     diffYArray,
     applyIndexedMapArray as applyIndexedMapArrayToYMap,
     ensureGlyphDrawingsMap,
+    createGlyphDrawingsMap,
+    drawingToYMap,
     replaceYMapContents,
-    YMAP_INFRASTRUCTURE_KEYS
+    YMAP_INFRASTRUCTURE_KEYS,
+    DRAWING_FORMAT_SPECIFIC_KEY,
+    writeDrawingFormatSpecific
 } from './change-bridge-ydoc';
 import {
-    repairDrawingGeometryOrphans,
+    assertDrawingGeometryComplete,
     readDrawingGeometry,
     writeDrawingGeometry
 } from './drawing-geometry-ydoc';
 import {
+    describeDrawingStationViolation,
     omitRestingDrawingRuntimeKeys,
     RESTING_DRAWING_IDENTITY_KEYS,
     RESTING_DRAWING_RUNTIME_KEYS,
@@ -96,7 +101,10 @@ import {
     type EditBurst,
     type HeldCloudPacket
 } from './edit-burst';
-import { mergeEnvelopesForWire } from './cloud-envelope-budget';
+import {
+    EnvelopeTooLargeError,
+    mergeEnvelopesForWire
+} from './cloud-envelope-budget';
 import { pushCollabIntegrityEvent } from './cloud-collab-integrity-debug';
 import {
     base64ToBytes,
@@ -187,6 +195,20 @@ import {
 } from './filesystem-plugins/cloud-room-move';
 import { flattenKerningMap } from './delete-glyphs-preflight';
 import {
+    ClockGapError,
+    DocumentStateNotLoadedError,
+    applyUpdateWithIntegrity,
+    assertCompleteGlyphState,
+    assertDocumentWritable,
+    assertNoPendingState,
+    assertUpdateIntegrates,
+    clearBrokenDocumentScope,
+    createBrokenDocumentScope,
+    isDocumentBroken,
+    isDocumentIdBroken,
+    markDocumentBroken
+} from './yjs-update-integrity';
+import {
     measureShardBytesForSubmit,
     evaluateCollabSubmit,
     type CollabSubmitDecision,
@@ -210,9 +232,19 @@ function mergeBurstEnvelopes(
     envelopes: CollaborationMessageEnvelope[],
     documentId: string,
     isBurst: boolean
-): CollaborationMessageEnvelope | null {
+): CollaborationMessageEnvelope {
+    const requireMerged = (
+        merged: CollaborationMessageEnvelope | null
+    ): CollaborationMessageEnvelope => {
+        if (!merged) {
+            throw new Error(
+                `[PatchSyncEngine] Held packets for “${documentId}” have no envelope to merge.`
+            );
+        }
+        return merged;
+    };
     if (!isBurst) {
-        return mergeEnvelopesForWire(envelopes, { documentId });
+        return requireMerged(mergeEnvelopesForWire(envelopes, { documentId }));
     }
     const collapsed: CollaborationMessageEnvelope['changes'] = [];
     for (const change of envelopes.flatMap((envelope) => envelope.changes)) {
@@ -234,20 +266,39 @@ function mergeBurstEnvelopes(
         collapsed.push(change);
     }
     const [first, ...rest] = envelopes;
-    const merged = mergeEnvelopesForWire(
-        [
-            { ...first, changes: collapsed },
-            ...rest.map((envelope) => ({ ...envelope, changes: [] }))
-        ],
-        { documentId }
+    const merged = requireMerged(
+        mergeEnvelopesForWire(
+            [
+                { ...first, changes: collapsed },
+                ...rest.map((envelope) => ({ ...envelope, changes: [] }))
+            ],
+            { documentId }
+        )
     );
-    return merged
-        ? { ...merged, summary: first.summary, label: first.label }
-        : null;
+    return { ...merged, summary: first.summary, label: first.label };
 }
 
 type Unsafe = ReturnType<typeof JSON.parse>;
 type YjsUpdate = Uint8Array<ArrayBufferLike>;
+
+/** An undo or redo resolved and checked before it writes anything. */
+type PreparedHistoryReplay = {
+    /** Entries in replay order. */
+    replayEntries: ChangeLogEntry[];
+    resettleDerivedDrawings: boolean;
+    itemRenames: GlyphRename[];
+    /** Entries per document, font-core first; every document is held here. */
+    buckets: Array<[string, ChangeLogEntry[]]>;
+};
+
+/** A copy of the engine's glyph name index (see `_snapshotGlyphNameMaps`). */
+type GlyphNameMapsSnapshot = {
+    idByName: Map<string, string>;
+    nameById: Map<string, string>;
+    retiredIdByName: Map<string, string>;
+    removedNameById: Map<string, string>;
+    pendingDestroyedIds: Set<string>;
+};
 type OptionalDrawingField = 'anchors' | 'guides' | 'format_specific';
 
 type DrawingSnapshotSyncTarget = WorkerReplayTarget & {
@@ -256,6 +307,14 @@ type DrawingSnapshotSyncTarget = WorkerReplayTarget & {
 };
 
 export type { ChangeLogEntry } from './change-log';
+
+/** Hears of a glyph or layout document that is now held in this window. */
+export type DocumentLoadedListener = (documentId: string) => void;
+/**
+ * Hears that a font became read-only (the reason shown with refused edits)
+ * or writable again (null), from setReadOnly or destroy.
+ */
+export type ReadOnlyChangedListener = (reason: string | null) => void;
 
 /** What a listener may need to know about the commit behind a packet. */
 export type LocalUpdateMeta = {
@@ -333,8 +392,100 @@ export type CommittedChangeListener = (
         fromCollaborator?: boolean;
         /** This user's edit relayed from a linked window (main window only). */
         fromLinkedWindow?: boolean;
+        /**
+         * Nothing was written and no packet went anywhere: an edit whose
+         * drawings already matched their documents. Listeners refresh
+         * compile and caches for the entries' replay targets only.
+         */
+        localOnly?: boolean;
     }
 ) => void;
+
+/**
+ * Why the engine replaced model glyph or drawing data with what the
+ * documents hold.
+ */
+export type GlyphModelRebuildCause =
+    | 'remote-update'
+    | 'catch-up'
+    | 'checkpoint'
+    | 'snapshot'
+    | 'rebaseline'
+    | 'hydrate'
+    | 'unload'
+    | 'submit-refused'
+    | 'read-only-refused'
+    | 'null-commit-read-back'
+    | 'history-replay'
+    | 'external-reload'
+    | 'deferred-after-sync'
+    | 'read-back';
+
+export type GlyphModelRebuildEvent = {
+    /** Glyphs whose model data is replaced; null when any glyph may be. */
+    glyphs: string[] | null;
+    cause: GlyphModelRebuildCause;
+};
+
+/**
+ * Runs synchronously before the engine replaces model data, so an editor
+ * can commit an edit it still holds (a debounced keyboard preview) first.
+ */
+export type BeforeGlyphModelRebuildListener = (
+    event: GlyphModelRebuildEvent
+) => void;
+
+/** Runs after the engine replaced model glyph or drawing data. */
+export type GlyphModelRebuiltListener = (event: GlyphModelRebuildEvent) => void;
+
+/** An undo or redo that did not happen, or failed part way. */
+export type HistoryReplayProblem =
+    | {
+          kind: 'blocked';
+          reason: 'collaborator-edit' | 'document-not-loaded';
+          historyAction: string;
+          historyItemId: string;
+          documentIds?: string[];
+      }
+    | {
+          kind: 'failed';
+          historyAction: string;
+          historyItemId: string;
+          reason: string;
+          documentIdsNotRolledBack: string[];
+          /**
+           * The own history item id of the undo or redo entry this window
+           * took out of its change log; absent when nothing was taken out.
+           * Linked windows take the same entry back (`takeBackHistoryEntry`).
+           */
+          takenBackHistoryItemId?: string;
+      };
+
+/**
+ * A failed undo or redo another window took back (see window-sync): this
+ * window removes the same relayed control entry from its change log.
+ */
+export type HistoryEntryTakeBack = {
+    historyAction: 'undo' | 'redo';
+    /** The history item the failed undo or redo was for. */
+    targetHistoryItemId: string;
+    /** The taken-back entry's own history item id, when it is known. */
+    entryHistoryItemId: string | null;
+    /** The window whose replay failed: the entry's author. */
+    windowId: string;
+};
+
+export type HistoryReplayProblemListener = (
+    problem: HistoryReplayProblem
+) => void;
+
+/** A model-rebuild scope: what it replaced, and whether it is reported. */
+type GlyphModelRebuildScope = {
+    cause: GlyphModelRebuildCause;
+    silent: boolean;
+    glyphs: Set<string>;
+    all: boolean;
+};
 
 /** Own glyph revisions remembered to ignore their echo from the feed. */
 const MAX_OWN_GLYPH_REVISIONS = 20_000;
@@ -388,6 +539,39 @@ export class MetadataFreeRemoteUpdateError extends Error {
     }
 }
 
+/**
+ * A drawing read from or written to Yjs lacks a field every drawing must
+ * have: a finite `width`, a non-empty string `id`, or a `master` that names
+ * an existing station. Nothing fills it in; the document is refused.
+ */
+export class DrawingInvariantError extends Error {
+    readonly drawingId: string;
+    constructor(drawingId: string, problem: string, context: string) {
+        super(
+            `[PatchSyncEngine] Drawing ${drawingId || '(no id)'} ${problem} (${context})`
+        );
+        this.name = 'DrawingInvariantError';
+        this.drawingId = drawingId;
+    }
+}
+
+/**
+ * A local edit was refused because the font is read-only in this window:
+ * the user lost write access (or only ever had read access). Separate from
+ * a broken document: nothing is damaged, and edits from collaborators keep
+ * arriving. Nothing is written or sent.
+ */
+export class ReadOnlyFontError extends Error {
+    readonly reason: string;
+    constructor(reason: string, context: string) {
+        super(
+            `This font is read-only: ${reason} Your ${context} was not made.`
+        );
+        this.name = 'ReadOnlyFontError';
+        this.reason = reason;
+    }
+}
+
 export type CollaborationLogItem = {
     id: string;
     direction: 'local' | 'remote';
@@ -415,6 +599,8 @@ export type CollaborationLogItem = {
     changedGlyphNames: string[];
     changedLayerIds: string[];
     workerReplayTargets: WorkerReplayTarget[];
+    /** The envelope named every glyph of its document (see the envelope). */
+    allGlyphsChanged?: true;
     changes: CollaborationMessageEnvelope['changes'];
     derivedForwardChanges: DerivedForwardChange[];
 };
@@ -475,8 +661,32 @@ const USER_EDIT_ORIGIN = 'user-edit';
 /** Change-log path describing a font-deps packet on the wire. */
 export const FONT_DEPS_ENTRY_PATH = 'fontDeps';
 const SYSTEM_REMOTE_ORIGIN = 'system-remote';
+/** A peer’s or linked window’s update applied by applyRemoteUpdate. */
+const PEER_REMOTE_ORIGIN = 'peer-remote';
 const HISTORY_REPLAY_ORIGIN = 'history-replay';
 const FONT_EDIT_ORIGIN = 'font-edit';
+
+/**
+ * True when `transaction` changed `doc`: a new struct or a deletion. Read
+ * after a throw inside it, to tell a refusal before any write (the document
+ * is whole) from one after a partial write.
+ */
+function transactionWroteSomething(
+    doc: Y.Doc,
+    transaction: Y.Transaction
+): boolean {
+    if (transaction.deleteSet.clients.size > 0) {
+        return true;
+    }
+    for (const [client, clock] of Y.decodeStateVector(
+        Y.encodeStateVector(doc)
+    )) {
+        if (clock > (transaction.beforeState.get(client) ?? 0)) {
+            return true;
+        }
+    }
+    return false;
+}
 
 /** A Yjs v1 update with no structs and no deletions. */
 function isEmptyYjsUpdate(update: Uint8Array): boolean {
@@ -489,6 +699,22 @@ const GLYPH_EDIT_ORIGIN = 'glyph-edit';
 export const CLOUD_REMOTE_ORIGIN = 'cloud-remote';
 /** Edits carried over from a rebase's old rooms; sent explicitly. */
 const LAYOUT_FORWARD_ORIGIN = 'layout-forward';
+
+/**
+ * Origins of updates that came from somewhere else: the room, a peer, a
+ * catch-up, a checkpoint or a linked window. Every other update a document
+ * emits is this window’s own and goes to its outbox, whatever
+ * `transaction.local` says (Yjs sets it false for every applied update,
+ * worker edits included).
+ */
+const NETWORK_ORIGINS: ReadonlySet<unknown> = new Set<unknown>([
+    SYSTEM_REMOTE_ORIGIN,
+    PEER_REMOTE_ORIGIN,
+    CLOUD_REMOTE_ORIGIN
+]);
+
+/** An empty Yjs v1 update: no structs, no deletions. */
+const EMPTY_YJS_UPDATE: YjsUpdate = new Uint8Array([0, 0]);
 
 function assertCloudAssetMutable(): void {
     if (window.cloudPlugin?.canMutateCurrentAsset?.() === false) {
@@ -509,6 +735,13 @@ export type ApplyRemoteUpdateOptions = {
      * this window's to write, as for its own edits.
      */
     fromLinkedWindow?: boolean;
+    /**
+     * The update is one of this user's unsent edits, restored from the
+     * write-ahead log. It applies only to a document whose state from the
+     * room is loaded here; otherwise a `DocumentStateNotLoadedError` is
+     * thrown before anything is applied, and nothing is marked broken.
+     */
+    restoredUnsentEdit?: boolean;
 };
 
 /** Most recent collaborator-touched paths kept for the undo guard. */
@@ -542,6 +775,182 @@ function historyPathsOverlap(left: string, right: string): boolean {
     }
     return true;
 }
+/**
+ * The glyph whose set of drawings this change path adds, removes or
+ * replaces whole (a station drawing, free drawing or variation drawing, or
+ * the whole drawing list), or null.
+ */
+function drawingSetChangeGlyphName(path: string): string | null {
+    const segments = historyPathSegments(path);
+    if (
+        segments[0] === 'glyphs' &&
+        segments.length >= 3 &&
+        segments.length <= 4 &&
+        segments[2] === 'layers'
+    ) {
+        return segments[1] ?? null;
+    }
+    return null;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** What makes a node interpolation-compatible: its type. Null when unknown. */
+function nodeStructureSignature(node: unknown): string | null {
+    if (!isPlainRecord(node)) {
+        return null;
+    }
+    const nodeType = node.nodetype ?? node.type;
+    return typeof nodeType === 'string' ? nodeType : null;
+}
+
+function nodesStructureSignature(nodes: unknown): string | null {
+    if (!Array.isArray(nodes)) {
+        return null;
+    }
+    const signatures = nodes.map(nodeStructureSignature);
+    return signatures.every((signature) => signature !== null)
+        ? signatures.join(',')
+        : null;
+}
+
+/** A path's open/closed state and node types, or a component's glyph. */
+function shapeStructureSignature(shape: unknown): string | null {
+    if (!isPlainRecord(shape)) {
+        return null;
+    }
+    if (typeof shape.reference === 'string') {
+        return `component:${shape.reference}`;
+    }
+    const nodes = nodesStructureSignature(shape.nodes);
+    return nodes === null ? null : `path:${String(shape.closed)}:${nodes}`;
+}
+
+function shapesStructureSignature(shapes: unknown): string | null {
+    if (!Array.isArray(shapes)) {
+        return null;
+    }
+    const signatures = shapes.map(shapeStructureSignature);
+    return signatures.every((signature) => signature !== null)
+        ? signatures.join('|')
+        : null;
+}
+
+/** Signatures differ, or either side cannot be read: count it as changed. */
+function structureSignaturesDiffer(
+    signature: (value: unknown) => string | null,
+    oldValue: unknown,
+    newValue: unknown
+): boolean {
+    const before = signature(oldValue);
+    const after = signature(newValue);
+    return before === null || after === null || before !== after;
+}
+
+/**
+ * Whether a history entry changes what interpolation needs to match across
+ * a glyph’s drawings: a contour opened or closed, a node inserted, removed
+ * or given another type, a shape or component added, removed, reordered or
+ * swapped. Moving points or components does not. Anchors never count: a
+ * glyph whose drawings differ in anchors still compiles (interpolation only
+ * warns), so undoing an anchor add or remove stays allowed. A glyph-level
+ * entry counts as such a change.
+ */
+function historyEntryChangesInterpolationStructure(
+    entry: ChangeLogEntry
+): boolean {
+    const segments = historyPathSegments(String(entry.path || ''));
+    if (segments[0] !== 'glyphs' || segments.length < 2) {
+        return false;
+    }
+    if (segments.length < 4) {
+        return segments.length === 2 || segments[2] === 'layers';
+    }
+    if (segments[2] !== 'layers') {
+        return false;
+    }
+    const addsOrRemoves = entry.op === 'add' || entry.op === 'remove';
+    const { oldValue, newValue } = entry;
+    if (segments.length === 4) {
+        if (addsOrRemoves || !isPlainRecord(oldValue)) {
+            return true;
+        }
+        if (!isPlainRecord(newValue)) {
+            return true;
+        }
+        return structureSignaturesDiffer(
+            shapesStructureSignature,
+            oldValue.shapes ?? [],
+            newValue.shapes ?? []
+        );
+    }
+    const area = segments[4];
+    const rest = segments.slice(5);
+    if (area === 'geometryTopology') {
+        return true;
+    }
+    if (area === 'shapes') {
+        if (rest.length === 0) {
+            return (
+                addsOrRemoves ||
+                structureSignaturesDiffer(
+                    shapesStructureSignature,
+                    oldValue,
+                    newValue
+                )
+            );
+        }
+        if (rest.length === 1) {
+            return (
+                addsOrRemoves ||
+                structureSignaturesDiffer(
+                    shapeStructureSignature,
+                    oldValue,
+                    newValue
+                )
+            );
+        }
+        const key = rest[1];
+        if (rest.length === 2) {
+            if (key === 'nodes') {
+                return (
+                    addsOrRemoves ||
+                    structureSignaturesDiffer(
+                        nodesStructureSignature,
+                        oldValue,
+                        newValue
+                    )
+                );
+            }
+            return (
+                (key === 'closed' || key === 'reference') &&
+                (addsOrRemoves ||
+                    JSON.stringify(oldValue) !== JSON.stringify(newValue))
+            );
+        }
+        if (key !== 'nodes') {
+            return false;
+        }
+        if (rest.length === 3) {
+            return (
+                addsOrRemoves ||
+                structureSignaturesDiffer(
+                    nodeStructureSignature,
+                    oldValue,
+                    newValue
+                )
+            );
+        }
+        return (
+            rest.length === 4 &&
+            (rest[3] === 'nodetype' || rest[3] === 'type') &&
+            (addsOrRemoves || oldValue !== newValue)
+        );
+    }
+    return false;
+}
 const GLYPH_REVISION_ORIGIN = 'glyph-revision-signal';
 const DRAWING_EDIT_ORIGIN_PREFIX = 'drawing-edit:';
 
@@ -562,13 +971,6 @@ function historyItemWritesDrawing(
             deriveGlyphNameFromPath(entry.path) === target.glyphName &&
             (deriveDrawingIdFromPath(entry.path) ?? target.layerId) ===
                 target.layerId
-    );
-}
-
-function isNoOpYjsUpdate(update: Uint8Array): boolean {
-    return (
-        update.length === 0 ||
-        (update.length === 2 && update[0] === 0 && update[1] === 0)
     );
 }
 
@@ -868,6 +1270,33 @@ function collectedEncodedByteLength(doc: Y.Doc): number {
     }
 }
 
+const utf8Encoder = new TextEncoder();
+
+/** UTF-8 size of a value's JSON. */
+function jsonByteLength(value: unknown): number {
+    if (value === undefined) {
+        return 0;
+    }
+    return utf8Encoder.encode(JSON.stringify(value) ?? '').byteLength;
+}
+
+/** Size of the largest single string or number in a value: what Yjs cannot split. */
+function largestLeafByteLength(value: unknown): number {
+    if (Array.isArray(value)) {
+        return value.reduce<number>(
+            (max, item) => Math.max(max, largestLeafByteLength(item)),
+            0
+        );
+    }
+    if (value && typeof value === 'object') {
+        return Object.values(value as Record<string, unknown>).reduce<number>(
+            (max, item) => Math.max(max, largestLeafByteLength(item)),
+            0
+        );
+    }
+    return jsonByteLength(value);
+}
+
 export class PatchSyncEngine {
     /** Font-core Yjs document (non-glyph fields + glyphOrder). */
     readonly yDoc: Y.Doc;
@@ -875,9 +1304,25 @@ export class PatchSyncEngine {
     /** Root font map inside the core Y.Doc */
     readonly fontMap: Y.Map<unknown>;
     private _glyphDocs = new Map<string, Y.Doc>();
+    /** The name each deleted glyph had, to describe its document's last packet. */
+    private _removedGlyphNameById = new Map<string, string>();
     private _glyphIdByName = new Map<string, string>();
     private _glyphNameById = new Map<string, string>();
-    private _lastBroadcastStateVectorByDoc = new Map<string, Uint8Array>();
+    /**
+     * This window’s updates of each document that no packet has carried yet,
+     * in the order Yjs made them. Every outgoing packet is the merge of a
+     * document’s queue, so it carries exactly this window’s own structs and
+     * deletions, never a diff against a remembered state vector.
+     */
+    private _outbox = new Map<string, YjsUpdate[]>();
+    /**
+     * Font-core updates of a room-layout move (adopt, rebase, prune), kept
+     * apart until publishAdoptedRoomLayout sends them. Null when no move is
+     * in progress.
+     */
+    private _layoutCoreOutbox: YjsUpdate[] | null = null;
+    /** True while a room-layout move writes font-core. */
+    private _capturingLayoutCore = false;
     private _lastEncodedShardBytes = new Map<string, number>();
     private _docUpdateUnsubscribers: Array<() => void> = [];
     private _docUpdateUnsubById = new Map<string, () => void>();
@@ -894,6 +1339,15 @@ export class PatchSyncEngine {
      * collaborator edit of the same path would silently revert their work.
      */
     private _collaboratorTouches: Array<{ seq: number; path: string }> = [];
+    /**
+     * Glyphs in which a collaborator added, removed or replaced a drawing,
+     * by change-log index. Undoing a structural edit of the glyph’s other
+     * drawings after that would leave the new drawing incompatible.
+     */
+    private _collaboratorDrawingSetTouches: Array<{
+        seq: number;
+        glyphName: string;
+    }> = [];
     /** Room baselines of the undo or redo being replayed, so rooms it reaches through dependent composites are sent too. */
     private _historyReplayBaselines: Map<string, Uint8Array> | null = null;
     /** Dependent composite drawings the current replay recomposed outside the item's own entries. */
@@ -932,11 +1386,43 @@ export class PatchSyncEngine {
         createHistoryItemId: () => this._createHistoryItemId()
     });
     /** Holds the cloud-bound copy of a burst; see `CloudSendHold`. */
+    // Broken documents by id: a document marked while not resident, or
+    // unloaded and loaded again, stays refused until the font is reloaded.
+    private readonly _brokenScope = createBrokenDocumentScope();
+    // Why local writes to this font are refused, or null while they are
+    // allowed (setReadOnly).
+    private _readOnlyReason: string | null = null;
+    private readonly _readOnlyChangedListeners =
+        new Set<ReadOnlyChangedListener>();
+    /**
+     * Documents whose whole state is held here: loaded from the room (a
+     * shard, checkpoint or full state), built here from the font, or a glyph
+     * made from its complete state. A document made empty on demand is not
+     * in it until its state arrives. Restored unsent edits wait for it.
+     */
+    private readonly _stateLoadedDocumentIds = new Set<string>();
+    /**
+     * Glyph documents (by document id) with a catch-up running, or one
+     * queued to run after it. Their catch-up rows apply to the instance the
+     * cursor was read from, so they are never unloaded meanwhile.
+     */
+    private readonly _glyphCatchUpsInFlight = new Set<string>();
+    private readonly _glyphCatchUpsPending = new Set<string>();
+
     private _cloudHold = new CloudSendHold({
         minGapMs: APP_SETTINGS.CLOUD_SEND_MIN_GAP_MS,
         trailingMs: APP_SETTINGS.CLOUD_SEND_TRAILING_MS,
-        flush: (packets) => this._flushHeldCloudPackets(packets)
+        flush: (packets) => this._flushHeldCloudPackets(packets),
+        onHeld: (packet) => this._stageHeldCloudPacket(packet)
     });
+    /**
+     * Per document, the cloud delivery still waiting for an earlier one to
+     * take its queue place (a held linked-window run waits for its device
+     * row). Every later delivery of that document, own or relayed, and its
+     * outbox write go behind it, so the room gets one document's packets in
+     * the order this window received or made them.
+     */
+    private _cloudDeliveryGates = new Map<string, Promise<void>>();
     /** Bursts opened by `runInEditBurst` that have not returned yet. */
     private _ambientBursts: EditBurst[] = [];
     /** Drawings each live-preview burst stages; its commit closes it. */
@@ -977,8 +1463,6 @@ export class PatchSyncEngine {
     private _txHistoryTarget: TransactionHistoryTarget | null = null;
     private _txIntents: Record<string, unknown> = {};
     private _afterOutermostCommit: Array<() => void> = [];
-    /** Compact state-vector captured at the start of the outermost transaction. */
-    private _txStartStateVector: Uint8Array | null = null;
     /** Buffered operations for the current outermost transaction */
     private _txBufferedOperations: TransactionBufferedOperation[] = [];
     /** Apply-path classification (replaces suppress-flag cluster). */
@@ -1010,6 +1494,21 @@ export class PatchSyncEngine {
     private _localUpdateListeners: Set<LocalUpdateListener> = new Set();
     /** Callbacks for committed local/remote changes after Yjs apply */
     private _committedChangeListeners: Set<CommittedChangeListener> = new Set();
+    private _beforeGlyphModelRebuildListeners =
+        new Set<BeforeGlyphModelRebuildListener>();
+    private _glyphModelRebuiltListeners = new Set<GlyphModelRebuiltListener>();
+    private _historyReplayProblemListeners =
+        new Set<HistoryReplayProblemListener>();
+    /** Open model-rebuild scopes, innermost last. */
+    private _glyphModelRebuildScopes: GlyphModelRebuildScope[] = [];
+    private _runningBeforeGlyphModelRebuild = false;
+    /** Depth of `_commitOperations` calls in progress. */
+    private _commitDepth = 0;
+    private _documentLoadedListeners = new Set<DocumentLoadedListener>();
+    /** Documents created since the last load notification, in order. */
+    private _documentsLoadedPendingNotice = new Set<string>();
+    private _documentLoadedNoticeScheduled = false;
+    private _destroyed = false;
     /** Latest revision token per glyph, from the font-core room's feed. */
     private _glyphRevisionFeed = new Map<string, string>();
     private _glyphRevisionFeedListeners = new Set<GlyphRevisionFeedListener>();
@@ -1070,14 +1569,6 @@ export class PatchSyncEngine {
     >();
     /** Optional callback that can append derived operations before commit */
     private _transactionFinalizer: TransactionFinalizer | null = null;
-
-    /**
-     * Compact Yjs state-vector (one clock entry per client, typically < 100 bytes)
-     * captured after each local or remote Y.Doc mutation. Used to compute the
-     * minimal incremental diff for outbound broadcasts without serialising the
-     * entire font document.
-     */
-    private _lastBroadcastStateVector: Uint8Array = new Uint8Array(0);
 
     /**
      * Fast deep equality that is deterministic about object key order
@@ -1339,12 +1830,16 @@ export class PatchSyncEngine {
 
     private _bindDocUpdates(doc: Y.Doc, documentId: string): void {
         const handler = (update: YjsUpdate, origin: unknown) => {
+            if (NETWORK_ORIGINS.has(origin)) {
+                return;
+            }
+            this._queueLocalUpdate(documentId, update);
             if (
                 this._isLocalEditOrigin(origin) &&
                 !this._isApplyingRemote &&
                 !this._suppressAutomaticLocalUpdateEmission
             ) {
-                this._emitRawLocalUpdate(update, documentId);
+                this._emitRawLocalUpdate(documentId);
             }
         };
         doc.on('update', handler);
@@ -1356,16 +1851,161 @@ export class PatchSyncEngine {
         });
     }
 
-    private _noteBroadcastStateVector(documentId: string): void {
-        const doc = this._docForId(documentId);
-        if (!doc) {
+    private _queueLocalUpdate(documentId: string, update: YjsUpdate): void {
+        if (
+            documentId === FONT_CORE_DOCUMENT_ID &&
+            this._capturingLayoutCore &&
+            this._layoutCoreOutbox
+        ) {
+            this._layoutCoreOutbox.push(update);
             return;
         }
-        const vector = Y.encodeStateVector(doc);
-        this._lastBroadcastStateVectorByDoc.set(documentId, vector);
-        if (documentId === FONT_CORE_DOCUMENT_ID) {
-            this._lastBroadcastStateVector = vector;
+        const queue = this._outbox.get(documentId);
+        if (queue) {
+            queue.push(update);
+        } else {
+            this._outbox.set(documentId, [update]);
         }
+    }
+
+    /**
+     * Take every queued local update of `documentId`, merged in order. The
+     * caller sends it; an empty update when nothing is queued.
+     */
+    private _takeOutbox(documentId: string): YjsUpdate {
+        const queue = this._outbox.get(documentId);
+        this._outbox.delete(documentId);
+        if (!queue?.length) {
+            return EMPTY_YJS_UPDATE;
+        }
+        return queue.length === 1 ? queue[0] : Y.mergeUpdates(queue);
+    }
+
+    /**
+     * Put an update taken from the outbox back at its front: its packet
+     * could not be made, and it stays queued ahead of later updates.
+     */
+    private _requeueUnsent(documentId: string, update: YjsUpdate): void {
+        if (isEmptyYjsUpdate(update)) {
+            return;
+        }
+        const queue = this._outbox.get(documentId);
+        if (queue) {
+            queue.unshift(update);
+        } else {
+            this._outbox.set(documentId, [update]);
+        }
+    }
+
+    /** True while this window holds updates of `documentId` no packet carried. */
+    hasUnsentLocalUpdates(documentId: string): boolean {
+        return (this._outbox.get(documentId)?.length ?? 0) > 0;
+    }
+
+    /**
+     * The document’s whole state reaches its room as a snapshot (a load, or a
+     * seed of a new room), so its queued updates travel in that snapshot and
+     * are not sent again as a packet.
+     */
+    private _noteWholeStateDelivered(documentId: string): void {
+        this._outbox.delete(documentId);
+    }
+
+    /**
+     * Send what a remote apply, catch-up or checkpoint left queued: local
+     * writes observers made while it ran. Each goes out described as its
+     * whole document, so no local transaction stays behind unsent.
+     */
+    private _flushStrandedOutboxes(): void {
+        if (
+            this._txDepth > 0 ||
+            this._isApplyingRemote ||
+            this._suppressAutomaticLocalUpdateEmission ||
+            !this._outbox.size
+        ) {
+            return;
+        }
+        const packets: Array<{
+            update: YjsUpdate;
+            entries: ChangeLogEntry[];
+            documentId: string;
+        }> = [];
+        for (const documentId of [...this._outbox.keys()]) {
+            const update = this._takeOutbox(documentId);
+            if (isEmptyYjsUpdate(update)) {
+                continue;
+            }
+            packets.push({
+                update,
+                entries: [
+                    this._wholeDocumentEntry(documentId, 'Document update')
+                ],
+                documentId
+            });
+        }
+        if (packets.length) {
+            this._emitLocalUpdateBatch(packets);
+        }
+    }
+
+    /**
+     * Describes a packet whose document changed without entries of its own
+     * (an undo stamp, an observer write): receivers re-read the whole glyph,
+     * or the whole document.
+     */
+    /**
+     * Drop a glyph id from the name index, keeping the name it had: a
+     * packet for that glyph's document (an undo that removes or brings back
+     * the glyph, a stamp) is still described by that name.
+     */
+    private _forgetGlyphNameForId(glyphId: string): void {
+        const glyphName = this._glyphNameById.get(glyphId);
+        if (glyphName) {
+            this._removedGlyphNameById.set(glyphId, glyphName);
+        }
+        this._glyphNameById.delete(glyphId);
+    }
+
+    private _wholeDocumentEntry(
+        documentId: string,
+        label: string
+    ): ChangeLogEntry {
+        const glyphId = glyphIdFromDocumentId(documentId);
+        // A deleted glyph is described by the name it had when deleted.
+        const glyphName = glyphId
+            ? (this._glyphNameById.get(glyphId) ??
+              this._removedGlyphNameById.get(glyphId))
+            : null;
+        if (glyphId && !glyphName) {
+            throw new Error(
+                `[PatchSyncEngine] ${documentId} changed but has no glyph name; its packet cannot be described`
+            );
+        }
+        const path = glyphName
+            ? joinPathWithGlyphSeparator(['glyphs', glyphName])
+            : documentId === FONT_DEPS_DOCUMENT_ID
+              ? FONT_DEPS_ENTRY_PATH
+              : isLayoutDocumentId(documentId)
+                ? layoutTopLevelKey(documentId)
+                : 'font';
+        return createLogEntry({
+            timestamp: Date.now(),
+            windowId: this.windowId,
+            windowRoleLabel: this._getWindowRoleLabel(),
+            historyItemId: this._createHistoryItemId(),
+            historyAction: 'change',
+            transactionLabel: label,
+            transactionId: null,
+            op: 'set',
+            path,
+            oldValue: undefined,
+            newValue: undefined,
+            replayOldValue: undefined,
+            replayNewValue: undefined,
+            compileChangeSource: null,
+            compileEditType: null,
+            ...(glyphName ? { undoScope: 'glyph' as const } : {})
+        });
     }
 
     // ── Room layout 2 (cloud-room-layout.ts) ─────────────────────
@@ -1436,8 +2076,8 @@ export class PatchSyncEngine {
         const moved = new Set(this.layoutMovedFromRoomIds());
         for (const [documentId, doc] of [...this._layoutDocs]) {
             if (keep.has(documentId)) continue;
-            this._lastBroadcastStateVectorByDoc.delete(documentId);
             this._layoutDocs.delete(documentId);
+            this._stateLoadedDocumentIds.delete(documentId);
             if (moved.has(documentId)) {
                 this._retiredLayoutDocs.set(documentId, doc);
                 this._retiredForwardReady = false;
@@ -1445,6 +2085,7 @@ export class PatchSyncEngine {
             }
             this._docUpdateUnsubById.get(documentId)?.();
             this._docUpdateUnsubById.delete(documentId);
+            this._outbox.delete(documentId);
             doc.destroy();
         }
         for (const documentId of [...this._retiredLayoutDocs.keys()]) {
@@ -1528,7 +2169,13 @@ export class PatchSyncEngine {
         if (!doc || !update?.length) {
             return false;
         }
-        Y.applyUpdate(doc, update, CLOUD_REMOTE_ORIGIN);
+        applyUpdateWithIntegrity(
+            doc,
+            update,
+            documentId,
+            CLOUD_REMOTE_ORIGIN,
+            this._brokenScope
+        );
         this._scheduleRetiredForward();
         return true;
     }
@@ -1652,7 +2299,7 @@ export class PatchSyncEngine {
             if (!writes.length) {
                 continue;
             }
-            const before = Y.encodeStateVector(doc);
+            assertDocumentWritable(doc, target, this._brokenScope);
             doc.transact(() => {
                 for (const [key, value] of writes) {
                     if (value === undefined) {
@@ -1683,12 +2330,10 @@ export class PatchSyncEngine {
                 compileChangeSource: 'cloud-room-layout',
                 compileEditType: null
             });
-            this._emitLocalUpdate(
-                Y.encodeStateAsUpdate(doc, before),
-                [],
-                target,
-                { skipCollaborationLog: true, envelopeEntries: [entry] }
-            );
+            this._emitLocalUpdate(this._takeOutbox(target), [], target, {
+                skipCollaborationLog: true,
+                envelopeEntries: [entry]
+            });
             if (layoutDocumentKind(target) === 'kerning') {
                 this._workerDocumentReplaceCallback?.(
                     target,
@@ -1711,7 +2356,7 @@ export class PatchSyncEngine {
      * and get purged. The core change is sent with publishAdoptedRoomLayout.
      */
     pruneLayoutMoves(cutoff: number): boolean {
-        if (this._adoptedLayoutCoreBaseline) {
+        if (this._layoutCoreOutbox) {
             return false;
         }
         const maps = [
@@ -1729,10 +2374,9 @@ export class PatchSyncEngine {
         if (!stale.some((keys) => keys.length)) {
             return false;
         }
-        this._adoptedLayoutCoreBaseline =
-            this._lastBroadcastStateVectorByDoc.get(FONT_CORE_DOCUMENT_ID) ??
-            Y.encodeStateVector(this.yDoc);
+        this._layoutCoreOutbox = [];
         this._pushApplyKind(ApplyKind.ManualEmit);
+        this._capturingLayoutCore = true;
         try {
             this.yDoc.transact(() => {
                 maps.forEach((map, index) => {
@@ -1740,6 +2384,7 @@ export class PatchSyncEngine {
                 });
             }, FONT_EDIT_ORIGIN);
         } finally {
+            this._capturingLayoutCore = false;
             this._popApplyKind();
         }
         return true;
@@ -1773,7 +2418,7 @@ export class PatchSyncEngine {
      */
     rebaseRoomLayout(next: RoomLayout): boolean {
         const current = this.roomLayout;
-        if (!current || this._adoptedLayoutCoreBaseline) {
+        if (!current || this._layoutCoreOutbox) {
             return false;
         }
         const catalogMoves =
@@ -1789,9 +2434,7 @@ export class PatchSyncEngine {
         const stations = kerningMoves
             ? ((this._readTopLevelJsonFromY('masters') as unknown[]) ?? [])
             : [];
-        this._adoptedLayoutCoreBaseline =
-            this._lastBroadcastStateVectorByDoc.get(FONT_CORE_DOCUMENT_ID) ??
-            Y.encodeStateVector(this.yDoc);
+        this._layoutCoreOutbox = [];
         // What the copy holds of each old room: later edits there are
         // carried over (forwardRetiredLayoutEdits).
         const at = Date.now();
@@ -1813,6 +2456,7 @@ export class PatchSyncEngine {
                 ];
             });
         this._pushApplyKind(ApplyKind.ManualEmit);
+        this._capturingLayoutCore = true;
         try {
             this.yDoc.transact(() => {
                 const map = this.yDoc.getMap(LAYOUT_MAP_KEY);
@@ -1884,12 +2528,20 @@ export class PatchSyncEngine {
                 }
             }, FONT_EDIT_ORIGIN);
         } finally {
+            this._capturingLayoutCore = false;
             this._popApplyKind();
         }
         this._dropLayoutDocsOutside(next);
+        // The new rooms are seeded from these states (see above); rooms the
+        // layout keeps send their queued edits as usual.
+        const keptRoomIds = new Set(layoutDocumentIds(current));
         for (const documentId of layoutDocumentIds(next)) {
             this._ensureLayoutDoc(documentId);
-            this._noteBroadcastStateVector(documentId);
+            if (!keptRoomIds.has(documentId)) {
+                this._noteWholeStateDelivered(documentId);
+                // Built here: this window holds the new room's whole state.
+                this._stateLoadedDocumentIds.add(documentId);
+            }
         }
         for (const documentId of [
             FONT_CORE_DOCUMENT_ID,
@@ -1910,20 +2562,23 @@ export class PatchSyncEngine {
         for (const [documentId, doc] of this._layoutDocs) {
             this._docUpdateUnsubById.get(documentId)?.();
             this._docUpdateUnsubById.delete(documentId);
-            this._lastBroadcastStateVectorByDoc.delete(documentId);
+            this._outbox.delete(documentId);
+            this._stateLoadedDocumentIds.delete(documentId);
             doc.destroy();
         }
         this._layoutDocs.clear();
         this.dropRetiredLayoutDocs();
-        this._adoptedLayoutCoreBaseline = null;
+        this._layoutCoreOutbox = null;
     }
 
     private _ensureLayoutDoc(documentId: string): Y.Doc {
         let doc = this._layoutDocs.get(documentId);
         if (!doc) {
+            this._assertDocumentIdWritable(documentId);
             doc = new Y.Doc({ gc: false });
             this._layoutDocs.set(documentId, doc);
             this._bindDocUpdates(doc, documentId);
+            this._noteDocumentLoaded(documentId);
         }
         return doc;
     }
@@ -2447,15 +3102,12 @@ export class PatchSyncEngine {
         }
     }
 
-    /** Core state before adoptRoomLayout, until its core change is sent. */
-    private _adoptedLayoutCoreBaseline: Uint8Array | null = null;
-
     /**
      * True between adoptRoomLayout and publishAdoptedRoomLayout: this window
      * is the one moving the asset to layout 2 and may seed its empty rooms.
      */
     isAdoptingRoomLayout(): boolean {
-        return this._adoptedLayoutCoreBaseline !== null;
+        return this._layoutCoreOutbox !== null;
     }
 
     /**
@@ -2476,10 +3128,9 @@ export class PatchSyncEngine {
         const features = this._readTopLevelJsonFromY('features');
         const catalog = this._readTopLevelJsonFromY(CORE_GLYPH_CATALOG_KEY);
         const stations = this._readTopLevelJsonFromY('masters');
-        this._adoptedLayoutCoreBaseline =
-            this._lastBroadcastStateVectorByDoc.get(FONT_CORE_DOCUMENT_ID) ??
-            Y.encodeStateVector(this.yDoc);
+        this._layoutCoreOutbox = [];
         this._pushApplyKind(ApplyKind.ManualEmit);
+        this._capturingLayoutCore = true;
         try {
             this.yDoc.transact(
                 () => this._setRoomLayoutValue(layout),
@@ -2548,16 +3199,19 @@ export class PatchSyncEngine {
                 this._ensureLayoutDoc(documentId);
             }
         } finally {
+            this._capturingLayoutCore = false;
             this._popApplyKind();
         }
         // The rooms are seeded from these states; nothing of them is a
         // pending live delta. A new asset seeds core too.
         for (const documentId of layoutDocumentIds(layout)) {
-            this._noteBroadcastStateVector(documentId);
+            this._noteWholeStateDelivered(documentId);
+            // Built here: this window holds each seeded room's whole state.
+            this._stateLoadedDocumentIds.add(documentId);
         }
         if (options.seedsWholeAsset) {
-            this._noteBroadcastStateVector(FONT_CORE_DOCUMENT_ID);
-            this._adoptedLayoutCoreBaseline = null;
+            this._noteWholeStateDelivered(FONT_CORE_DOCUMENT_ID);
+            this._layoutCoreOutbox = null;
         }
         for (const documentId of [
             FONT_CORE_DOCUMENT_ID,
@@ -2581,15 +3235,15 @@ export class PatchSyncEngine {
      * kerning from core.
      */
     publishAdoptedRoomLayout(): boolean {
-        const baseline = this._adoptedLayoutCoreBaseline;
-        if (!baseline || !this.roomLayout) {
+        const queued = this._layoutCoreOutbox;
+        if (!queued || !this.roomLayout) {
             return false;
         }
-        this._adoptedLayoutCoreBaseline = null;
-        const update = Y.encodeStateAsUpdate(this.yDoc, baseline);
-        if (!update.length) {
+        this._layoutCoreOutbox = null;
+        if (!queued.length) {
             return false;
         }
+        const update = Y.mergeUpdates(queued);
         const historyItemId = this._createHistoryItemId();
         const entries = [
             LAYOUT_MAP_KEY,
@@ -2619,7 +3273,6 @@ export class PatchSyncEngine {
             skipCollaborationLog: true,
             envelopeEntries: entries
         });
-        this._noteBroadcastStateVector(FONT_CORE_DOCUMENT_ID);
         return true;
     }
 
@@ -2712,6 +3365,15 @@ export class PatchSyncEngine {
         return this.documentIdForPath(segments);
     }
 
+    /**
+     * The Y.Doc object that holds a document here, or null when it is not
+     * loaded. Its identity changes when the document is unloaded or
+     * replaced, so state keyed by it (catch-up cursors) goes with it.
+     */
+    getDocumentInstance(documentId: string): Y.Doc | null {
+        return this._docForId(documentId);
+    }
+
     private _docForId(documentId: string): Y.Doc | null {
         if (documentId === FONT_CORE_DOCUMENT_ID) {
             return this.yDoc;
@@ -2732,6 +3394,35 @@ export class PatchSyncEngine {
             );
         }
         return this._glyphDocs.get(documentId) || null;
+    }
+
+    /**
+     * The document `documentId` names. One this window does not hold is an
+     * error: its bytes or writes never go into another document instead.
+     */
+    private _requireDocForId(documentId: string): Y.Doc {
+        const doc = this._docForId(documentId);
+        if (!doc) {
+            throw new Error(
+                `[PatchSyncEngine] “${documentId}” is not loaded in this window`
+            );
+        }
+        return doc;
+    }
+
+    /**
+     * A glyph this window does not hold is made only from its complete
+     * state. A delta names only what changed, and a glyph made from it would
+     * lack everything else (its name, its drawings’ widths), so it is
+     * refused before the document exists. A state that integrates into an
+     * empty document can still be a delta: a client’s first edit to a root
+     * map starts at clock 0. A complete glyph state carries the glyph’s name.
+     */
+    private _assertCompleteGlyphState(
+        update: Uint8Array,
+        documentId: string
+    ): void {
+        assertCompleteGlyphState(update, documentId);
     }
 
     private _glyphMapForName(glyphName: string): Y.Map<unknown> | null {
@@ -2784,9 +3475,14 @@ export class PatchSyncEngine {
     ): Y.Doc {
         let doc = this._glyphDocs.get(glyphId);
         if (!doc) {
+            this._assertDocumentIdWritable(glyphDocumentId(glyphId));
             doc = new Y.Doc({ gc: false });
             this._glyphDocs.set(glyphId, doc);
             this._bindDocUpdates(doc, glyphDocumentId(glyphId));
+            this._noteDocumentLoaded(glyphDocumentId(glyphId));
+            // Every caller fills it with the glyph's whole state: the font,
+            // a new glyph, or a complete state checked before this.
+            this._stateLoadedDocumentIds.add(glyphDocumentId(glyphId));
         }
         this._glyphIdByName.set(glyphName, glyphId);
         this._glyphNameById.set(glyphId, glyphName);
@@ -2796,18 +3492,25 @@ export class PatchSyncEngine {
                 const glyphMap = doc.getMap('glyph');
                 glyphMap.forEach((_value, key) => glyphMap.delete(key));
                 fillGlyphYMap(glyphJson, glyphMap);
+                // A glyph's drawings map exists from its creation on, even
+                // when it has no drawings yet.
+                if (glyphMap.get('layers') === undefined) {
+                    createGlyphDrawingsMap(glyphMap);
+                }
             }, USER_EDIT_ORIGIN);
         }
         return doc;
     }
 
     private _destroyGlyphDocs(): void {
-        for (const doc of this._glyphDocs.values()) {
+        for (const [glyphId, doc] of this._glyphDocs) {
+            this._stateLoadedDocumentIds.delete(glyphDocumentId(glyphId));
             doc.destroy();
         }
         this._glyphDocs.clear();
         this._glyphIdByName.clear();
         this._glyphNameById.clear();
+        this._removedGlyphNameById.clear();
     }
 
     /** The name the index gives a glyph id, or null. */
@@ -3077,6 +3780,20 @@ export class PatchSyncEngine {
         if (!state?.length) {
             return;
         }
+        this._withGlyphModelRebuild(
+            'checkpoint',
+            this._glyphNamesForRebuildHint(documentId, undefined),
+            () => this._applyDocumentCheckpoint(documentId, state)
+        );
+    }
+
+    private _applyDocumentCheckpoint(
+        documentId: string,
+        state: YjsUpdate
+    ): void {
+        if (!state?.length) {
+            return;
+        }
         if (this._retiredLayoutDocs.has(documentId)) {
             this._applyRetiredLayoutUpdate(documentId, state);
             return;
@@ -3096,16 +3813,23 @@ export class PatchSyncEngine {
                 doc = this._ensureLayoutDoc(documentId);
             }
             if (!doc && documentId.startsWith('glyph:')) {
+                this._assertCompleteGlyphState(state, documentId);
                 doc = this._ensureGlyphDocFromShard({
                     documentId,
                     bytes: state
                 });
             }
             if (!doc) {
-                doc = this.yDoc;
+                doc = this._requireDocForId(documentId);
             }
-            Y.applyUpdate(doc, state, SYSTEM_REMOTE_ORIGIN);
-            this._noteBroadcastStateVector(documentId);
+            applyUpdateWithIntegrity(
+                doc,
+                state,
+                documentId,
+                SYSTEM_REMOTE_ORIGIN,
+                this._brokenScope
+            );
+            this._stateLoadedDocumentIds.add(documentId);
             if (documentId === FONT_CORE_DOCUMENT_ID) {
                 this._rehydrateEntireFontJsonFromYDoc();
             } else if (isLayoutDocumentId(documentId)) {
@@ -3161,10 +3885,35 @@ export class PatchSyncEngine {
                 ]);
             }
         }
-        this._repairGeometryOrphansAfterConvergedState(documentId);
+        this._assertGeometryCompleteAfterConvergedState(documentId);
+        this._flushStrandedOutboxes();
     }
 
     applyDocumentCatchUp(
+        documentId: string,
+        update: YjsUpdate,
+        _collaborationMessages?: CollaborationMessageEnvelope[],
+        _remoteEntries?: ChangeLogEntry[],
+        expectedRevision?: string
+    ): boolean {
+        if (!update?.length) {
+            return false;
+        }
+        return this._withGlyphModelRebuild(
+            'catch-up',
+            this._glyphNamesForRebuildHint(documentId, _remoteEntries),
+            () =>
+                this._applyDocumentCatchUp(
+                    documentId,
+                    update,
+                    _collaborationMessages,
+                    _remoteEntries,
+                    expectedRevision
+                )
+        );
+    }
+
+    private _applyDocumentCatchUp(
         documentId: string,
         update: YjsUpdate,
         _collaborationMessages?: CollaborationMessageEnvelope[],
@@ -3190,19 +3939,7 @@ export class PatchSyncEngine {
         const stateBefore = this.hasResidentGlyphDocument(documentId)
             ? this.encodeDocumentStateVector(documentId)
             : null;
-        // A glyph this window holds can be malformed until the catch-up
-        // lands: a later packet whose earlier one never arrived applies its
-        // deletions (a drawing's old width) while its new values wait. The
-        // catch-up brings what is missing, so describing it must not stop it.
-        let describedBefore: CatchUpDescription | null = null;
-        try {
-            describedBefore = this._readCatchUpDescription(documentId);
-        } catch (error) {
-            console.warn(
-                `[PatchSyncEngine] Catching up ${documentId} without describing it first:`,
-                error
-            );
-        }
+        const describedBefore = this._readCatchUpDescription(documentId);
         this.beginDeferredAfterSync();
         try {
             this.applyDocumentCheckpoint(documentId, update);
@@ -3424,6 +4161,11 @@ export class PatchSyncEngine {
         if (!glyphId) {
             return false;
         }
+        // A collaborator's write released after a newer one is not here
+        // until a catch-up has brought it, whatever the stamp says.
+        if (this._lateGlyphRevisionsAwaitingFetch.has(glyphId)) {
+            return false;
+        }
         const doc = this._glyphDocs.get(glyphId);
         const token = doc
             ?.getMap(GLYPH_SYNC_MAP_KEY)
@@ -3467,6 +4209,14 @@ export class PatchSyncEngine {
 
     /** Copy a resident shard into the font model under its catalog name. */
     materializeResidentCatalogGlyph(documentId: string): void {
+        this._withGlyphModelRebuild(
+            'hydrate',
+            this._glyphNamesForRebuildHint(documentId, undefined),
+            () => this._materializeResidentCatalogGlyph(documentId)
+        );
+    }
+
+    private _materializeResidentCatalogGlyph(documentId: string): void {
         // A catch-up can finish after the glyph's deletion arrived; the
         // glyph room and font-core are not ordered with each other.
         if (
@@ -3607,6 +4357,9 @@ export class PatchSyncEngine {
         ) {
             this._glyphRevisionsAwaitingFetch.delete(glyphId);
         }
+        // A catch-up to the room's tail, or the glyph's live socket, brings
+        // every row after the cursor, a late older write's included.
+        this._lateGlyphRevisionsAwaitingFetch.delete(glyphId);
     }
 
     private _applyReadyGlyphRevisions(
@@ -3633,6 +4386,22 @@ export class PatchSyncEngine {
                     (this._glyphRevisionFeedArrival.get(item.glyphId) ?? 0) >
                     item.arrival
                 ) {
+                    // The feed keeps its newest revision, but the late write
+                    // is still one this window has to fetch: the glyph waits
+                    // for a catch-up of the log rows after its cursor.
+                    if (
+                        !initial &&
+                        this._glyphRevisionFeed.get(item.glyphId) !==
+                            item.revision
+                    ) {
+                        this._lateGlyphRevisionsAwaitingFetch.set(
+                            item.glyphId,
+                            item.revision
+                        );
+                        if (!changed.includes(item.glyphId)) {
+                            changed.push(item.glyphId);
+                        }
+                    }
                     continue;
                 }
                 this._glyphRevisionFeedArrival.set(item.glyphId, item.arrival);
@@ -3864,15 +4633,19 @@ export class PatchSyncEngine {
      * had no change-log entries of its own.
      */
     private _writeFontDeps(sourceIds: string[], write: () => void): void {
-        const before = Y.encodeStateVector(this.depsDoc);
+        assertDocumentWritable(
+            this.depsDoc,
+            FONT_DEPS_DOCUMENT_ID,
+            this._brokenScope
+        );
         this._pushApplyKind(ApplyKind.ManualEmit);
         try {
             this.depsDoc.transact(write, FONT_EDIT_ORIGIN);
         } finally {
             this._popApplyKind();
         }
-        const update = Y.encodeStateAsUpdate(this.depsDoc, before);
-        if (!update.length) {
+        const update = this._takeOutbox(FONT_DEPS_DOCUMENT_ID);
+        if (isEmptyYjsUpdate(update)) {
             return;
         }
         const entry = createLogEntry({
@@ -3896,7 +4669,6 @@ export class PatchSyncEngine {
             skipCollaborationLog: true,
             envelopeEntries: [entry]
         });
-        this._noteBroadcastStateVector(FONT_DEPS_DOCUMENT_ID);
     }
 
     syncFontDepsFromFontJson(
@@ -4048,22 +4820,23 @@ export class PatchSyncEngine {
         if (this._txDepth > 0) {
             return true;
         }
-        const documentId = glyphDocumentId(glyphId);
-        const doc = this._glyphDocs.get(glyphId);
-        const lastVector = this._lastBroadcastStateVectorByDoc.get(documentId);
-        if (doc && lastVector) {
-            const delta = Y.encodeStateAsUpdate(doc, lastVector);
-            if (delta.byteLength > 2) {
-                return true;
-            }
+        if (this.hasUnsentLocalUpdates(glyphDocumentId(glyphId))) {
+            return true;
         }
-        if (!glyphName) {
+        // A deleted glyph's name is forgotten for its id, but history may
+        // still name it: undoing the delete writes into this document.
+        const name = glyphName ?? this._removedGlyphNameById.get(glyphId);
+        if (!name) {
             return false;
         }
-        return this._glyphNamesWithHistory().has(glyphName);
+        return this._glyphNamesWithHistory().has(name);
     }
 
-    /** Undo replays into glyph documents, so glyphs with history stay resident. */
+    /**
+     * Undo replays into glyph documents, so glyphs with history stay
+     * resident. A rename's entry names the old name in its path; the glyph
+     * goes by the new one now, so both count.
+     */
     private _glyphNamesWithHistory(): Set<string> {
         const cached = this._historyGlyphNames;
         const reusable =
@@ -4086,13 +4859,73 @@ export class PatchSyncEngine {
             if (glyphName) {
                 state.names.add(glyphName);
             }
+            for (const rename of normalizeGlyphRenames(entry.glyphRenames)) {
+                state.names.add(rename.oldName);
+                state.names.add(rename.newName);
+            }
         }
         state.length = this._changeLog.length;
         this._historyGlyphNames = state;
         return state.names;
     }
 
+    /**
+     * The cloud plugin reports a glyph document's catch-up running
+     * (`active`) and finished. While it runs, the glyph is never unloaded,
+     * whoever asks: its rows apply to the instance the cursor came from.
+     */
+    noteGlyphCatchUpInFlight(documentId: string, active: boolean): void {
+        if (active) this._glyphCatchUpsInFlight.add(documentId);
+        else this._glyphCatchUpsInFlight.delete(documentId);
+    }
+
+    /**
+     * The cloud plugin reports a glyph document's catch-up queued to run
+     * again (`pending`) and taken off that queue. A queued glyph is not
+     * unloaded either.
+     */
+    noteGlyphCatchUpPending(documentId: string, pending: boolean): void {
+        if (pending) this._glyphCatchUpsPending.add(documentId);
+        else this._glyphCatchUpsPending.delete(documentId);
+    }
+
+    /** True while the glyph document has a catch-up running or queued. */
+    hasGlyphCatchUp(documentId: string): boolean {
+        return (
+            this._glyphCatchUpsInFlight.has(documentId) ||
+            this._glyphCatchUpsPending.has(documentId)
+        );
+    }
+
+    /** The cloud session ended: no catch-up runs or waits any more. */
+    clearGlyphCatchUps(): void {
+        this._glyphCatchUpsInFlight.clear();
+        this._glyphCatchUpsPending.clear();
+    }
+
+    /**
+     * True when this window holds `documentId`'s whole state: loaded from
+     * the room, built here from the font, or a glyph made from its complete
+     * state. An unsent edit restored from the write-ahead log waits until
+     * this is true (see `ApplyRemoteUpdateOptions.restoredUnsentEdit`).
+     */
+    hasLoadedDocumentState(documentId: string): boolean {
+        return (
+            this._stateLoadedDocumentIds.has(documentId) &&
+            this._docForId(documentId) !== null
+        );
+    }
+
     unloadCleanGlyphDocuments(
+        keepIds: Iterable<string>,
+        options?: { ignorePeers?: boolean }
+    ): string[] {
+        return this._withGlyphModelRebuild('unload', null, () =>
+            this._unloadCleanGlyphDocuments(keepIds, options)
+        );
+    }
+
+    private _unloadCleanGlyphDocuments(
         keepIds: Iterable<string>,
         options?: { ignorePeers?: boolean }
     ): string[] {
@@ -4131,6 +4964,7 @@ export class PatchSyncEngine {
             }
         }
         const unloaded: string[] = [];
+        const keptForCatchUp: string[] = [];
         for (const glyphId of [...this._glyphDocs.keys()]) {
             if (keep.has(glyphId) || this._sparseWorkingGlyphIds.has(glyphId)) {
                 continue;
@@ -4140,20 +4974,61 @@ export class PatchSyncEngine {
                 continue;
             }
             const documentId = glyphDocumentId(glyphId);
+            // A catch-up running or queued for this glyph applies its rows
+            // to this instance; unloaded, they would land in nothing (or a
+            // later instance whose cursor they don't continue).
+            if (this.hasGlyphCatchUp(documentId)) {
+                keptForCatchUp.push(documentId);
+                continue;
+            }
+            // A broken document stays resident: loading it again from the
+            // room would fill the refused gap by asking for it.
+            const residentDoc = this._glyphDocs.get(glyphId);
+            if (
+                (residentDoc && isDocumentBroken(residentDoc)) ||
+                this.isDocumentIdBroken(documentId)
+            ) {
+                continue;
+            }
             this._docUpdateUnsubById.get(documentId)?.();
             this._docUpdateUnsubById.delete(documentId);
-            this._lastBroadcastStateVectorByDoc.delete(documentId);
             const doc = this._glyphDocs.get(glyphId);
             doc?.destroy();
             this._glyphDocs.delete(glyphId);
-            this._glyphNameById.delete(glyphId);
+            this._forgetGlyphNameForId(glyphId);
             if (name) {
                 this._glyphIdByName.delete(name);
             }
             this._lastEncodedShardBytes.delete(documentId);
+            this._stateLoadedDocumentIds.delete(documentId);
             unloaded.push(glyphId);
         }
+        if (keptForCatchUp.length) {
+            recordCollabTrace(
+                'glyph-unload-kept-catch-up',
+                keptForCatchUp
+                    .map((documentId) =>
+                        this._glyphNameById.get(
+                            documentId.slice('glyph:'.length)
+                        )
+                    )
+                    .filter((name): name is string => !!name),
+                { documents: keptForCatchUp }
+            );
+        }
         if (unloaded.length) {
+            recordCollabTrace(
+                'glyph-unloaded',
+                unloaded
+                    .map((glyphId) => this._removedGlyphNameById.get(glyphId))
+                    .filter((name): name is string => !!name),
+                {
+                    documents: unloaded.map(glyphDocumentId),
+                    kept: keep.size,
+                    working: this._sparseWorkingGlyphIds.size,
+                    caller: new Error().stack?.split('\n').slice(2, 6) ?? []
+                }
+            );
             this._syncAllGlyphsFromYDoc(false, { dropGlyphIds: unloaded });
             this._emitAfterSync();
         }
@@ -4181,14 +5056,26 @@ export class PatchSyncEngine {
     }
 
     applyDocumentSetState(shards: EncodedShard[]): void {
+        this._withGlyphModelRebuild('snapshot', null, () =>
+            this._applyDocumentSetState(shards)
+        );
+    }
+
+    private _applyDocumentSetState(shards: EncodedShard[]): void {
         this._pushApplyKind(ApplyKind.Remote);
         try {
             if (!this._fontJson) this._fontJson = {};
             for (const shard of shards) {
                 const doc = this._docForShard(shard);
-                Y.applyUpdate(doc, shard.bytes, SYSTEM_REMOTE_ORIGIN);
+                applyUpdateWithIntegrity(
+                    doc,
+                    shard.bytes,
+                    shard.documentId,
+                    SYSTEM_REMOTE_ORIGIN,
+                    this._brokenScope
+                );
                 this._noteShardCheckpoint(doc, shard);
-                this._noteBroadcastStateVector(shard.documentId);
+                this._stateLoadedDocumentIds.add(shard.documentId);
                 this._lastEncodedShardBytes.set(
                     shard.documentId,
                     shard.bytes.byteLength
@@ -4202,7 +5089,8 @@ export class PatchSyncEngine {
         } finally {
             this._popApplyKind();
         }
-        this._repairGeometryOrphansAfterConvergedState();
+        this._assertGeometryCompleteAfterConvergedState();
+        this._flushStrandedOutboxes();
     }
 
     /**
@@ -4221,9 +5109,15 @@ export class PatchSyncEngine {
             }
             for (const shard of shards) {
                 const doc = this._docForShard(shard);
-                Y.applyUpdate(doc, shard.bytes, SYSTEM_REMOTE_ORIGIN);
+                applyUpdateWithIntegrity(
+                    doc,
+                    shard.bytes,
+                    shard.documentId,
+                    SYSTEM_REMOTE_ORIGIN,
+                    this._brokenScope
+                );
                 this._noteShardCheckpoint(doc, shard);
-                this._noteBroadcastStateVector(shard.documentId);
+                this._stateLoadedDocumentIds.add(shard.documentId);
                 this._lastEncodedShardBytes.set(
                     shard.documentId,
                     shard.bytes.byteLength
@@ -4238,6 +5132,12 @@ export class PatchSyncEngine {
      * Build the font JSON once after every resident snapshot shard is in.
      */
     materializeSnapshotFont(): Record<string, Unsafe> {
+        return this._withGlyphModelRebuild('snapshot', null, () =>
+            this._materializeSnapshotFont()
+        );
+    }
+
+    private _materializeSnapshotFont(): Record<string, Unsafe> {
         if (!this._fontJson) {
             this._fontJson = {};
         }
@@ -4267,9 +5167,11 @@ export class PatchSyncEngine {
             : shard.documentId;
         let doc = this._glyphDocs.get(glyphId);
         if (!doc) {
+            this._assertDocumentIdWritable(glyphDocumentId(glyphId));
             doc = new Y.Doc({ gc: false });
             this._glyphDocs.set(glyphId, doc);
             this._bindDocUpdates(doc, glyphDocumentId(glyphId));
+            this._noteDocumentLoaded(glyphDocumentId(glyphId));
         }
         return doc;
     }
@@ -4304,7 +5206,7 @@ export class PatchSyncEngine {
                 if (catalog?.[glyphId]?.name !== name) {
                     continue;
                 }
-                this._glyphNameById.delete(holder);
+                this._forgetGlyphNameForId(holder);
             }
             this._glyphIdByName.set(name, glyphId);
             this._glyphNameById.set(glyphId, name);
@@ -4372,7 +5274,7 @@ export class PatchSyncEngine {
         for (const [glyphName, glyphId] of [...this._glyphIdByName]) {
             if (isCatalogTombstone(catalog, glyphId)) {
                 this._glyphIdByName.delete(glyphName);
-                this._glyphNameById.delete(glyphId);
+                this._forgetGlyphNameForId(glyphId);
             }
         }
     }
@@ -4415,7 +5317,7 @@ export class PatchSyncEngine {
 
     private _routedYPath(
         path: Array<string | number>,
-        options?: { createIfMissing?: boolean }
+        options?: { forWrite?: boolean }
     ): {
         map: Y.Map<unknown>;
         path: Array<string | number>;
@@ -4425,11 +5327,14 @@ export class PatchSyncEngine {
         const documentId = this.documentIdForPath(path);
         if (path[0] === 'glyphs' && path.length >= 2) {
             const glyphName = String(path[1]);
-            let glyphMap = this._glyphMapForName(glyphName);
-            if (!glyphMap && options?.createIfMissing) {
-                const glyphId = this._glyphIdByName.get(glyphName) || glyphName;
-                this._ensureGlyphDoc(glyphId, glyphName);
-                glyphMap = this._glyphMapForName(glyphName);
+            const glyphMap = this._glyphMapForName(glyphName);
+            if (!glyphMap && options?.forWrite) {
+                // Glyphs are created whole (_applyGlyphSnapshot, or before a
+                // commit by _ensureDocumentsForOperations), never by a write
+                // into one of their paths.
+                throw new Error(
+                    `[PatchSyncEngine] Refusing to write ${path.join('.')}: glyph ${glyphName} has no document`
+                );
             }
             if (!glyphMap) {
                 return {
@@ -4442,12 +5347,7 @@ export class PatchSyncEngine {
             return {
                 map: glyphMap,
                 path: path.slice(2),
-                doc:
-                    this._docForId(documentId) ||
-                    this._ensureGlyphDoc(
-                        this._glyphIdByName.get(glyphName) || glyphName,
-                        glyphName
-                    ),
+                doc: glyphMap.doc as Y.Doc,
                 documentId
             };
         }
@@ -4514,7 +5414,7 @@ export class PatchSyncEngine {
         if (this._layoutSetPath(path, value)) {
             return;
         }
-        const routed = this._routedYPath(path, { createIfMissing: true });
+        const routed = this._routedYPath(path, { forWrite: true });
         setYPath(routed.map, routed.path, value);
     }
 
@@ -4552,10 +5452,19 @@ export class PatchSyncEngine {
     private _pendingDestroyedGlyphIds = new Set<string>();
     /** Collaborator revisions per glyph id that no catch-up has confirmed yet. */
     private _glyphRevisionsAwaitingFetch = new Map<string, string>();
+    /**
+     * Collaborator revisions released after a newer one of the same glyph
+     * (held for their commit's siblings): the feed keeps the newer token,
+     * but the write still has to be fetched.
+     */
+    private _lateGlyphRevisionsAwaitingFetch = new Map<string, string>();
     private _retiredGlyphIdByName = new Map<string, string>();
 
     private _removeGlyphDoc(glyphName: string): void {
         const glyphId = this._glyphIdByName.get(glyphName);
+        if (glyphId) {
+            this._removedGlyphNameById.set(glyphId, glyphName);
+        }
         const glyphMap = this._glyphMapForName(glyphName);
         if (glyphMap instanceof Y.Map) {
             for (const key of [...glyphMap.keys()]) {
@@ -4579,7 +5488,7 @@ export class PatchSyncEngine {
             if (glyphName) {
                 this._glyphIdByName.delete(glyphName);
             }
-            this._glyphNameById.delete(glyphId);
+            this._forgetGlyphNameForId(glyphId);
         }
         this._pendingDestroyedGlyphIds.clear();
     }
@@ -4597,7 +5506,7 @@ export class PatchSyncEngine {
             if (this._glyphDocs.has(glyphId)) {
                 displaced.push(glyphId);
             } else {
-                this._glyphNameById.delete(glyphId);
+                this._forgetGlyphNameForId(glyphId);
             }
         }
         for (const glyphName of remaining) {
@@ -4633,7 +5542,7 @@ export class PatchSyncEngine {
             const mapped = this._glyphNameById.get(glyphId);
             if (!mapped || !remaining.has(mapped)) {
                 if (!this._glyphDocs.has(glyphId)) {
-                    this._glyphNameById.delete(glyphId);
+                    this._forgetGlyphNameForId(glyphId);
                 }
             }
         }
@@ -4685,12 +5594,11 @@ export class PatchSyncEngine {
     }
 
     private _emitRawLocalUpdate(
-        update: YjsUpdate,
         documentId: string = FONT_CORE_DOCUMENT_ID
     ): void {
-        if (!update.length) {
+        const update = this._takeOutbox(documentId);
+        if (isEmptyYjsUpdate(update)) {
             this._lastLocalUpdateLogIndex = this._changeLog.length;
-            this._noteBroadcastStateVector(documentId);
             return;
         }
 
@@ -4699,7 +5607,6 @@ export class PatchSyncEngine {
             this._getNewChangeLogEntriesForLocalUpdate(),
             documentId
         );
-        this._noteBroadcastStateVector(documentId);
     }
 
     /**
@@ -4749,34 +5656,47 @@ export class PatchSyncEngine {
                         )
               }
             : undefined;
-        for (let index = 0; index < packets.length; index += 1) {
-            const packet = packets[index];
-            const renameBatch: WorkerRenameBatchPart | undefined = isRenameBatch
-                ? index === count - 1
-                    ? 'last'
-                    : 'partial'
-                : undefined;
-            this._emitLocalUpdate(
-                packet.update,
-                packet.entries,
-                packet.documentId,
-                {
-                    ...packet.options,
-                    ...(id ? { uiBatch: { id, index, count } } : {}),
-                    ...(renameBatch ? { renameBatch } : {}),
-                    ...(sharedEmission ? { sharedEmission } : {})
-                }
-            );
+        let index = 0;
+        try {
+            for (; index < packets.length; index += 1) {
+                const packet = packets[index];
+                const renameBatch: WorkerRenameBatchPart | undefined =
+                    isRenameBatch
+                        ? index === count - 1
+                            ? 'last'
+                            : 'partial'
+                        : undefined;
+                this._emitLocalUpdate(
+                    packet.update,
+                    packet.entries,
+                    packet.documentId,
+                    {
+                        ...packet.options,
+                        ...(id ? { uiBatch: { id, index, count } } : {}),
+                        ...(renameBatch ? { renameBatch } : {}),
+                        ...(sharedEmission ? { sharedEmission } : {})
+                    }
+                );
+            }
+        } finally {
+            // The packet that threw put itself back; the ones after it were
+            // taken from the outbox too and stay queued, in order.
+            for (let rest = packets.length - 1; rest > index; rest -= 1) {
+                this._requeueUnsent(
+                    packets[rest].documentId,
+                    packets[rest].update
+                );
+            }
         }
     }
 
     /**
      * Splits one commit's entries across its packets by the document each
      * entry lives in. Entries whose document has no packet go with the font
-     * core packet (or the first packet). Receivers re-read only the paths a
-     * packet lists after applying it, so a glyph packet left without entries
-     * lists its whole glyph instead; any other empty packet keeps the full
-     * list, as before.
+     * core packet (or the first packet), except a glyph's drawing entries:
+     * that glyph did not change. Receivers re-read only the paths a packet
+     * lists after applying it, so a packet left without entries lists its
+     * whole document instead.
      */
     private _splitCommitEntriesByPacket(
         entries: ChangeLogEntry[],
@@ -4794,9 +5714,21 @@ export class PatchSyncEngine {
         const renames = this._collectGlyphRenamesFromEntries(entries);
         for (const entry of entries) {
             const documentId = this._documentIdForHistoryEntry(entry, renames);
-            (
-                byDocument.get(documentId) ?? byDocument.get(fallbackDocumentId)
-            )?.push(entry);
+            const own = byDocument.get(documentId);
+            if (own) {
+                own.push(entry);
+                continue;
+            }
+            // A glyph document that sent no packet did not change: its
+            // drawing entries describe no packet, least of all another
+            // document's.
+            if (
+                documentId.startsWith('glyph:') &&
+                this._isGlyphDrawingPath(entry.path)
+            ) {
+                continue;
+            }
+            byDocument.get(fallbackDocumentId)?.push(entry);
         }
         for (const [documentId, own] of byDocument) {
             if (own.length) {
@@ -4826,7 +5758,8 @@ export class PatchSyncEngine {
                               undoScope: 'glyph'
                           }
                       ]
-                    : entries
+                    : // Described whole, never by other documents' paths.
+                      [this._wholeDocumentEntry(documentId, 'Document update')]
             );
         }
         return byDocument;
@@ -4850,13 +5783,66 @@ export class PatchSyncEngine {
             envelopeEntries?: ChangeLogEntry[];
         }
     ): void {
+        let handedOff = false;
+        try {
+            this._describeAndDeliverLocalUpdate(
+                update,
+                changeLogEntries,
+                documentId,
+                options,
+                () => {
+                    handedOff = true;
+                }
+            );
+        } catch (error) {
+            // A packet that could not be made leaves its updates queued.
+            if (!handedOff) {
+                this._requeueUnsent(documentId, update);
+            }
+            throw error;
+        }
+    }
+
+    private _describeAndDeliverLocalUpdate(
+        update: YjsUpdate,
+        changeLogEntries: ChangeLogEntry[],
+        documentId: string,
+        options:
+            | {
+                  dependsOn?: string[];
+                  skipCollaborationLog?: boolean;
+                  uiBatch?: CommittedUiBatch;
+                  renameBatch?: WorkerRenameBatchPart;
+                  sharedEmission?: SharedLocalEmission;
+                  /**
+                   * Entries that describe the packet on the wire only. This
+                   * window's worker and committed-change listeners still see
+                   * `changeLogEntries` (derived data such as font-deps).
+                   */
+                  envelopeEntries?: ChangeLogEntry[];
+              }
+            | undefined,
+        onHandedOff: () => void
+    ): void {
+        const shared = options?.sharedEmission;
+        // Every packet carries an envelope: one without entries would skip
+        // the device outbox and the room’s description checks. A document
+        // that changed with no entries of its own is described whole.
+        if (
+            !getEffectiveEmissionEntries(changeLogEntries).length &&
+            !options?.envelopeEntries?.length &&
+            !shared?.entriesByDocument?.get(documentId)?.length
+        ) {
+            changeLogEntries = [
+                this._wholeDocumentEntry(documentId, 'Document update')
+            ];
+        }
         // Undo/redo may append a coarse control entry for history-stack state,
         // but every emitted Yjs packet must still be observed through the same
         // semantic metadata shape as the original forward edit. Unwrap control
         // rows here so worker/cache/compile/broadcast consumers never need an
         // undo-specific path.
         const emissionEntries = getEffectiveEmissionEntries(changeLogEntries);
-        const shared = options?.sharedEmission;
         // Entries describing this packet alone (multi-document commits);
         // otherwise every packet carries the commit's entries.
         const packetEntries =
@@ -4886,7 +5872,33 @@ export class PatchSyncEngine {
                 reuseBody.envelope = collaborationMessage;
             }
         }
-        if (collaborationMessage && !options?.skipCollaborationLog) {
+        if (!collaborationMessage) {
+            throw new Error(
+                `[PatchSyncEngine] Refusing to send a packet for ${documentId} without a collaboration envelope`
+            );
+        }
+        // Glyph drawings live in their glyph's document. A font-core packet
+        // described as a drawing edit carries an edit that went nowhere (or
+        // font-core writes described as one); a rename batch alone lists
+        // the whole commit on every packet.
+        if (
+            documentId === FONT_CORE_DOCUMENT_ID &&
+            !options?.renameBatch &&
+            this._fontHasGlyphDocuments()
+        ) {
+            const wireEntries = options?.envelopeEntries?.length
+                ? options.envelopeEntries
+                : describedEntries;
+            const drawingEntry = wireEntries.find((entry) =>
+                this._isGlyphDrawingPath(entry.path)
+            );
+            if (drawingEntry) {
+                throw new Error(
+                    `[PatchSyncEngine] Refusing to send a font-core packet described as the glyph drawing edit ${drawingEntry.path}`
+                );
+            }
+        }
+        if (!options?.skipCollaborationLog) {
             let forwardChanges = reuseBody?.forwardChanges;
             if (!forwardChanges) {
                 forwardChanges =
@@ -4915,6 +5927,7 @@ export class PatchSyncEngine {
             // write is durable.
             collaborationMessage = { ...collaborationMessage, glyphRevision };
         }
+        onHandedOff();
         const burstKey = this._currentBurstKey();
         const meta: LocalUpdateMeta = { burstKey };
         const deliver = (includeCloudListeners = true): void => {
@@ -4944,8 +5957,8 @@ export class PatchSyncEngine {
                     renameBatch: options.renameBatch
                 });
             } else {
-                // Undescribed packets still go to the worker callback, which
-                // holds them so the worker's document history stays complete.
+                // Every packet goes to the worker as it comes, in order, so
+                // the worker's document history stays complete.
                 this._yjsWorkerCallback?.(update, describedEntries, documentId);
             }
             // This window's UI listeners coalesce a uiBatch and still see
@@ -4981,79 +5994,124 @@ export class PatchSyncEngine {
             );
             if (holdDecision === 'held') {
                 // Every local consumer sees the edit now; the room gets the
-                // burst once, merged, when it ends. The device outbox gets it
-                // now, so a tab closed mid-burst does not lose it.
-                this._stageHeldCloudPacket({
-                    kind: 'local',
-                    burstKey,
-                    documentId,
-                    update,
-                    envelope: collaborationMessage,
-                    entries: describedEntries
-                });
+                // burst once, merged, when it ends. The device outbox got it
+                // when the hold took it (`onHeld`), so a tab closed
+                // mid-burst does not lose it.
                 deliver(false);
                 return;
             }
-            this._cloudEmitPersistsInFlight += 1;
-            this._cloudEmitPersistChain = this._cloudEmitPersistChain
-                .then(() =>
-                    Promise.resolve(
-                        plugin.persistOutgoingCloudUpdate(
-                            update,
-                            collaborationMessage,
-                            documentId,
-                            options?.dependsOn
-                        )
-                    )
-                )
-                .then(
-                    (ok) => {
-                        pushCollabIntegrityEvent('emit-persist', {
-                            documentId,
-                            bytes: update.length,
-                            ok: ok !== false
-                        });
-                        if (ok === false) {
-                            this._reportCloudPersistFailure(
-                                documentId,
-                                'rejected'
-                            );
-                        }
-                        // Local consumers must always see the applied update;
-                        // skipping deliver() would leave the UI stale versus Yjs.
-                        deliver();
-                    },
-                    (error) => {
-                        pushCollabIntegrityEvent('emit-persist', {
-                            documentId,
-                            bytes: update.length,
-                            ok: false,
-                            error: String(error)
-                        });
-                        this._reportCloudPersistFailure(
-                            documentId,
-                            error instanceof Error ? error : String(error)
-                        );
-                        deliver();
-                    }
-                )
-                .then(
-                    () => undefined,
-                    () => undefined
-                )
-                .then(() => {
-                    this._cloudEmitPersistsInFlight -= 1;
-                });
+            // Every listener, the cloud one included, gets the packet now,
+            // in commit order: the adapter holds it until its outbox row
+            // exists, so the row write never reorders packets. A held
+            // linked-window run of this document still taking its queue
+            // place goes first, row and packet.
+            const envelope = collaborationMessage;
+            const gate = this._cloudDeliveryGates.get(documentId);
+            this._persistOutgoingInOrder(
+                () =>
+                    plugin.persistOutgoingCloudUpdate(
+                        update,
+                        envelope,
+                        documentId,
+                        options?.dependsOn
+                    ),
+                update,
+                documentId,
+                false,
+                gate
+            );
+            if (!gate) {
+                deliver();
+                return;
+            }
+            deliver(false);
+            const cloudListeners = [...this._cloudLocalListeners];
+            this._deliverToCloudInOrder(documentId, () => {
+                for (const cb of cloudListeners) {
+                    cb(
+                        update,
+                        collaborationMessage,
+                        describedEntries,
+                        documentId,
+                        meta
+                    );
+                }
+            });
             return;
         }
         deliver();
+    }
+
+    /**
+     * Write a packet's device outbox row after the rows before it. A storage
+     * failure (`CloudWalPersistError`) keeps the row in memory and is only
+     * reported; any other failure, or a refusal, stops the document: it is
+     * marked broken, so no later edit to it is made or sent.
+     */
+    private _persistOutgoingInOrder(
+        persist: () => Promise<boolean> | boolean,
+        update: YjsUpdate,
+        documentId: string,
+        held: boolean,
+        after?: Promise<unknown>,
+        onWritten?: () => void
+    ): void {
+        this._cloudEmitPersistsInFlight += 1;
+        this._cloudEmitPersistChain = this._cloudEmitPersistChain
+            .then(() => after)
+            .then(() => Promise.resolve(persist()))
+            .then(
+                (ok) => {
+                    pushCollabIntegrityEvent('emit-persist', {
+                        documentId,
+                        bytes: update.length,
+                        ok: ok !== false,
+                        ...(held ? { held: true } : {})
+                    });
+                    if (ok === false) {
+                        const error = new Error(
+                            `The edit to ${documentId} was not written to this device’s outbox`
+                        );
+                        this._reportCloudPersistFailure(documentId, error);
+                        this.markDocumentBroken(documentId, error);
+                        return;
+                    }
+                    onWritten?.();
+                },
+                (error) => {
+                    pushCollabIntegrityEvent('emit-persist', {
+                        documentId,
+                        bytes: update.length,
+                        ok: false,
+                        ...(held ? { held: true } : {}),
+                        error: String(error)
+                    });
+                    const failure =
+                        error instanceof Error
+                            ? error
+                            : new Error(String(error));
+                    this._reportCloudPersistFailure(documentId, failure);
+                    if (!(failure instanceof CloudWalPersistError)) {
+                        this.markDocumentBroken(documentId, failure);
+                    }
+                }
+            )
+            .then(
+                () => undefined,
+                () => undefined
+            )
+            .then(() => {
+                this._cloudEmitPersistsInFlight -= 1;
+            });
     }
 
     /** True while a local edit is still on its way into the cloud outbox. */
     get hasCloudPersistInFlight(): boolean {
         // A burst the room has not been sent yet is still on its way too.
         return (
-            this._cloudEmitPersistsInFlight > 0 || this._cloudHold.hasPending()
+            this._cloudEmitPersistsInFlight > 0 ||
+            this._cloudHold.hasPending() ||
+            this._cloudDeliveryGates.size > 0
         );
     }
 
@@ -5129,6 +6187,11 @@ export class PatchSyncEngine {
         return baselines;
     }
 
+    /**
+     * Send what an undo or redo queued: the rooms it was expected to write
+     * first, then any other room it reached. A room that changed without an
+     * entry of its own (a revision stamp) is described whole, never skipped.
+     */
     private _emitCanonicalLocalUpdatesSince(
         baselines: Map<string, Uint8Array>
     ): void {
@@ -5140,13 +6203,16 @@ export class PatchSyncEngine {
             entries: ChangeLogEntry[];
             documentId: string;
         }> = [];
-        for (const [documentId, baseline] of baselines) {
-            const doc = this._docForId(documentId) || this.yDoc;
-            const incrementalUpdate = Y.encodeStateAsUpdate(doc, baseline);
-            this._noteBroadcastStateVector(documentId);
-            const historyRenames =
-                this._collectGlyphRenamesFromEntries(allEntries);
-            const docEntries = allEntries.filter((entry) => {
+        const historyRenames = this._collectGlyphRenamesFromEntries(allEntries);
+        const documentIds = [
+            ...new Set([...baselines.keys(), ...this._outbox.keys()])
+        ];
+        for (const documentId of documentIds) {
+            const incrementalUpdate = this._takeOutbox(documentId);
+            if (isEmptyYjsUpdate(incrementalUpdate)) {
+                continue;
+            }
+            const ownEntries = allEntries.filter((entry) => {
                 if (!entry.path || entry.path === 'font') {
                     return documentId === FONT_CORE_DOCUMENT_ID;
                 }
@@ -5155,19 +6221,30 @@ export class PatchSyncEngine {
                     historyRenames
                 ).includes(documentId);
             });
-            if (
-                incrementalUpdate.length === 0 ||
-                (isNoOpYjsUpdate(incrementalUpdate) && !docEntries.length)
-            ) {
-                continue;
-            }
-            if (!docEntries.length) {
-                pushCollabIntegrityEvent('emit-skip-no-changelog', {
-                    documentId,
-                    bytes: incrementalUpdate.length
-                });
-                continue;
-            }
+            // An undo that removed or brought back a glyph names it in its
+            // own entries even when the name index no longer points at this
+            // document: those entries describe the packet.
+            const glyphId = glyphIdFromDocumentId(documentId);
+            const removedGlyphEntries =
+                !ownEntries.length && glyphId
+                    ? allEntries.filter((entry) => {
+                          const name = this._deriveGlyphNameFromPath(
+                              entry.path || ''
+                          );
+                          return (
+                              !!name &&
+                              (this._retiredGlyphIdByName.get(name) ===
+                                  glyphId ||
+                                  this._removedGlyphNameById.get(glyphId) ===
+                                      name)
+                          );
+                      })
+                    : [];
+            const docEntries = ownEntries.length
+                ? ownEntries
+                : removedGlyphEntries.length
+                  ? removedGlyphEntries
+                  : [this._wholeDocumentEntry(documentId, 'Undo or redo')];
             packets.push({
                 update: incrementalUpdate,
                 entries: docEntries,
@@ -5189,33 +6266,6 @@ export class PatchSyncEngine {
             return this.documentIdForPath(['glyphs', target.glyphName]);
         }
         return FONT_CORE_DOCUMENT_ID;
-    }
-
-    private _emitCanonicalLocalUpdateSince(
-        previousStateVector: Uint8Array,
-        documentId: string = FONT_CORE_DOCUMENT_ID
-    ): void {
-        const doc = this._docForId(documentId) || this.yDoc;
-        const incrementalUpdate = Y.encodeStateAsUpdate(
-            doc,
-            previousStateVector
-        );
-        this._noteBroadcastStateVector(documentId);
-
-        if (incrementalUpdate.length === 0) {
-            this._lastLocalUpdateLogIndex = this._changeLog.length;
-            return;
-        }
-
-        this._emitLocalUpdate(
-            incrementalUpdate,
-            this._getNewChangeLogEntriesForLocalUpdate(),
-            documentId
-        );
-    }
-
-    private _emitCanonicalLocalUpdateFromBaseline(): void {
-        this._emitCanonicalLocalUpdateSince(this._lastBroadcastStateVector);
     }
 
     getFontJsonSnapshot(): Record<string, Unsafe> | null {
@@ -5288,11 +6338,21 @@ export class PatchSyncEngine {
             this._popApplyKind();
             this._isSyncing = false;
         }
-        this._rehydrateEntireFontJsonFromYDoc();
-        this._noteBroadcastStateVector(FONT_CORE_DOCUMENT_ID);
-        this._noteBroadcastStateVector(FONT_DEPS_DOCUMENT_ID);
+        // A newly loaded font: no model object of the old one survives it.
+        this._withGlyphModelRebuild(
+            'rebaseline',
+            null,
+            () => this._rehydrateEntireFontJsonFromYDoc(),
+            { silent: true }
+        );
+        // The loaded font is the documents’ starting state, not an edit: a
+        // cloud asset gets it as the seed of its rooms.
+        this._noteWholeStateDelivered(FONT_CORE_DOCUMENT_ID);
+        this._noteWholeStateDelivered(FONT_DEPS_DOCUMENT_ID);
+        this._stateLoadedDocumentIds.add(FONT_CORE_DOCUMENT_ID);
+        this._stateLoadedDocumentIds.add(FONT_DEPS_DOCUMENT_ID);
         for (const glyphId of this._glyphDocs.keys()) {
-            this._noteBroadcastStateVector(glyphDocumentId(glyphId));
+            this._noteWholeStateDelivered(glyphDocumentId(glyphId));
         }
     }
 
@@ -5522,17 +6582,13 @@ export class PatchSyncEngine {
             decision
         });
         if (decision === 'passthrough') {
-            relay(update, collaborationMessage, documentId);
-        } else {
-            this._stageHeldCloudPacket({
-                kind: 'relay',
-                burstKey: key,
-                documentId: documentId || FONT_CORE_DOCUMENT_ID,
-                update,
-                envelope: collaborationMessage,
-                entries: []
-            });
+            // Behind a held run of this document still taking its place.
+            this._deliverToCloudInOrder(
+                documentId || FONT_CORE_DOCUMENT_ID,
+                () => relay(update, collaborationMessage, documentId)
+            );
         }
+        // A held packet was staged in the device outbox by `onHeld`.
     }
 
     /** Send everything held back to the room now (save, close, undo). */
@@ -5548,10 +6604,10 @@ export class PatchSyncEngine {
     }
 
     /**
-     * Held packets already in the device outbox, per kind and document: one
-     * row per burst, rewritten with the merged burst so far. A tab that
-     * closes (or crashes) mid-burst leaves it there, and the next open
-     * sends it like any unsent edit.
+     * Held packets already in the device outbox, per run: one row per run
+     * of one document's packets of one kind (see `_heldRunKey`), rewritten
+     * with the merged run so far. A tab that closes (or crashes) mid-burst
+     * leaves it there, and the next open sends it like any unsent edit.
      */
     private _stagedHeld = new Map<
         string,
@@ -5564,7 +6620,61 @@ export class PatchSyncEngine {
         }
     >();
 
+    /**
+     * One envelope for held packets of a document. An envelope no lossless
+     * step fits (EnvelopeTooLargeError) is never dropped or cut down: the
+     * document is marked broken and the error is thrown.
+     */
+    private _mergeHeldEnvelopes(
+        envelopes: CollaborationMessageEnvelope[],
+        documentId: string,
+        isBurst: boolean
+    ): CollaborationMessageEnvelope {
+        try {
+            return mergeBurstEnvelopes(envelopes, documentId, isBurst);
+        } catch (error) {
+            if (error instanceof EnvelopeTooLargeError) {
+                this.markDocumentBroken(documentId, error);
+            }
+            throw error;
+        }
+    }
+
+    /**
+     * The last run of held packets of each document since the last flush.
+     * A run is a stretch of one document's held packets of one kind (this
+     * window's own, or relayed from a linked window) that no packet of the
+     * other kind interrupts. Runs keep one document's packets in arrival
+     * order across kinds: a main-window edit made on top of a linked
+     * window's held tick must never reach the room before that tick.
+     */
+    private _heldRunCursor = new Map<
+        string,
+        { kind: HeldCloudPacket['kind']; index: number }
+    >();
+    /** Device outbox writes of held packets, chained per document. */
+    private _heldStageChains = new Map<string, Promise<unknown>>();
+
+    /** The run key a held packet joins, advancing the document's cursor. */
+    private _heldRunKey(
+        cursor: Map<string, { kind: HeldCloudPacket['kind']; index: number }>,
+        packet: HeldCloudPacket
+    ): string {
+        const last = cursor.get(packet.documentId);
+        const index =
+            last && last.kind === packet.kind
+                ? last.index
+                : last
+                  ? last.index + 1
+                  : 0;
+        cursor.set(packet.documentId, { kind: packet.kind, index });
+        return `${packet.kind}\u0000${packet.documentId}\u0000${index}`;
+    }
+
     private _stageHeldCloudPacket(packet: HeldCloudPacket): void {
+        // Every held packet advances the cursor, staged or not, so the runs
+        // match the ones the flush finds.
+        const groupKey = this._heldRunKey(this._heldRunCursor, packet);
         const plugin = window.cloudPlugin;
         if (
             !packet.envelope ||
@@ -5572,24 +6682,29 @@ export class PatchSyncEngine {
         ) {
             return;
         }
-        const groupKey = `${packet.kind}\u0000${packet.documentId}`;
         const previous = this._stagedHeld.get(groupKey);
         const update = previous
             ? Y.mergeUpdates([previous.update, packet.update])
             : packet.update;
         const envelope = previous
-            ? (mergeBurstEnvelopes(
+            ? this._mergeHeldEnvelopes(
                   [previous.envelope, packet.envelope],
                   packet.documentId,
                   true
-              ) ?? packet.envelope)
+              )
             : packet.envelope;
         const stagedId = collaborationMessageKey(envelope);
         const replaced =
             previous?.stagedId && previous.stagedId !== stagedId
                 ? previous.stagedId
                 : null;
-        const written = (previous?.written ?? Promise.resolve())
+        // One chain per document, across kinds: the rows land (and get
+        // their creation time) in arrival order.
+        const chained =
+            this._heldStageChains.get(packet.documentId) ??
+            previous?.written ??
+            Promise.resolve();
+        const written = chained
             .then(() =>
                 plugin.stageHeldCloudUpdate?.(
                     update,
@@ -5598,10 +6713,20 @@ export class PatchSyncEngine {
                     replaced
                 )
             )
-            .catch((error) => {
-                console.warn(
-                    'Could not keep a held edit on this device',
-                    error
+            .catch((error: unknown) => {
+                // Storage trouble keeps the row in memory and is only
+                // reported; any other failure means the held edit can't be
+                // kept, so the document stops rather than losing it.
+                if (error instanceof CloudWalPersistError) {
+                    console.warn(
+                        'Could not keep a held edit on this device',
+                        error
+                    );
+                    return;
+                }
+                this.markDocumentBroken(
+                    packet.documentId,
+                    error instanceof Error ? error : new Error(String(error))
                 );
             });
         this._stagedHeld.set(groupKey, {
@@ -5610,6 +6735,12 @@ export class PatchSyncEngine {
             envelope,
             stagedId,
             written
+        });
+        this._heldStageChains.set(packet.documentId, written);
+        void written.then(() => {
+            if (this._heldStageChains.get(packet.documentId) === written) {
+                this._heldStageChains.delete(packet.documentId);
+            }
         });
     }
 
@@ -5646,9 +6777,17 @@ export class PatchSyncEngine {
     }
 
     private _flushHeldCloudPackets(packets: HeldCloudPacket[]): void {
+        // Staging starts over with the next held packet.
+        this._heldRunCursor.clear();
+        // Runs, not kinds: one document's relayed and own packets keep
+        // their arrival order (see `_heldRunCursor`).
+        const cursor = new Map<
+            string,
+            { kind: HeldCloudPacket['kind']; index: number }
+        >();
         const groups = new Map<string, HeldCloudPacket[]>();
         for (const packet of packets) {
-            const groupKey = `${packet.kind}\u0000${packet.documentId}`;
+            const groupKey = this._heldRunKey(cursor, packet);
             const group = groups.get(groupKey);
             if (group) {
                 group.push(packet);
@@ -5656,14 +6795,15 @@ export class PatchSyncEngine {
                 groups.set(groupKey, [packet]);
             }
         }
-        // Glyph rows first: the core revision row depends on them.
-        const ordered = [...groups.values()].sort(
-            (left, right) =>
+        // Glyph rows first: the core revision row depends on them. The sort
+        // is stable, so each document's runs stay in arrival order.
+        const ordered = [...groups.entries()].sort(
+            ([, left], [, right]) =>
                 Number(!left[0].documentId.startsWith('glyph:')) -
                 Number(!right[0].documentId.startsWith('glyph:'))
         );
         const dependsOn: string[] = [];
-        for (const group of ordered) {
+        for (const [groupKey, group] of ordered) {
             const documentId = group[0].documentId;
             const update =
                 group.length === 1
@@ -5677,29 +6817,37 @@ export class PatchSyncEngine {
                 );
             const envelope =
                 envelopes.length > 1
-                    ? (mergeBurstEnvelopes(
+                    ? this._mergeHeldEnvelopes(
                           envelopes,
                           documentId,
                           group.every((packet) => packet.burstKey)
-                      ) ?? envelopes[envelopes.length - 1])
+                      )
                     : (envelopes[0] ?? null);
-            const staged = this._takeStagedHeldGroup(
-                `${group[0].kind}\u0000${documentId}`,
-                envelope
-            );
+            const staged = this._takeStagedHeldGroup(groupKey, envelope);
             if (group[0].kind === 'relay') {
                 recordCollabTrace('relay-flush', [], {
                     document: documentId,
                     packets: group.length
                 });
-                void staged.written.then(async () => {
-                    await window.cloudPlugin?.relayPeerWindowUpdateToCloud?.(
-                        update,
-                        envelope,
-                        documentId
-                    );
-                    staged.release();
-                });
+                // The relay takes its queue place once its staged row is
+                // written; the document's later packets wait for that. The
+                // staged row is dropped only once the relayed row is durable
+                // on this device; otherwise it stays and is sent again.
+                this._deliverToCloudInOrder(
+                    documentId,
+                    () => {
+                        this._releaseStagedAfterRelay(
+                            window.cloudPlugin?.relayPeerWindowUpdateToCloud?.(
+                                update,
+                                envelope,
+                                documentId
+                            ),
+                            staged,
+                            documentId
+                        );
+                    },
+                    staged.written
+                );
                 continue;
             }
             const entries = group.flatMap((packet) => packet.entries);
@@ -5717,7 +6865,72 @@ export class PatchSyncEngine {
         }
     }
 
-    /** Write the outbox row, then hand the packet to the cloud listeners. */
+    /**
+     * Drop a held run's staged row once its relayed row is durable. A relay
+     * that settles false (or no relay at all) keeps the staged row, so the
+     * edit is still on this device and goes out again on the next open.
+     */
+    private _releaseStagedAfterRelay(
+        durable: Promise<boolean> | boolean | undefined,
+        staged: { release: () => void },
+        documentId: string
+    ): void {
+        void Promise.resolve(durable).then(
+            (ok) => {
+                if (ok === true) {
+                    staged.release();
+                    return;
+                }
+                recordCollabTrace('relay-staged-kept', [], {
+                    document: documentId,
+                    reason: ok === false ? 'not-durable' : 'no-relay'
+                });
+            },
+            (error: unknown) => {
+                recordCollabTrace('relay-staged-kept', [], {
+                    document: documentId,
+                    reason: 'relay-rejected',
+                    error:
+                        error instanceof Error ? error.message : String(error)
+                });
+            }
+        );
+    }
+
+    /**
+     * Deliver one of `documentId`'s cloud packets in order: now when nothing
+     * of that document waits, otherwise behind what waits. `waitFor` holds
+     * this delivery (and everything of the document behind it) until it
+     * settles.
+     */
+    private _deliverToCloudInOrder(
+        documentId: string,
+        deliver: () => void,
+        waitFor?: Promise<unknown>
+    ): void {
+        const gate = this._cloudDeliveryGates.get(documentId);
+        if (!gate && !waitFor) {
+            deliver();
+            return;
+        }
+        const next: Promise<void> = (gate ?? Promise.resolve())
+            .then(() => waitFor)
+            .then(() => deliver())
+            .catch((error: unknown) => {
+                console.error(
+                    `Cloud delivery of a held packet of ${documentId} failed:`,
+                    error
+                );
+            })
+            .then(() => {
+                if (this._cloudDeliveryGates.get(documentId) === next) {
+                    this._cloudDeliveryGates.delete(documentId);
+                }
+            });
+        this._cloudDeliveryGates.set(documentId, next);
+    }
+
+    /** Hand the packet to the cloud listeners and queue its outbox row. */
     private _persistAndDeliverToCloud(
         update: YjsUpdate,
         envelope: CollaborationMessageEnvelope | null,
@@ -5742,57 +6955,26 @@ export class PatchSyncEngine {
             deliverToCloud();
             return;
         }
-        this._cloudEmitPersistsInFlight += 1;
-        this._cloudEmitPersistChain = this._cloudEmitPersistChain
-            // The burst's outbox row is written first, so the merged row
-            // below is the one that stays.
-            .then(() => staged?.written)
-            .then(() =>
-                Promise.resolve(
-                    plugin.persistOutgoingCloudUpdate(
-                        update,
-                        envelope,
-                        documentId,
-                        dependsOn
-                    )
-                )
-            )
-            .then(
-                (ok) => {
-                    staged?.release();
-                    pushCollabIntegrityEvent('emit-persist', {
-                        documentId,
-                        bytes: update.length,
-                        ok: ok !== false,
-                        held: true
-                    });
-                    if (ok === false) {
-                        this._reportCloudPersistFailure(documentId, 'rejected');
-                    }
-                    deliverToCloud();
-                },
-                (error) => {
-                    pushCollabIntegrityEvent('emit-persist', {
-                        documentId,
-                        bytes: update.length,
-                        ok: false,
-                        held: true,
-                        error: String(error)
-                    });
-                    this._reportCloudPersistFailure(
-                        documentId,
-                        error instanceof Error ? error : String(error)
-                    );
-                    deliverToCloud();
-                }
-            )
-            .then(
-                () => undefined,
-                () => undefined
-            )
-            .then(() => {
-                this._cloudEmitPersistsInFlight -= 1;
-            });
+        // The burst's outbox row is written first, so the merged row is the
+        // one that stays. The cloud listeners get the packet now, in order;
+        // the adapter holds it until its row exists. A relayed run of this
+        // document ahead of it takes its place (and starts its row) first.
+        const gate = this._cloudDeliveryGates.get(documentId);
+        this._persistOutgoingInOrder(
+            () =>
+                plugin.persistOutgoingCloudUpdate(
+                    update,
+                    envelope,
+                    documentId,
+                    dependsOn
+                ),
+            update,
+            documentId,
+            true,
+            gate ? Promise.all([gate, staged?.written]) : staged?.written,
+            () => staged?.release()
+        );
+        this._deliverToCloudInOrder(documentId, deliverToCloud);
     }
 
     /**
@@ -5801,12 +6983,334 @@ export class PatchSyncEngine {
      */
     async waitForPendingCloudCommits(): Promise<void> {
         await this._cloudWalCommitChain;
+        await Promise.all([...this._cloudDeliveryGates.values()]);
         await this._cloudEmitPersistChain;
     }
 
     /** Register a callback for committed local and remote changes. */
     onCommittedChange(cb: CommittedChangeListener): void {
         this._committedChangeListeners.add(cb);
+    }
+
+    /**
+     * Register a callback that runs synchronously before the engine
+     * replaces model glyph or drawing data with the documents' state (a
+     * remote update, catch-up, checkpoint, snapshot, rebaseline, hydrate,
+     * unload, or a read-back after a refused or empty commit). An editor
+     * commits an edit it still holds here, so the replacement does not
+     * leave it on a detached object. It does not run inside a commit or a
+     * remote apply, where a commit cannot be made; the rebuilt event still
+     * fires. A listener that throws stops the replacement. Returns the
+     * unsubscribe function.
+     */
+    onBeforeGlyphModelRebuild(
+        listener: BeforeGlyphModelRebuildListener
+    ): () => void {
+        this._beforeGlyphModelRebuildListeners.add(listener);
+        return () => {
+            this._beforeGlyphModelRebuildListeners.delete(listener);
+        };
+    }
+
+    /**
+     * Register a callback for model glyph or drawing data the engine
+     * replaced with the documents' state. An editor re-resolves the
+     * drawings it holds. Returns the unsubscribe function.
+     */
+    onGlyphModelRebuilt(listener: GlyphModelRebuiltListener): () => void {
+        this._glyphModelRebuiltListeners.add(listener);
+        return () => {
+            this._glyphModelRebuiltListeners.delete(listener);
+        };
+    }
+
+    /**
+     * Register a callback for an undo or redo that was refused before any
+     * write, or failed and was rolled back. Linked windows learn of it
+     * through this. Returns the unsubscribe function.
+     */
+    onHistoryReplayProblem(listener: HistoryReplayProblemListener): () => void {
+        this._historyReplayProblemListeners.add(listener);
+        return () => {
+            this._historyReplayProblemListeners.delete(listener);
+        };
+    }
+
+    private _announceHistoryReplayProblem(problem: HistoryReplayProblem): void {
+        const { kind, ...detail } = problem;
+        window.dispatchEvent(
+            new CustomEvent(
+                kind === 'blocked'
+                    ? 'history-replay-blocked'
+                    : 'history-replay-failed',
+                { detail }
+            )
+        );
+        for (const listener of [...this._historyReplayProblemListeners]) {
+            try {
+                listener(problem);
+            } catch (error) {
+                console.error(
+                    'A history replay problem listener failed',
+                    error
+                );
+            }
+        }
+    }
+
+    /**
+     * Run `replace`, which overwrites model glyph or drawing data with the
+     * documents' state, inside a rebuild scope. The outermost reported
+     * scope runs the before-rebuild listeners first (when a commit can be
+     * made) and reports every glyph it replaced once it ends. A silent
+     * scope (a commit reading back what it just wrote) reports nothing.
+     */
+    private _withGlyphModelRebuild<T>(
+        cause: GlyphModelRebuildCause,
+        glyphsHint: string[] | null,
+        replace: () => T,
+        options?: { silent?: boolean; runBeforeListeners?: boolean }
+    ): T {
+        const silent = options?.silent === true;
+        const outer = this._glyphModelRebuildScopes.length === 0;
+        if (
+            outer &&
+            !silent &&
+            options?.runBeforeListeners !== false &&
+            (glyphsHint === null || glyphsHint.length > 0)
+        ) {
+            this._runBeforeGlyphModelRebuild({
+                glyphs: glyphsHint ? [...new Set(glyphsHint)] : null,
+                cause
+            });
+        }
+        const scope: GlyphModelRebuildScope = {
+            cause,
+            silent,
+            glyphs: new Set(),
+            all: false
+        };
+        this._glyphModelRebuildScopes.push(scope);
+        let result: T;
+        try {
+            result = replace();
+        } catch (error) {
+            this._glyphModelRebuildScopes.pop();
+            // Still report what was replaced before it failed, but never
+            // let a listener's error take the place of this one.
+            try {
+                this._closeGlyphModelRebuildScope(scope);
+            } catch (listenerError) {
+                console.error(
+                    'A model rebuild listener failed after a failed rebuild',
+                    listenerError
+                );
+            }
+            throw error;
+        }
+        this._glyphModelRebuildScopes.pop();
+        this._closeGlyphModelRebuildScope(scope);
+        return result;
+    }
+
+    private _runBeforeGlyphModelRebuild(event: GlyphModelRebuildEvent): void {
+        if (
+            !this._beforeGlyphModelRebuildListeners.size ||
+            this._runningBeforeGlyphModelRebuild ||
+            this._isApplyingRemote ||
+            this._txDepth > 0 ||
+            this._commitDepth > 0 ||
+            this._suppressRecording ||
+            this._isSyncing
+        ) {
+            return;
+        }
+        this._runningBeforeGlyphModelRebuild = true;
+        try {
+            for (const listener of [
+                ...this._beforeGlyphModelRebuildListeners
+            ]) {
+                listener(event);
+            }
+        } finally {
+            this._runningBeforeGlyphModelRebuild = false;
+        }
+    }
+
+    /** Hand a finished scope's glyphs to its parent, or report them. */
+    private _closeGlyphModelRebuildScope(scope: GlyphModelRebuildScope): void {
+        if (scope.silent || (!scope.all && !scope.glyphs.size)) {
+            return;
+        }
+        const parent =
+            this._glyphModelRebuildScopes[
+                this._glyphModelRebuildScopes.length - 1
+            ];
+        if (parent) {
+            if (!parent.silent) {
+                parent.all ||= scope.all;
+                for (const glyphName of scope.glyphs) {
+                    parent.glyphs.add(glyphName);
+                }
+            }
+            return;
+        }
+        this._reportGlyphModelRebuilt({
+            glyphs: scope.all ? null : [...scope.glyphs],
+            cause: scope.cause
+        });
+    }
+
+    /**
+     * Note model data replaced from the documents: `null` for every glyph.
+     * Outside any scope it is reported at once as a read-back.
+     */
+    private _noteGlyphModelRebuilt(glyphNames: string[] | null): void {
+        const scope =
+            this._glyphModelRebuildScopes[
+                this._glyphModelRebuildScopes.length - 1
+            ];
+        if (!scope) {
+            if (glyphNames === null || glyphNames.length) {
+                this._reportGlyphModelRebuilt({
+                    glyphs: glyphNames ? [...new Set(glyphNames)] : null,
+                    cause: 'read-back'
+                });
+            }
+            return;
+        }
+        if (scope.silent) {
+            return;
+        }
+        if (glyphNames === null) {
+            scope.all = true;
+            return;
+        }
+        for (const glyphName of glyphNames) {
+            scope.glyphs.add(glyphName);
+        }
+    }
+
+    private _reportGlyphModelRebuilt(event: GlyphModelRebuildEvent): void {
+        recordCollabTrace('model-glyph-rebuilt', event.glyphs ?? [], {
+            glyphs: event.glyphs ?? 'all',
+            cause: event.cause
+        });
+        const errors: unknown[] = [];
+        for (const listener of [...this._glyphModelRebuiltListeners]) {
+            try {
+                listener(event);
+            } catch (error) {
+                errors.push(error);
+            }
+        }
+        if (errors.length) {
+            for (const error of errors.slice(1)) {
+                console.error('A model rebuild listener failed', error);
+            }
+            throw errors[0];
+        }
+    }
+
+    /** Glyph names a remote packet or catch-up for `documentId` may replace. */
+    private _glyphNamesForRebuildHint(
+        documentId: string | undefined,
+        entries: ChangeLogEntry[] | undefined
+    ): string[] | null {
+        const names = new Set<string>();
+        const glyphId = documentId ? glyphIdFromDocumentId(documentId) : null;
+        if (glyphId) {
+            const name = this._glyphNameById.get(glyphId);
+            if (name) {
+                names.add(name);
+            }
+        }
+        for (const entry of entries ?? []) {
+            // A rename or a new glyph order re-reads every glyph
+            // (_reconcileGlyphDocsAfterRemoteEntries), not only the named.
+            if (
+                normalizeGlyphRenames(entry.glyphRenames).length ||
+                getPathSegments(String(entry.path || ''))[0] === 'glyphOrder'
+            ) {
+                return null;
+            }
+            const name = this._deriveGlyphNameFromPath(entry.path || '');
+            if (name) {
+                names.add(name);
+            }
+            for (const target of entry.workerReplayTargets ?? []) {
+                names.add(target.glyphName);
+            }
+        }
+        // Font-core may rename or reorder any glyph; a glyph document named
+        // nothing yet may become any name.
+        if (!names.size) {
+            return null;
+        }
+        return [...names];
+    }
+
+    /**
+     * Register a callback for glyph and layout documents that become loaded
+     * here (created from a complete state, a snapshot, a hydrate or a
+     * residency change). It runs once the operation that created the
+     * document has finished filling it. Returns the unsubscribe function.
+     */
+    onDocumentLoaded(listener: DocumentLoadedListener): () => void {
+        this._documentLoadedListeners.add(listener);
+        return () => {
+            this._documentLoadedListeners.delete(listener);
+        };
+    }
+
+    /**
+     * Record that `documentId` is now held here. Listeners and the
+     * linked-window relay hear of it after the current operation, so held
+     * deltas never apply into a document that is still being filled, nor
+     * re-enter an apply.
+     */
+    private _noteDocumentLoaded(documentId: string): void {
+        this._documentsLoadedPendingNotice.add(documentId);
+        if (this._documentLoadedNoticeScheduled) {
+            return;
+        }
+        this._documentLoadedNoticeScheduled = true;
+        queueMicrotask(() => this._announceLoadedDocuments());
+    }
+
+    private _announceLoadedDocuments(): void {
+        this._documentLoadedNoticeScheduled = false;
+        const documentIds = [...this._documentsLoadedPendingNotice].filter(
+            (documentId) => this._docForId(documentId) !== null
+        );
+        this._documentsLoadedPendingNotice.clear();
+        if (this._destroyed || !documentIds.length) {
+            return;
+        }
+        const errors: unknown[] = [];
+        for (const documentId of documentIds) {
+            for (const listener of [...this._documentLoadedListeners]) {
+                try {
+                    listener(documentId);
+                } catch (error) {
+                    errors.push(error);
+                }
+            }
+        }
+        try {
+            window.windowSync?.drainDeltasHeldUntilLoaded?.();
+        } catch (error) {
+            errors.push(error);
+        }
+        if (errors.length) {
+            for (const error of errors.slice(1)) {
+                console.error(
+                    'A listener failed after a document was loaded',
+                    error
+                );
+            }
+            throw errors[0];
+        }
     }
 
     /** Unregister a callback previously passed to onCommittedChange. */
@@ -5836,8 +7340,42 @@ export class PatchSyncEngine {
         this._afterSyncDeferDepth = Math.max(0, this._afterSyncDeferDepth - 1);
         if (this._afterSyncDeferDepth === 0 && this._afterSyncSkipped) {
             this._afterSyncSkipped = false;
-            this._onAfterSync?.();
+            try {
+                this._runAfterSyncRebuild('deferred-after-sync');
+            } catch (error) {
+                // A before-listener could not write the editor's pending
+                // edit, so the model was not rebuilt over it. It stays due
+                // (the next deferred run does it); this runs in a catch-up's
+                // `finally`, where a throw would hide the catch-up's result.
+                this._afterSyncSkipped = true;
+                recordCollabTrace('model-rebuild-deferred-kept', [], {
+                    cause: 'deferred-after-sync',
+                    error:
+                        error instanceof Error ? error.message : String(error)
+                });
+                console.error(
+                    'The font model was not rebuilt after a catch-up: a pending edit could not be written first',
+                    error
+                );
+            }
         }
+    }
+
+    /**
+     * Run the after-sync hook, which rebuilds the whole font model from the
+     * patched font data, as a model rebuild of every glyph. A deferred one
+     * runs after an async catch-up or hydrate (a reconnect), when the editor
+     * may hold an edit made while it ran: the before-listeners let it write
+     * that edit first, and the rebuild is reported and traced.
+     */
+    private _runAfterSyncRebuild(cause: GlyphModelRebuildCause): void {
+        if (!this._onAfterSync) {
+            return;
+        }
+        this._withGlyphModelRebuild(cause, null, () => {
+            this._onAfterSync?.();
+            this._noteGlyphModelRebuilt(null);
+        });
     }
 
     runWithDeferredAfterSync<T>(fn: () => T): T {
@@ -5873,7 +7411,7 @@ export class PatchSyncEngine {
             this._releaseCatalogDefer();
             this._remoteAfterSyncBatch = null;
             if (batch.pending) {
-                this._onAfterSync?.();
+                this._runAfterSyncRebuild('remote-update');
             }
         }
     }
@@ -5931,15 +7469,37 @@ export class PatchSyncEngine {
         this._destroyGlyphDocs();
         this.depsDoc.destroy();
         this.yDoc.destroy();
+        clearBrokenDocumentScope(this._brokenScope);
+        // A destroyed font is no longer read-only: listeners hear it end, so
+        // a later read-only period (another font, a reload) is shown again.
+        // Teardown goes on even if a listener throws.
+        for (const error of this._changeReadOnlyReason(null)) {
+            console.error(
+                'A listener failed when a destroyed font stopped being read-only',
+                error
+            );
+        }
+        this._readOnlyChangedListeners.clear();
+        this._stateLoadedDocumentIds.clear();
+        this._glyphCatchUpsInFlight.clear();
+        this._glyphCatchUpsPending.clear();
         this._fontJson = null;
         this._changeLog = [];
         this._collaborationLog = [];
         this._onRemoteChange = null;
         this._localUpdateListeners.clear();
         this._committedChangeListeners.clear();
+        this._beforeGlyphModelRebuildListeners.clear();
+        this._glyphModelRebuiltListeners.clear();
+        this._historyReplayProblemListeners.clear();
+        this._destroyed = true;
+        this._documentLoadedListeners.clear();
+        this._documentsLoadedPendingNotice.clear();
         this._glyphRevisionFeedListeners.clear();
         this._glyphRevisionFeed.clear();
         this._glyphRevisionFeedArrival.clear();
+        this._glyphRevisionsAwaitingFetch.clear();
+        this._lateGlyphRevisionsAwaitingFetch.clear();
         this._clearHeldGlyphRevisions();
         this._coreHydratedListeners.clear();
         this._clearSparseWorkingSet();
@@ -5949,7 +7509,8 @@ export class PatchSyncEngine {
         this._collaborationLogListeners.clear();
         this._transactionFinalizer = null;
         this._txStartTimeMs = null;
-        this._lastBroadcastStateVector = new Uint8Array(0);
+        this._outbox.clear();
+        this._layoutCoreOutbox = null;
     }
 
     onChangeLogUpdate(cb: (entries: ChangeLogEntry[]) => void): () => void {
@@ -6383,7 +7944,16 @@ export class PatchSyncEngine {
         );
 
         if (commit) {
-            this._syncRemoteJsonFromYDoc(commit.changeLogEntries);
+            this._withGlyphModelRebuild(
+                'external-reload',
+                normalizeWorkerReplayTargets(
+                    commit.changeLogEntries.flatMap(
+                        (entry) => entry.workerReplayTargets
+                    )
+                ).map((target) => target.glyphName),
+                () => this._syncRemoteJsonFromYDoc(commit.changeLogEntries),
+                { runBeforeListeners: false }
+            );
             this._onAfterSync?.();
         }
 
@@ -6482,10 +8052,6 @@ export class PatchSyncEngine {
             this._txPromptGroupId = historyMetadata?.promptGroupId ?? null;
             this._txHistorySummary = historyMetadata?.historySummary ?? null;
             this._txHistoryTarget = historyTarget ?? null;
-            // Capture a compact state-vector (< 100 bytes) rather than the
-            // full font serialization so the fallback canonical-diff path in
-            // _emitCanonicalLocalUpdateSince stays cheap.
-            this._txStartStateVector = Y.encodeStateVector(this.yDoc);
         }
     }
 
@@ -6515,33 +8081,32 @@ export class PatchSyncEngine {
             // A composition rebuild can carry a ccmp intent and no model
             // edits, when the shells are already empty. That intent still
             // has to reach the feature-generator finalizer.
-            if (
-                this._txBufferedOperations.length ||
-                Object.keys(this._txIntents).length
-            ) {
-                commitResult = this._commitOperations(
-                    this._txBufferedOperations,
-                    this._txLabel,
-                    this._txId,
-                    this._txHistoryItemId,
-                    this._txHistoryTarget,
-                    this._txPromptGroupId,
-                    this._txHistorySummary
-                );
+            // A refused commit (a read-only font, a broken document) still
+            // ends the transaction: its operations must not ride along with
+            // the next one.
+            try {
+                if (
+                    this._txBufferedOperations.length ||
+                    Object.keys(this._txIntents).length
+                ) {
+                    commitResult = this._commitOperations(
+                        this._txBufferedOperations,
+                        this._txLabel,
+                        this._txId,
+                        this._txHistoryItemId,
+                        this._txHistoryTarget,
+                        this._txPromptGroupId,
+                        this._txHistorySummary
+                    );
+                }
+            } catch (error) {
+                this._resetOutermostTransactionState();
+                // Nothing committed, so nothing runs "after the commit": a
+                // callback kept here would run after the next, unrelated one.
+                this._afterOutermostCommit = [];
+                throw error;
             }
-            this._txBufferedOperations = [];
-            this._txLabel = null;
-            this._txCompileChangeSource = null;
-            this._txCompileEditType = null;
-            this._txId = null;
-            this._txStartTimeMs = null;
-            this._txHistoryItemId = null;
-            this._txBurst = null;
-            this._txPromptGroupId = null;
-            this._txHistorySummary = null;
-            this._txHistoryTarget = null;
-            this._txStartStateVector = null;
-            this._txIntents = {};
+            this._resetOutermostTransactionState();
             const afterCommit = this._afterOutermostCommit;
             this._afterOutermostCommit = [];
             for (const callback of afterCommit) {
@@ -6549,6 +8114,21 @@ export class PatchSyncEngine {
             }
         }
         return commitResult;
+    }
+
+    private _resetOutermostTransactionState(): void {
+        this._txBufferedOperations = [];
+        this._txLabel = null;
+        this._txCompileChangeSource = null;
+        this._txCompileEditType = null;
+        this._txId = null;
+        this._txStartTimeMs = null;
+        this._txHistoryItemId = null;
+        this._txBurst = null;
+        this._txPromptGroupId = null;
+        this._txHistorySummary = null;
+        this._txHistoryTarget = null;
+        this._txIntents = {};
     }
 
     /**
@@ -6862,6 +8442,7 @@ export class PatchSyncEngine {
         }
 
         const operations: TransactionBufferedOperation[] = [];
+        const shardedFont = this._fontHasGlyphDocuments();
         for (const {
             glyphName,
             layerId: drawingId,
@@ -6870,12 +8451,24 @@ export class PatchSyncEngine {
         } of uniqueTargets) {
             const glyphMap = this._glyphMapForName(glyphName);
             if (!glyphMap) {
+                if (shardedFont) {
+                    // The edit would go nowhere: refuse it loudly before
+                    // anything is recorded, instead of dropping it.
+                    throw new Error(
+                        `[PatchSyncEngine] Cannot save the edit “${label}” to ${glyphName}/${drawingId}: the glyph’s document is not loaded in this window`
+                    );
+                }
                 continue;
             }
 
             const drawingsMap = glyphMap.get('layers') as
                 Y.Map<unknown> | undefined;
             if (!drawingsMap) {
+                if (shardedFont) {
+                    throw new Error(
+                        `[PatchSyncEngine] Cannot save the edit “${label}” to ${glyphName}/${drawingId}: the glyph’s document holds no drawings`
+                    );
+                }
                 continue;
             }
 
@@ -6944,7 +8537,8 @@ export class PatchSyncEngine {
         }
 
         if (!operations.length) {
-            this._emitMetadataOnlyDrawingSnapshotUpdate(
+            // Nothing to write: no packet goes to any room.
+            this._notifyLocalDrawingSnapshotNoop(
                 uniqueTargets,
                 label,
                 oldValue,
@@ -6976,11 +8570,22 @@ export class PatchSyncEngine {
                 })
             );
             if (writtenDrawingTargets.length) {
-                this._syncPatchedDrawingTargetsFromYDoc(writtenDrawingTargets);
+                // A commit that wrote nothing (reduced away, or refused)
+                // puts the model back to the documents: reported. One that
+                // wrote reads back its own write: silent.
+                this._withGlyphModelRebuild(
+                    'null-commit-read-back',
+                    writtenDrawingTargets.map((target) => target.glyphName),
+                    () =>
+                        this._syncPatchedDrawingTargetsFromYDoc(
+                            writtenDrawingTargets
+                        ),
+                    { silent: Boolean(commitResult), runBeforeListeners: false }
+                );
             }
         }
         if (!wasInTransaction && !commitResult) {
-            this._emitMetadataOnlyDrawingSnapshotUpdate(
+            this._notifyLocalDrawingSnapshotNoop(
                 uniqueTargets,
                 label,
                 oldValue,
@@ -7001,7 +8606,14 @@ export class PatchSyncEngine {
         );
     }
 
-    private _emitMetadataOnlyDrawingSnapshotUpdate(
+    /**
+     * A drawing-snapshot sync that wrote nothing still refreshes compile
+     * and caches for its replay targets, in this window only: committed-
+     * change listeners and the compile worker hear of it, marked
+     * `localOnly`, one notice per glyph document. No packet is made, so no
+     * room, outbox or linked window sees it.
+     */
+    private _notifyLocalDrawingSnapshotNoop(
         uniqueTargets: DrawingSnapshotSyncTarget[],
         label: string,
         oldValue: string | undefined,
@@ -7018,10 +8630,6 @@ export class PatchSyncEngine {
             return;
         }
 
-        const update = Y.encodeStateAsUpdate(
-            this.yDoc,
-            Y.encodeStateVector(this.yDoc)
-        );
         const timestamp = Date.now();
         const historyItemId = this._createHistoryItemId();
         const changeLogEntries = uniqueTargets.map((target) =>
@@ -7047,8 +8655,44 @@ export class PatchSyncEngine {
             })
         );
         this._lastLocalUpdateLogIndex = this._changeLog.length;
-        this._lastBroadcastStateVector = Y.encodeStateVector(this.yDoc);
-        this._emitLocalUpdate(update, changeLogEntries);
+        const entriesByDocument = new Map<string, ChangeLogEntry[]>();
+        uniqueTargets.forEach((target, index) => {
+            const documentId = this.documentIdForPath([
+                'glyphs',
+                target.glyphName
+            ]);
+            const list = entriesByDocument.get(documentId) ?? [];
+            list.push(changeLogEntries[index]);
+            entriesByDocument.set(documentId, list);
+        });
+        for (const [documentId, entries] of entriesByDocument) {
+            this._yjsWorkerCallback?.(EMPTY_YJS_UPDATE, entries, documentId);
+            for (const cb of this._committedChangeListeners) {
+                cb(entries, {
+                    origin: 'local',
+                    update: EMPTY_YJS_UPDATE,
+                    documentId,
+                    localOnly: true
+                });
+            }
+        }
+    }
+
+    /**
+     * True when glyphs live in documents of their own (every current font),
+     * so a glyph path never belongs in font-core.
+     */
+    private _fontHasGlyphDocuments(): boolean {
+        return this._glyphDocs.size > 0 || this._glyphIdByName.size > 0;
+    }
+
+    /** True for a path inside a glyph's drawings (`glyphs.<name>:layers…`). */
+    private _isGlyphDrawingPath(path: string | null | undefined): boolean {
+        if (!path) {
+            return false;
+        }
+        const segments = this._getPathSegments(String(path));
+        return segments[0] === 'glyphs' && segments[2] === 'layers';
     }
 
     private _buildDrawingSyncOperations(
@@ -8321,6 +9965,32 @@ export class PatchSyncEngine {
         historyTargetKey: string | null | undefined,
         surface: HistoryUndoSurface | null | undefined
     ): UndoRedoResult | null {
+        // The editor commits what it holds before it asks for an undo; a
+        // commit made here, after the replay wrote, would undo the undo.
+        return this._withGlyphModelRebuild(
+            'history-replay',
+            null,
+            () =>
+                this._replayHistoryActionInScope(
+                    historyAction,
+                    glyphName,
+                    drawingId,
+                    historyTargetKey,
+                    surface
+                ),
+            { runBeforeListeners: false }
+        );
+    }
+
+    private _replayHistoryActionInScope(
+        historyAction: 'undo' | 'redo',
+        glyphName: string | undefined,
+        drawingId: string | null | undefined,
+        historyTargetKey: string | null | undefined,
+        surface: HistoryUndoSurface | null | undefined
+    ): UndoRedoResult | null {
+        // Refused before the history moves: nothing is undone or redone.
+        this._assertLocalWriteAllowed(historyAction);
         // A tick after undo must start a new history item, not extend the
         // one just undone; the held cloud send also goes out first.
         void this._editBursts.finalizeAll();
@@ -8338,21 +10008,25 @@ export class PatchSyncEngine {
             console.warn(
                 `Skipping ${historyAction}: a collaborator changed the same data after history item ${historyItem.id}`
             );
-            window.dispatchEvent(
-                new CustomEvent('history-replay-blocked', {
-                    detail: {
-                        reason: 'collaborator-edit',
-                        historyAction,
-                        historyItemId: historyItem.id
-                    }
-                })
-            );
+            this._announceHistoryReplayProblem({
+                kind: 'blocked',
+                reason: 'collaborator-edit',
+                historyAction,
+                historyItemId: historyItem.id
+            });
             return null;
         }
         if (!this._canReplayHistoryItem(historyItem, historyAction)) {
             console.warn(
                 `Skipping ${historyAction}: history item ${historyItem.id} has no replayable values`
             );
+            return null;
+        }
+        // Every document the replay writes is resolved and checked before
+        // the history moves or anything is written; a refusal leaves both
+        // as they are.
+        const prepared = this._prepareHistoryReplay(historyItem, historyAction);
+        if (!prepared) {
             return null;
         }
         const target = this._targetFromHistoryItem(
@@ -8412,20 +10086,45 @@ export class PatchSyncEngine {
             });
             const loggedEntryIndex = this._changeLog.length;
             this._appendChangeLogEntry(entry);
+            const loggedEntry = this._changeLog[loggedEntryIndex];
+            const nameMaps = this._snapshotGlyphNameMaps();
+            const committed: Array<[string, ChangeLogEntry[]]> = [];
 
             this._historyReplayBaselines = localUpdateBaselines;
             this._historyReplayDependentTargets = [];
-            let writtenTargets: WorkerReplayTarget[];
+            let writtenTargets: WorkerReplayTarget[] = [];
             let dependentTargets: WorkerReplayTarget[];
+            let failure: { error: unknown } | null = null;
             try {
                 writtenTargets = this._applyHistoryItem(
                     historyItem,
-                    historyAction
+                    historyAction,
+                    prepared,
+                    committed
                 );
+            } catch (error) {
+                failure = { error };
             } finally {
                 dependentTargets = this._historyReplayDependentTargets;
                 this._historyReplayBaselines = null;
                 this._historyReplayDependentTargets = [];
+            }
+            if (failure) {
+                this._abandonHistoryReplay(
+                    {
+                        historyAction,
+                        historyItemId: historyItem.id,
+                        prepared,
+                        committed,
+                        nameMaps,
+                        loggedEntry,
+                        loggedEntryIndex,
+                        baselines: localUpdateBaselines,
+                        dependentTargets
+                    },
+                    failure.error
+                );
+                throw failure.error;
             }
             this._noteDependentTargetsOnHistoryEntry(
                 loggedEntryIndex,
@@ -8557,7 +10256,142 @@ export class PatchSyncEngine {
      * and drawings are patched from the authoritative Y.Doc without any full
      * yDocToJson rebuild on the receiving window hot path.
      */
+    /**
+     * Make this font read-only (`reason`, a sentence saying why, carried by
+     * every refused edit’s error and shown to the user once per read-only
+     * period) or writable again (null). While it
+     * is read-only every local write is refused with `ReadOnlyFontError`
+     * before anything changes: commits (editor edits and Python scripts),
+     * undo and redo, live preview writes and the font worker’s packets.
+     * Updates from collaborators still apply. This is not the broken mark:
+     * no document is damaged.
+     *
+     * Each change (read-only to writable, writable to read-only, or a new
+     * reason) is told to `onReadOnlyChanged` listeners after it takes
+     * effect; setting the current state again tells no one. Writable again
+     * (null), and destroy, end the read-only period: the UI forgets that it
+     * showed the reason, so the next read-only period shows it again. A
+     * listener that throws does not undo the change; every listener still
+     * runs and the first error is rethrown.
+     */
+    setReadOnly(reason: string | null): void {
+        if (reason !== null && (typeof reason !== 'string' || !reason.trim())) {
+            throw new TypeError(
+                'A read-only font needs a reason to show with refused edits.'
+            );
+        }
+        const errors = this._changeReadOnlyReason(reason);
+        if (errors.length) {
+            for (const error of errors.slice(1)) {
+                console.error(
+                    'A listener failed when the font’s read-only state changed',
+                    error
+                );
+            }
+            throw errors[0];
+        }
+    }
+
+    /**
+     * Register a callback for each change of this font’s read-only state
+     * (setReadOnly, destroy): the new reason, or null once it is writable
+     * again. Returns the unsubscribe function.
+     */
+    onReadOnlyChanged(listener: ReadOnlyChangedListener): () => void {
+        this._readOnlyChangedListeners.add(listener);
+        return () => {
+            this._readOnlyChangedListeners.delete(listener);
+        };
+    }
+
+    /** Set the read-only reason and tell listeners; returns their errors. */
+    private _changeReadOnlyReason(reason: string | null): unknown[] {
+        if (this._readOnlyReason === reason) {
+            return [];
+        }
+        this._readOnlyReason = reason;
+        const errors: unknown[] = [];
+        for (const listener of [...this._readOnlyChangedListeners]) {
+            // A listener changed the state again: that nested change has
+            // already told every listener the newer state, so the rest must
+            // not hear this stale one after it.
+            if (this._readOnlyReason !== reason) {
+                break;
+            }
+            try {
+                listener(reason);
+            } catch (error) {
+                errors.push(error);
+            }
+        }
+        return errors;
+    }
+
+    /** True while local writes to this font are refused (setReadOnly). */
+    isReadOnly(): boolean {
+        return this._readOnlyReason !== null;
+    }
+
+    /** Throws `ReadOnlyFontError` while this font is read-only. */
+    private _assertLocalWriteAllowed(context: string): void {
+        if (this._readOnlyReason !== null) {
+            throw new ReadOnlyFontError(this._readOnlyReason, context);
+        }
+    }
+
+    /** Record that `documentId` lost an update; it refuses edits from now on. */
+    markDocumentBroken(documentId: string, error: Error): void {
+        // Kept by id too: a document this window does not hold yet is
+        // refused when it loads, never recorded against font-core.
+        markDocumentBroken(
+            this._docForId(documentId),
+            documentId,
+            error,
+            this._brokenScope
+        );
+    }
+
+    /** True when `documentId` tripped a gate in this font session. */
+    isDocumentIdBroken(documentId: string): boolean {
+        return isDocumentIdBroken(this._brokenScope, documentId);
+    }
+
+    /** Throws when `documentId` is broken: nothing may load or write it. */
+    private _assertDocumentIdWritable(documentId: string): void {
+        assertDocumentWritable(null, documentId, this._brokenScope);
+    }
+
     applyRemoteUpdate(
+        update: Uint8Array,
+        remoteEntries?: ChangeLogEntry[],
+        remoteCollaborationMessages?: CollaborationMessageEnvelope[],
+        documentId?: string,
+        options?: ApplyRemoteUpdateOptions
+    ): boolean {
+        // A linked window's edit is this user's own, made before the
+        // read-only state reached that window: refused here like an edit
+        // made in this window, before anything changes. A collaborator's
+        // update still applies.
+        if (options?.fromLinkedWindow) {
+            this._assertLocalWriteAllowed('edit in another window');
+        }
+        const changed = this._withGlyphModelRebuild(
+            'remote-update',
+            this._glyphNamesForRebuildHint(documentId, remoteEntries),
+            () =>
+                this._applyRemoteUpdate(
+                    update,
+                    remoteEntries,
+                    remoteCollaborationMessages,
+                    documentId,
+                    options
+                )
+        );
+        this._flushStrandedOutboxes();
+        return changed;
+    }
+
+    private _applyRemoteUpdate(
         update: Uint8Array,
         remoteEntries?: ChangeLogEntry[],
         remoteCollaborationMessages?: CollaborationMessageEnvelope[],
@@ -8574,7 +10408,7 @@ export class PatchSyncEngine {
         this._pushApplyKind(ApplyKind.Remote);
         try {
             if (!this._fontJson) this._fontJson = {};
-            const effectiveRemoteEntries = remoteEntries?.length
+            const describedEntries = remoteEntries?.length
                 ? remoteEntries
                 : (remoteCollaborationMessages?.flatMap((message) =>
                       createChangeLogEntriesFromCollaborationMessageEnvelope(
@@ -8585,7 +10419,17 @@ export class PatchSyncEngine {
                           }
                       )
                   ) ?? []);
-            if (!effectiveRemoteEntries.length) {
+            // Envelope fitting replaced the glyph lists of these with
+            // “every glyph of the packet’s document changed”.
+            const wholeDocumentMessages = (
+                remoteCollaborationMessages ?? []
+            ).filter((message) => message.metadata.allGlyphsChanged === true);
+            if (wholeDocumentMessages.length && !documentId) {
+                throw new Error(
+                    '[PatchSyncEngine] An envelope that names every glyph of its document arrived without the document’s id.'
+                );
+            }
+            if (!describedEntries.length && !wholeDocumentMessages.length) {
                 if (this._isRemoteUpdateNoopOnAnyDoc(update)) {
                     return false;
                 }
@@ -8593,11 +10437,24 @@ export class PatchSyncEngine {
             }
             const resolvedDocumentId =
                 documentId ||
-                (effectiveRemoteEntries[0]
+                (describedEntries[0]
                     ? this.documentIdForPath(
-                          getPathSegments(effectiveRemoteEntries[0].path)
+                          getPathSegments(describedEntries[0].path)
                       )
                     : FONT_CORE_DOCUMENT_ID);
+            if (
+                options?.restoredUnsentEdit &&
+                !this.hasLoadedDocumentState(resolvedDocumentId)
+            ) {
+                // Applied now, the edit would make or fill the document
+                // ahead of its room state: the window would then count it
+                // as held and never load the rest. It waits, unbroken.
+                recordCollabTrace('wal-restore-waits', [], {
+                    document: resolvedDocumentId,
+                    resident: this._docForId(resolvedDocumentId) !== null
+                });
+                throw new DocumentStateNotLoadedError(resolvedDocumentId);
+            }
             let targetDoc = this._docForId(resolvedDocumentId);
             if (!targetDoc && isLayoutDocumentId(resolvedDocumentId)) {
                 targetDoc = this._ensureLayoutDoc(resolvedDocumentId);
@@ -8610,16 +10467,31 @@ export class PatchSyncEngine {
                 if (isCatalogTombstone(catalog, glyphId)) {
                     return false;
                 }
+                // Only a complete state makes a glyph here: a new glyph's
+                // first packet (ClockGapError otherwise).
+                this._assertCompleteGlyphState(update, resolvedDocumentId);
                 const glyphName =
                     this._glyphNameById.get(glyphId) ||
                     this._deriveGlyphNameFromPath(
-                        effectiveRemoteEntries[0]?.path || ''
+                        describedEntries[0]?.path || ''
                     ) ||
                     glyphId;
                 this._ensureGlyphDoc(glyphId, glyphName);
                 targetDoc = this._docForId(resolvedDocumentId);
             }
-            targetDoc = targetDoc || this.yDoc;
+            targetDoc = targetDoc || this._requireDocForId(resolvedDocumentId);
+            const wholeDocumentGlyphEntries = wholeDocumentMessages.length
+                ? this._wholeDocumentGlyphEntries(
+                      resolvedDocumentId,
+                      wholeDocumentMessages
+                  )
+                : [];
+            const effectiveRemoteEntries = wholeDocumentGlyphEntries.length
+                ? [
+                      ...describedEntries,
+                      ...wholeDocumentGlyphEntries.map(({ entry }) => entry)
+                  ]
+                : describedEntries;
             const snapshotFillEntries = captureInUndo
                 ? effectiveRemoteEntries.filter(
                       (entry) =>
@@ -8643,17 +10515,19 @@ export class PatchSyncEngine {
             };
             targetDoc.on('afterTransaction', observeRemoteTransaction);
             try {
-                Y.applyUpdate(
+                applyUpdateWithIntegrity(
                     targetDoc,
                     update,
-                    captureInUndo
-                        ? this._getRemoteUpdateOrigin(effectiveRemoteEntries)
-                        : CLOUD_REMOTE_ORIGIN
+                    resolvedDocumentId,
+                    captureInUndo ? PEER_REMOTE_ORIGIN : CLOUD_REMOTE_ORIGIN,
+                    this._brokenScope
                 );
             } finally {
                 targetDoc.off('afterTransaction', observeRemoteTransaction);
             }
             if (!didChange) {
+                // This document already had every byte (the integrity gate
+                // refuses an update that would wait for an earlier one).
                 if (isCollabTraceOn()) {
                     this._traceRemoteUpdate(
                         'remote-noop',
@@ -8662,12 +10536,6 @@ export class PatchSyncEngine {
                         options
                     );
                 }
-                // This document already had the bytes, or keeps them pending
-                // until an earlier update arrives. The worker’s copy may not:
-                // with no entries the bytes are held and merged in front of
-                // the next update sent for this document, so the worker never
-                // misses them (Yjs ignores what it already has).
-                this._yjsWorkerCallback?.(update, [], resolvedDocumentId);
                 return false;
             }
             if (options?.fromCollaborator) {
@@ -8679,7 +10547,14 @@ export class PatchSyncEngine {
             }
             this._reconcileGlyphDocsAfterRemoteEntries(effectiveRemoteEntries);
             this._bindAppliedGlyphDocument(resolvedDocumentId);
-            this._syncRemoteJsonFromYDoc(effectiveRemoteEntries);
+            this._renameWholeDocumentGlyphEntries(wholeDocumentGlyphEntries);
+            if (effectiveRemoteEntries.length) {
+                this._syncRemoteJsonFromYDoc(effectiveRemoteEntries);
+            }
+            // A document-wide envelope on a document that holds no glyph
+            // data (font-core in a sharded font, a layout room) has nothing
+            // to re-read: its kept paths describe the rest.
+            this._fillWholeDocumentReplayTargets(wholeDocumentGlyphEntries);
             if (isCollabTraceOn()) {
                 this._traceRemoteUpdate(
                     'remote',
@@ -8753,10 +10628,167 @@ export class PatchSyncEngine {
                         : undefined)
                 });
             }
-            this._noteBroadcastStateVector(resolvedDocumentId);
             return didChange;
         } finally {
             this._popApplyKind();
+        }
+    }
+
+    /**
+     * The glyphs a document-wide envelope (`metadata.allGlyphsChanged`)
+     * stands for: the glyph of a glyph document, the glyphs font-core
+     * itself stores, none in a layout room. Each becomes a `glyphs.<name>:`
+     * set, so the receiver re-reads it whole from its own Y.Doc. Replay
+     * targets are worked out after the apply.
+     */
+    private _wholeDocumentGlyphEntries(
+        documentId: string,
+        messages: CollaborationMessageEnvelope[]
+    ): Array<{ entry: ChangeLogEntry; glyphId: string | null }> {
+        let glyphs: Array<{ name: string; glyphId: string | null }> = [];
+        if (documentId.startsWith('glyph:')) {
+            const glyphId = documentId.slice('glyph:'.length);
+            const storedName = this._glyphDocs
+                .get(glyphId)
+                ?.getMap('glyph')
+                .get('name');
+            const name =
+                this._glyphNameById.get(glyphId) ||
+                (typeof storedName === 'string' ? storedName : '') ||
+                glyphId;
+            glyphs = [{ name, glyphId }];
+        } else if (documentId === FONT_CORE_DOCUMENT_ID) {
+            const coreGlyphs = this.fontMap.get('glyphs');
+            if (coreGlyphs instanceof Y.Map) {
+                glyphs = [...coreGlyphs.keys()].map((name) => ({
+                    name: String(name),
+                    glyphId: null
+                }));
+            }
+        }
+        if (!glyphs.length) {
+            return [];
+        }
+        return messages.flatMap((message) => {
+            const entries =
+                createChangeLogEntriesFromCollaborationMessageEnvelope(
+                    {
+                        ...message,
+                        changes: glyphs.map(({ name }) => ({
+                            path: `glyphs.${name}:`,
+                            op: 'set' as const
+                        })),
+                        metadata: {
+                            ...message.metadata,
+                            workerReplayTargets: []
+                        }
+                    },
+                    {
+                        windowRoleLabel: this._getWindowRoleLabel(),
+                        localWindowId: this.windowId
+                    }
+                );
+            return entries.map((entry, index) => ({
+                entry,
+                glyphId: glyphs[index].glyphId
+            }));
+        });
+    }
+
+    /** A glyph document renamed by the packet re-reads its new name. */
+    private _renameWholeDocumentGlyphEntries(
+        wholeDocumentEntries: Array<{
+            entry: ChangeLogEntry;
+            glyphId: string | null;
+        }>
+    ): void {
+        for (const { entry, glyphId } of wholeDocumentEntries) {
+            const name = glyphId ? this._glyphNameById.get(glyphId) : null;
+            if (name && entry.path !== `glyphs.${name}:`) {
+                entry.path = `glyphs.${name}:`;
+            }
+        }
+    }
+
+    /**
+     * Replay targets of a document-wide envelope, from this window’s own
+     * font: every drawing of each re-read glyph, plus every drawing of the
+     * composites that use it (directly or through other composites).
+     */
+    private _fillWholeDocumentReplayTargets(
+        wholeDocumentEntries: Array<{
+            entry: ChangeLogEntry;
+            glyphId: string | null;
+        }>
+    ): void {
+        if (!wholeDocumentEntries.length) {
+            return;
+        }
+        const glyphs = Array.isArray(this._fontJson?.glyphs)
+            ? (this._fontJson.glyphs as Unsafe[])
+            : [];
+        const drawingIdsByGlyph = new Map<string, string[]>();
+        const usersByReference = new Map<string, Set<string>>();
+        for (const glyph of glyphs) {
+            const glyphName =
+                glyph && typeof glyph.name === 'string' ? glyph.name : '';
+            if (!glyphName) {
+                continue;
+            }
+            const drawings: Unsafe[] = Array.isArray(glyph.layers)
+                ? glyph.layers
+                : [];
+            drawingIdsByGlyph.set(
+                glyphName,
+                drawings
+                    .map((drawing) =>
+                        drawing && typeof drawing.id === 'string'
+                            ? drawing.id
+                            : ''
+                    )
+                    .filter((drawingId) => !!drawingId)
+            );
+            for (const drawing of drawings) {
+                const shapes: unknown[] = Array.isArray(drawing?.shapes)
+                    ? drawing.shapes
+                    : [];
+                for (const shape of shapes) {
+                    const reference = getComponentReferenceFromShape(
+                        shape as Unsafe
+                    );
+                    if (!reference) {
+                        continue;
+                    }
+                    const users = usersByReference.get(reference) ?? new Set();
+                    users.add(glyphName);
+                    usersByReference.set(reference, users);
+                }
+            }
+        }
+        for (const { entry } of wholeDocumentEntries) {
+            const glyphName = this._deriveGlyphNameFromPath(entry.path);
+            if (!glyphName) {
+                continue;
+            }
+            const affected = new Set<string>([glyphName]);
+            const queue = [glyphName];
+            while (queue.length) {
+                const reference = queue.shift() as string;
+                for (const user of usersByReference.get(reference) ?? []) {
+                    if (!affected.has(user)) {
+                        affected.add(user);
+                        queue.push(user);
+                    }
+                }
+            }
+            entry.workerReplayTargets = normalizeWorkerReplayTargets(
+                [...affected].flatMap((name) =>
+                    (drawingIdsByGlyph.get(name) ?? []).map((layerId) => ({
+                        glyphName: name,
+                        layerId
+                    }))
+                )
+            );
         }
     }
 
@@ -9295,6 +11327,17 @@ export class PatchSyncEngine {
         if (!this._fontJson) {
             return;
         }
+        this._syncAllGlyphsFromYDocInner(mergeExistingGlyphs, options);
+        this._noteGlyphModelRebuilt(null);
+    }
+
+    private _syncAllGlyphsFromYDocInner(
+        mergeExistingGlyphs: boolean,
+        options?: { dropGlyphIds?: Iterable<string> }
+    ): void {
+        if (!this._fontJson) {
+            return;
+        }
         this._aliasResidentGlyphNamesFromCatalog();
         const dropGlyphIds = new Set(options?.dropGlyphIds || []);
 
@@ -9500,6 +11543,17 @@ export class PatchSyncEngine {
     }
 
     private _patchGlyphFromYDoc(
+        glyphName: string,
+        options?: { ignoreExisting?: boolean }
+    ): boolean {
+        const patched = this._patchGlyphFromYDocInner(glyphName, options);
+        if (patched) {
+            this._noteGlyphModelRebuilt([glyphName]);
+        }
+        return patched;
+    }
+
+    private _patchGlyphFromYDocInner(
         glyphName: string,
         options?: { ignoreExisting?: boolean }
     ): boolean {
@@ -9714,24 +11768,37 @@ export class PatchSyncEngine {
      * never for an ordinary committed update.
      */
     applyFullState(state: YjsUpdate): void {
+        this._withGlyphModelRebuild('rebaseline', null, () =>
+            this._applyFullState(state)
+        );
+    }
+
+    private _applyFullState(state: YjsUpdate): void {
         let applied = false;
         this._pushApplyKind(ApplyKind.Remote);
         try {
             if (!this._fontJson) this._fontJson = {};
-            Y.applyUpdate(this.yDoc, state, SYSTEM_REMOTE_ORIGIN);
+            applyUpdateWithIntegrity(
+                this.yDoc,
+                state,
+                FONT_CORE_DOCUMENT_ID,
+                SYSTEM_REMOTE_ORIGIN,
+                this._brokenScope
+            );
+            this._stateLoadedDocumentIds.add(FONT_CORE_DOCUMENT_ID);
             this._rehydrateEntireFontJsonFromYDoc({
                 mergeExistingGlyphs: true
             });
             this._canonicalizeFullStateRawFontJson();
             this._onAfterSync?.();
             this._onRemoteChange?.([]);
-            this._lastBroadcastStateVector = Y.encodeStateVector(this.yDoc);
             applied = true;
         } finally {
             this._popApplyKind();
         }
         if (applied) {
             this._notifyCoreHydrated();
+            this._flushStrandedOutboxes();
         }
     }
 
@@ -9753,7 +11820,7 @@ export class PatchSyncEngine {
         peerStateVector: YjsUpdate,
         documentId: string = FONT_CORE_DOCUMENT_ID
     ): YjsUpdate {
-        const doc = this._docForId(documentId) || this.yDoc;
+        const doc = this._requireDocForId(documentId);
         if (!peerStateVector?.byteLength) {
             return Y.encodeStateAsUpdate(doc);
         }
@@ -9791,9 +11858,16 @@ export class PatchSyncEngine {
         documentId: string = FONT_CORE_DOCUMENT_ID
     ): void {
         if (!update || update.length === 0) return;
-        const doc = this._docForId(documentId) || this.yDoc;
-        Y.applyUpdate(doc, update);
-        this._noteBroadcastStateVector(documentId);
+        const doc = this._requireDocForId(documentId);
+        applyUpdateWithIntegrity(
+            doc,
+            update,
+            documentId,
+            SYSTEM_REMOTE_ORIGIN,
+            this._brokenScope
+        );
+        // The whole state of the replaced engine's document.
+        this._stateLoadedDocumentIds.add(documentId);
     }
 
     applyLocalGeneratedYjsUpdate(
@@ -9803,6 +11877,7 @@ export class PatchSyncEngine {
         historyTarget?: TransactionHistoryTarget | null,
         documentUpdates?: Array<{ documentId: string; update: YjsUpdate }>
     ): TransactionCommitResult | null {
+        this._assertLocalWriteAllowed(label ? `edit “${label}”` : 'edit');
         const packets = (documentUpdates || []).filter(
             (packet) => packet.update?.length
         );
@@ -9818,6 +11893,20 @@ export class PatchSyncEngine {
         if (this._txDepth > 0) {
             throw new Error(
                 'applyLocalGeneratedYjsUpdate does not support open transactions'
+            );
+        }
+        // Undivided worker bytes belong to exactly one document; they never
+        // go into font-core in place of the documents they were made for.
+        if (
+            !packets.length &&
+            new Set(
+                normalizedOperations.map((operation) =>
+                    this.documentIdForPath(operation.path)
+                )
+            ).size !== 1
+        ) {
+            throw new Error(
+                '[PatchSyncEngine] Refusing a worker update that spans several documents without one packet per document'
             );
         }
 
@@ -9899,47 +11988,46 @@ export class PatchSyncEngine {
                     ? packets
                     : [
                           {
-                              documentId:
-                                  uniqueDocumentIds.length === 1
-                                      ? uniqueDocumentIds[0]
-                                      : FONT_CORE_DOCUMENT_ID,
+                              documentId: uniqueDocumentIds[0],
                               update
                           }
                       ];
-            // State before the worker's packets, so glyph packets can be
-            // re-encoded with the revision stamp added below.
-            const baselineByDocument = new Map<string, Uint8Array>();
+            // The worker's bytes never go out themselves: applying them here
+            // queues exactly what they changed in this window's documents,
+            // and that is what is sent, with the revision stamp added below.
             for (const packet of packetsToApply) {
-                const targetDoc =
-                    this._docForId(packet.documentId) || this.yDoc;
-                if (!baselineByDocument.has(packet.documentId)) {
-                    baselineByDocument.set(
-                        packet.documentId,
-                        Y.encodeStateVector(targetDoc)
-                    );
-                }
-                Y.applyUpdate(
+                const targetDoc = this._requireDocForId(packet.documentId);
+                applyUpdateWithIntegrity(
                     targetDoc,
                     packet.update,
-                    this._originForDocument(packet.documentId, scopeInfo.origin)
+                    packet.documentId,
+                    this._originForDocument(
+                        packet.documentId,
+                        scopeInfo.origin
+                    ),
+                    this._brokenScope
                 );
-                this._noteBroadcastStateVector(packet.documentId);
             }
-            this._syncRemoteJsonFromYDoc(changeLogEntries);
+            // Reads back what this window generated and just wrote.
+            this._withGlyphModelRebuild(
+                'read-back',
+                null,
+                () => this._syncRemoteJsonFromYDoc(changeLogEntries),
+                { silent: true }
+            );
             this._onAfterSync?.();
             this._onDirty?.();
 
             if (
                 this._lastLocalUpdateLogIndex ===
-                    localUpdateLogIndexBeforeCommit &&
-                !this._isApplyingRemote
+                localUpdateLogIndexBeforeCommit
             ) {
                 this._lastLocalUpdateLogIndex = this._changeLog.length;
                 // Peers fetch glyph shards outside their live set only when
                 // the shard's revision changes, like for any other edit.
-                // Stamp every touched glyph, re-encode its packet so the stamp
-                // travels with it, and publish the revisions on font-core
-                // after the glyph packets.
+                // Stamp every touched glyph so the stamp travels in its
+                // packet, and publish the revisions on font-core after the
+                // glyph packets.
                 const glyphIds = [
                     ...new Set(
                         packetsToApply
@@ -9954,31 +12042,28 @@ export class PatchSyncEngine {
                 ];
                 this._withGlyphRevisionCatchUp(glyphIds, () => {
                     this._emitLocalUpdateBatch(
-                        packetsToApply.map((packet) => {
-                            const doc = packet.documentId.startsWith('glyph:')
-                                ? this._docForId(packet.documentId)
-                                : null;
-                            const baseline = baselineByDocument.get(
-                                packet.documentId
-                            );
-                            const stampedUpdate =
-                                doc && baseline
-                                    ? Y.encodeStateAsUpdate(doc, baseline)
-                                    : packet.update;
-                            return {
-                                update: stampedUpdate.length
-                                    ? stampedUpdate
-                                    : packet.update,
+                        [
+                            ...new Set(
+                                packetsToApply.map(
+                                    (packet) => packet.documentId
+                                )
+                            )
+                        ]
+                            .map((documentId) => ({
+                                update: this._takeOutbox(documentId),
                                 entries: changeLogEntries,
-                                documentId: packet.documentId
-                            };
-                        })
+                                documentId
+                            }))
+                            .filter(
+                                (packet) => !isEmptyYjsUpdate(packet.update)
+                            )
                     );
                 });
             }
         } finally {
             this._popApplyKind();
         }
+        this._flushStrandedOutboxes();
 
         return {
             changeLogEntries,
@@ -10218,6 +12303,17 @@ export class PatchSyncEngine {
         glyphName: string;
         layerId: string;
     }): boolean {
+        const patched = this._patchDrawingFromYDocInner(scopeHint);
+        if (patched) {
+            this._noteGlyphModelRebuilt([scopeHint.glyphName]);
+        }
+        return patched;
+    }
+
+    private _patchDrawingFromYDocInner(scopeHint: {
+        glyphName: string;
+        layerId: string;
+    }): boolean {
         const glyphMap = this._glyphMapForName(scopeHint.glyphName);
         if (!(glyphMap instanceof Y.Map)) {
             return false;
@@ -10251,32 +12347,17 @@ export class PatchSyncEngine {
         }
 
         const patchedDrawing = this._cloneRuntimeValue(
+            // The stored drawing alone: a key it no longer has leaves the
+            // font JSON drawing too (see `fromStore`).
             this._normalizeDrawingSnapshot(
                 scopeHint.layerId,
                 fromYType(drawingMap),
-                drawings[drawingIdx]
+                undefined,
+                false,
+                undefined,
+                true
             )
         ) as Unsafe;
-
-        if (
-            patchedDrawing &&
-            typeof patchedDrawing === 'object' &&
-            !Array.isArray(patchedDrawing)
-        ) {
-            const drawingRecord = patchedDrawing as Record<string, unknown>;
-            if (!('width' in drawingRecord)) {
-                console.warn(
-                    `[PatchSyncEngine] _syncJsonFromYDoc: drawing ${scopeHint.layerId} missing "width" after fromYType. Keys: ${Object.keys(drawingRecord).join(',')}`
-                );
-                const yKeys: string[] = [];
-                drawingMap.forEach((_v: unknown, k: string) => {
-                    yKeys.push(k);
-                });
-                console.warn(
-                    `[PatchSyncEngine] Y.Map keys for drawing: ${yKeys.join(',')}`
-                );
-            }
-        }
 
         if (
             drawings[drawingIdx] &&
@@ -10353,8 +12434,8 @@ export class PatchSyncEngine {
 
     /** The model drawings go back to what the documents hold. */
     /**
-     * A drawing as its document holds it, decoded to drawing JSON, or null.
-     * For diagnostics: it leaves the stored JSON and the model alone.
+     * A drawing as its document holds it, decoded to drawing JSON, or null
+     * when the document holds no such drawing. For diagnostics: it leaves the stored JSON and the model alone.
      */
     readStoredDrawing(
         glyphName: string,
@@ -10366,16 +12447,16 @@ export class PatchSyncEngine {
         if (!(drawingMap instanceof Y.Map)) {
             return null;
         }
-        try {
-            return this._normalizeDrawingSnapshot(
-                drawingId,
-                fromYType(drawingMap),
-                undefined,
-                false
-            ) as Record<string, unknown>;
-        } catch {
-            return null;
-        }
+        // A drawing that breaks an invariant throws here too: diagnostics
+        // must show the damage, not hide it.
+        return this._normalizeDrawingSnapshot(
+            drawingId,
+            fromYType(drawingMap),
+            undefined,
+            false,
+            undefined,
+            true
+        ) as Record<string, unknown>;
     }
 
     /**
@@ -10466,6 +12547,7 @@ export class PatchSyncEngine {
     writeLivePreviewDrawings(
         targets: Array<{ glyphName: string; layerId: string }>
     ): Array<{ glyphName: string; layerId: string }> {
+        this._assertLocalWriteAllowed('edit');
         const fontModel = (window as Unsafe).fontManager?.currentFont
             ?.fontModel;
         if (!fontModel || !this._fontJson) {
@@ -10516,26 +12598,35 @@ export class PatchSyncEngine {
         if (!pendingWrites.size) {
             return written;
         }
-        const before = new Map(
-            [...pendingWrites.keys()].map((glyphId) => [
-                glyphId,
-                Y.encodeStateVector(this._glyphDocs.get(glyphId)!)
-            ])
-        );
+        for (const glyphId of pendingWrites.keys()) {
+            assertDocumentWritable(
+                this._glyphDocs.get(glyphId)!,
+                glyphDocumentId(glyphId),
+                this._brokenScope
+            );
+        }
         // One commit, stamped with glyph revisions like any commit: windows
         // that keep no socket for these glyphs learn of the writes from the
         // revision feed, and fetch them. One packet per glyph document.
         this._withGlyphRevisionCatchUp([...pendingWrites.keys()], () => {
             for (const [glyphId, writes] of pendingWrites) {
                 const doc = this._glyphDocs.get(glyphId)!;
-                doc.transact(() => {
-                    for (const { drawingMap, record } of writes) {
-                        this._replaceDrawingMapContents(
-                            drawingMap,
-                            cloneHistoryValue(record) as Record<string, unknown>
-                        );
-                    }
-                }, LAYOUT_FORWARD_ORIGIN);
+                this._transactOrMarkBroken(
+                    doc,
+                    glyphDocumentId(glyphId),
+                    () => {
+                        for (const { drawingMap, record } of writes) {
+                            this._replaceDrawingMapContents(
+                                drawingMap,
+                                cloneHistoryValue(record) as Record<
+                                    string,
+                                    unknown
+                                >
+                            );
+                        }
+                    },
+                    LAYOUT_FORWARD_ORIGIN
+                );
                 const entries = writes.map(({ target, record }) =>
                     createLogEntry({
                         timestamp: Date.now(),
@@ -10564,28 +12655,27 @@ export class PatchSyncEngine {
                 // Emitted, not committed: the change log, and so undo, never
                 // holds it.
                 this._emitLocalUpdate(
-                    Y.encodeStateAsUpdate(doc, before.get(glyphId)),
+                    this._takeOutbox(glyphDocumentId(glyphId)),
                     entries,
                     glyphDocumentId(glyphId)
                 );
             }
         });
-        for (const writes of pendingWrites.values()) {
-            for (const { target } of writes) {
-                this._patchDrawingFromYDoc(target);
-                written.push(target);
-            }
-        }
+        // Reads back what the model just wrote.
+        this._withGlyphModelRebuild(
+            'read-back',
+            null,
+            () => {
+                for (const writes of pendingWrites.values()) {
+                    for (const { target } of writes) {
+                        this._patchDrawingFromYDoc(target);
+                        written.push(target);
+                    }
+                }
+            },
+            { silent: true }
+        );
         return written;
-    }
-
-    /**
-     * True when this glyph's document holds updates that wait for ones it
-     * never received: it is incomplete here until a catch-up fills the gap.
-     */
-    glyphDocumentHasPendingUpdates(documentId: string): boolean {
-        const store = (this._docForId(documentId) as Unsafe)?.store;
-        return !!(store?.pendingStructs || store?.pendingDs);
     }
 
     /** True when the model shows this drawing other than its document. */
@@ -10727,11 +12817,26 @@ export class PatchSyncEngine {
         if (!updates.length) {
             return;
         }
+        this._withGlyphModelRebuild('remote-update', null, () =>
+            this._mergeRemoteUpdates(updates)
+        );
+    }
+
+    private _mergeRemoteUpdates(updates: Uint8Array[]): void {
+        if (!updates.length) {
+            return;
+        }
         this._pushApplyKind(ApplyKind.Remote);
         try {
             for (const update of updates) {
                 if (update?.byteLength) {
-                    Y.applyUpdate(this.yDoc, update, SYSTEM_REMOTE_ORIGIN);
+                    applyUpdateWithIntegrity(
+                        this.yDoc,
+                        update,
+                        FONT_CORE_DOCUMENT_ID,
+                        SYSTEM_REMOTE_ORIGIN,
+                        this._brokenScope
+                    );
                 }
             }
             this._rehydrateEntireFontJsonFromYDoc();
@@ -10844,45 +12949,138 @@ export class PatchSyncEngine {
     }
 
     /**
-     * The rejected commit already advanced this client's Yjs clocks. Its items
-     * and the undo items stay unsent, so the next packet must start from the
-     * pre-commit baseline (or peers park everything after the gap), and the
-     * undo transaction GCs the deleted content so that packet stays small.
+     * A refused commit wrote nothing to any document; only the model still
+     * shows it. Read the model back from the documents and tell the plugin.
      */
-    private _rejectLocalCollabSubmit(
-        changeLogEntries: ChangeLogEntry[],
-        decision: CollabSubmitDecision,
-        baselineByDoc: Map<string, Uint8Array>
-    ): void {
-        for (const [documentId, baseline] of baselineByDoc) {
-            if (!this._lastBroadcastStateVectorByDoc.has(documentId)) {
-                this._lastBroadcastStateVectorByDoc.set(documentId, baseline);
-            }
-        }
-        this._pushApplyKind(ApplyKind.UndoRedo);
-        try {
-            this._replayHistoryEntries(
-                [...changeLogEntries]
-                    .reverse()
-                    .filter(isReplayableHistoryEntry),
-                'undo',
-                true
-            );
-        } finally {
-            this._popApplyKind();
-        }
-        if (changeLogEntries.length) {
-            this._changeLog.splice(
-                Math.max(0, this._changeLog.length - changeLogEntries.length)
-            );
-            invalidateHistoryStateCache(this._changeLog);
-            this._notifyChangeLogListeners();
-        }
-        this._rehydrateEntireFontJsonFromYDoc();
+    private _rejectLocalCollabSubmit(decision: CollabSubmitDecision): void {
+        this._withGlyphModelRebuild('submit-refused', null, () =>
+            this._rehydrateEntireFontJsonFromYDoc()
+        );
         this._onAfterSync?.();
         const plugin = this._collabSubmitPlugin();
         if (typeof plugin?.notifyCollabSubmitRejected === 'function') {
             plugin.notifyCollabSubmitRejected(decision);
+        }
+    }
+
+    /** Every room a commit's operations write, in first-write order. */
+    private _documentIdsTouchedByOperations(
+        operations: TransactionBufferedOperation[]
+    ): Set<string> {
+        const docsTouched = new Set<string>();
+        for (const operation of operations) {
+            const applyPath = this._toYDocPath(
+                operation.applyPath ?? operation.path
+            );
+            const documentId = this.documentIdForPath(applyPath);
+            docsTouched.add(documentId);
+            for (const extraId of this._extraLayoutDocumentIds(applyPath)) {
+                this._ensureLayoutDoc(extraId);
+                docsTouched.add(extraId);
+            }
+            if (isLayoutDocumentId(documentId)) {
+                this._ensureLayoutDoc(documentId);
+            }
+            if (operation.op === 'remove' && this._isGlyphRootPath(applyPath)) {
+                docsTouched.add(FONT_CORE_DOCUMENT_ID);
+            }
+        }
+        return docsTouched;
+    }
+
+    /**
+     * The submit limits judged before a commit writes anything: per room,
+     * the JSON size of the values it writes, and when that is past the
+     * packet limit, the largest single value (an update that large travels
+     * as several room transactions, split between values). The room's size
+     * counts the values it replaces as gone: the cloud collects them.
+     */
+    private _estimateCommitSubmitRequests(
+        operations: TransactionBufferedOperation[]
+    ): CollabSubmitRequest[] {
+        const byDocument = new Map<
+            string,
+            { total: number; leaf: number; replaced: number }
+        >();
+        for (const operation of operations) {
+            const applyPath = this._toYDocPath(
+                operation.applyPath ?? operation.path
+            );
+            const value =
+                operation.applyNewValue === undefined
+                    ? operation.newValue
+                    : operation.applyNewValue;
+            const size = byDocument.get(this.documentIdForPath(applyPath)) ?? {
+                total: 0,
+                leaf: 0,
+                replaced: 0
+            };
+            size.total += jsonByteLength(value) + jsonByteLength(applyPath);
+            size.leaf = Math.max(size.leaf, largestLeafByteLength(value));
+            size.replaced += jsonByteLength(
+                operation.applyOldValue === undefined
+                    ? operation.oldValue
+                    : operation.applyOldValue
+            );
+            byDocument.set(this.documentIdForPath(applyPath), size);
+        }
+        return [...byDocument].map(([documentId, size]) => {
+            const doc = this._docForId(documentId);
+            const packetBytes =
+                size.total < MAX_YJS_PACKET_BYTES ? size.total : size.leaf;
+            const measured = measureShardBytesForSubmit({
+                lastEncodedBytes:
+                    this._lastEncodedShardBytes.get(documentId) || 0,
+                packetBytes: size.total,
+                encodeFullShard: () =>
+                    doc
+                        ? Math.max(
+                              0,
+                              collectedEncodedByteLength(doc) +
+                                  size.total -
+                                  size.replaced
+                          )
+                        : size.total
+            });
+            return {
+                documentId,
+                packetBytes,
+                shardBytes: measured.shardBytes
+            };
+        });
+    }
+
+    /**
+     * A throw inside a local write that already wrote leaves its document
+     * part written and unsendable: the document is marked broken and the
+     * error rethrown. A refusal before anything was written leaves the
+     * document whole; it is only rethrown.
+     */
+    private _transactOrMarkBroken(
+        doc: Y.Doc,
+        documentId: string,
+        write: () => void,
+        origin: unknown
+    ): void {
+        const seen: { transaction: Y.Transaction | null } = {
+            transaction: null
+        };
+        try {
+            doc.transact((transaction) => {
+                seen.transaction = transaction;
+                write();
+            }, origin);
+        } catch (error) {
+            if (
+                seen.transaction &&
+                transactionWroteSomething(doc, seen.transaction)
+            ) {
+                this.markDocumentBroken(
+                    documentId,
+                    error instanceof Error ? error : new Error(String(error))
+                );
+            }
+            throw error;
         }
     }
 
@@ -10965,14 +13163,9 @@ export class PatchSyncEngine {
             };
         });
         const glyphIds = this._glyphIdsTouchedByOperations(operations);
-        const envelope = createCollaborationMessageEnvelopeFromChangeLogEntries(
-            [],
-            {
-                localSequence: this._nextCollaborationMessageSequence,
-                source: 'change-bridge',
-                windowId: this.windowId
-            }
-        ) || {
+        // The prepared row is written before the commit has entries: its
+        // envelope names the transaction, the entries come with its packets.
+        const envelope: CollaborationMessageEnvelope = {
             schemaVersion: 1 as const,
             transactionId: walToken,
             localSequence: this._nextCollaborationMessageSequence,
@@ -11146,9 +13339,6 @@ export class PatchSyncEngine {
                 source: 'change-bridge',
                 windowId: this.windowId
             });
-        if (!collaborationMessage) {
-            return;
-        }
         const representative =
             packets.find(
                 (packet) => packet.documentId === FONT_CORE_DOCUMENT_ID
@@ -11174,12 +13364,51 @@ export class PatchSyncEngine {
         skipTransactionFinalizer = false,
         cloudWalApplyToken: string | null = null
     ): TransactionCommitResult | null {
+        this._commitDepth += 1;
+        try {
+            return this._commitOperationsInner(
+                operations,
+                label,
+                transactionId,
+                historyItemId,
+                historyTarget,
+                promptGroupId,
+                historySummary,
+                skipTransactionFinalizer,
+                cloudWalApplyToken
+            );
+        } finally {
+            this._commitDepth -= 1;
+        }
+    }
+
+    private _commitOperationsInner(
+        operations: TransactionBufferedOperation[],
+        label: string | null,
+        transactionId: number | null,
+        historyItemId: string | null | undefined,
+        historyTarget: TransactionHistoryTarget | null | undefined,
+        promptGroupId: string | null | undefined,
+        historySummary: string | null | undefined,
+        skipTransactionFinalizer: boolean,
+        cloudWalApplyToken: string | null
+    ): TransactionCommitResult | null {
         const normalizedOperations = operations.filter(
             (operation) => operation.path.length > 0
         );
         const hasIntents = Object.keys(this._txIntents).length > 0;
         if (!normalizedOperations.length && !hasIntents) {
             return null;
+        }
+        if (!this._isApplyingRemote && this._readOnlyReason !== null) {
+            // Refused before anything is written. The model already shows
+            // the edit, so it is read back from the documents first, as a
+            // refused collaboration submit is (_rejectLocalCollabSubmit).
+            this._withGlyphModelRebuild('read-only-refused', null, () =>
+                this._rehydrateEntireFontJsonFromYDoc()
+            );
+            this._onAfterSync?.();
+            this._assertLocalWriteAllowed(label ? `edit “${label}”` : 'edit');
         }
 
         let finalizedOperations = normalizedOperations;
@@ -11333,11 +13562,24 @@ export class PatchSyncEngine {
             changeLogEntries.push(entry);
         }
 
-        this._appendChangeLogEntries(changeLogEntries);
-
         const routedOperations =
             this._routeOperationsThroughPendingRenames(effectiveOperations);
+        // Permission is decided before anything is written: a refused commit
+        // never reaches a document, so it leaves no clock behind unsent.
+        if (!this._isApplyingRemote) {
+            const decision = this._askCollabSubmitPermission(
+                this._estimateCommitSubmitRequests(routedOperations)
+            );
+            if (!decision.allowed) {
+                this._rejectLocalCollabSubmit(decision);
+                return null;
+            }
+        }
+
+        // A write into a glyph without a document throws here, before the
+        // change log records a commit no document received.
         this._ensureDocumentsForOperations(routedOperations);
+        this._appendChangeLogEntries(changeLogEntries);
 
         const glyphNameRemaps = routedOperations.flatMap((operation) => {
             const applyPath = this._toYDocPath(
@@ -11364,36 +13606,13 @@ export class PatchSyncEngine {
             ];
         });
 
-        const localUpdateBaselineByDoc = new Map<string, Uint8Array>();
-        const docsTouched = new Set<string>();
-        for (const operation of routedOperations) {
-            const applyPath = this._toYDocPath(
-                operation.applyPath ?? operation.path
-            );
-            docsTouched.add(this.documentIdForPath(applyPath));
-            for (const documentId of this._extraLayoutDocumentIds(applyPath)) {
-                this._ensureLayoutDoc(documentId);
-                docsTouched.add(documentId);
-            }
-            if (isLayoutDocumentId(this.documentIdForPath(applyPath))) {
-                this._ensureLayoutDoc(this.documentIdForPath(applyPath));
-            }
-            if (operation.op === 'remove' && this._isGlyphRootPath(applyPath)) {
-                docsTouched.add(FONT_CORE_DOCUMENT_ID);
-            }
-        }
+        const docsTouched =
+            this._documentIdsTouchedByOperations(routedOperations);
         for (const documentId of docsTouched) {
-            const doc = this._docForId(documentId);
-            if (!doc) {
-                continue;
-            }
-            localUpdateBaselineByDoc.set(
+            assertDocumentWritable(
+                this._requireDocForId(documentId),
                 documentId,
-                this._lastBroadcastStateVectorByDoc.get(documentId) ||
-                    (documentId === FONT_CORE_DOCUMENT_ID
-                        ? (this._txStartStateVector ??
-                          this._lastBroadcastStateVector)
-                        : Y.encodeStateVector(doc))
+                this._brokenScope
             );
         }
 
@@ -11411,10 +13630,7 @@ export class PatchSyncEngine {
         this._pushApplyKind(ApplyKind.ManualEmit);
         try {
             for (const documentId of docsTouched) {
-                const doc = this._docForId(documentId);
-                if (!doc) {
-                    continue;
-                }
+                const doc = this._requireDocForId(documentId);
                 const opsForDoc = routedOperations.filter((operation) => {
                     const applyPath = this._toYDocPath(
                         operation.applyPath ?? operation.path
@@ -11426,7 +13642,9 @@ export class PatchSyncEngine {
                 const stampRevision = glyphIdForDoc
                     ? revisionByGlyphId.get(glyphIdForDoc)
                     : undefined;
-                doc.transact(
+                this._transactOrMarkBroken(
+                    doc,
+                    documentId,
                     () => {
                         for (const operation of geometryOps) {
                             this._applyBufferedOperation(operation);
@@ -11439,7 +13657,10 @@ export class PatchSyncEngine {
                             )?.glyphCatalog;
                             const generation =
                                 catalog?.[glyphIdForDoc]?.generation;
-                            if (generation != null) {
+                            if (
+                                generation != null &&
+                                sync.get('generation') !== generation
+                            ) {
                                 sync.set('generation', generation);
                             }
                         }
@@ -11451,135 +13672,102 @@ export class PatchSyncEngine {
             this._popApplyKind();
         }
 
-        if (!this._isApplyingRemote) {
-            const pendingPackets: Array<{
-                documentId: string;
-                update: YjsUpdate;
-                entries: ChangeLogEntry[];
-                shardBytes: number;
-            }> = [];
-            for (const documentId of docsTouched) {
-                const doc = this._docForId(documentId);
-                if (!doc) {
-                    continue;
-                }
-                const baseline =
-                    localUpdateBaselineByDoc.get(documentId) ||
-                    Y.encodeStateVector(doc);
-                const exactCommitUpdate = Y.encodeStateAsUpdate(doc, baseline);
-                if (isEmptyYjsUpdate(exactCommitUpdate)) {
-                    // A room a whole-value write could reach but did not.
-                    continue;
-                }
-                const measured = measureShardBytesForSubmit({
-                    lastEncodedBytes:
-                        this._lastEncodedShardBytes.get(documentId) || 0,
-                    packetBytes: exactCommitUpdate.byteLength,
-                    encodeFullShard: () => collectedEncodedByteLength(doc)
-                });
-                const docEntries = changeLogEntries.filter((_entry, index) => {
-                    const operation = routedOperations[index];
-                    const applyPath = this._toYDocPath(
-                        operation.applyPath ?? operation.path
-                    );
-                    return this.documentIdForPath(applyPath) === documentId;
-                });
-                pendingPackets.push({
-                    documentId,
-                    update: exactCommitUpdate,
-                    entries: docEntries.length ? docEntries : changeLogEntries,
-                    shardBytes: measured.shardBytes
-                });
-            }
-            const decision = this._askCollabSubmitPermission(
-                pendingPackets.map((packet) => ({
-                    documentId: packet.documentId,
-                    // A large update travels as several room transactions;
-                    // only a value too large to split is refused.
-                    packetBytes: cloudPacketBytesForLimit(packet.update),
-                    shardBytes: packet.shardBytes
-                }))
+        // Every commit is sent, a commit made while a remote update applies
+        // included: each touched room's packet is its queued updates.
+        this._lastLocalUpdateLogIndex = this._changeLog.length;
+        this._catalogDeferDepth += 1;
+        const persistChainBeforeEmit = this._cloudEmitPersistChain;
+        try {
+            // Only glyphs that send a packet: a token that never reaches
+            // the feed would hold its commit's others back at peers.
+            const sentDocumentIds = new Set(
+                [...docsTouched].filter((documentId) =>
+                    this.hasUnsentLocalUpdates(documentId)
+                )
             );
-            if (!decision.allowed) {
-                this._rejectLocalCollabSubmit(
-                    changeLogEntries,
-                    decision,
-                    localUpdateBaselineByDoc
-                );
-                return null;
-            }
-            this._lastLocalUpdateLogIndex = this._changeLog.length;
-            this._catalogDeferDepth += 1;
-            const persistChainBeforeEmit = this._cloudEmitPersistChain;
-            try {
-                this._appendCommitCollaborationItem(
-                    changeLogEntries,
-                    pendingPackets
-                );
-                // Only glyphs that send a packet: a token that never reaches
-                // the feed would hold its commit's others back at peers.
-                const sentDocumentIds = new Set(
-                    pendingPackets.map((packet) => packet.documentId)
-                );
-                this._withGlyphRevisionCatchUp(
-                    this._glyphIdsTouchedByOperations(routedOperations).filter(
-                        (glyphId) => sentDocumentIds.has(`glyph:${glyphId}`)
-                    ),
-                    () => {
-                        const uiPackets: Array<{
-                            update: YjsUpdate;
-                            entries: ChangeLogEntry[];
-                            documentId: string;
-                            options: { skipCollaborationLog: true };
-                        }> = [];
-                        for (const packet of pendingPackets) {
-                            const doc = this._docForId(packet.documentId);
-                            const baseline =
-                                localUpdateBaselineByDoc.get(
-                                    packet.documentId
-                                ) || (doc ? Y.encodeStateVector(doc) : null);
-                            const stampedUpdate =
-                                doc && baseline
-                                    ? Y.encodeStateAsUpdate(doc, baseline)
-                                    : packet.update;
-                            const measured = doc
-                                ? measureShardBytesForSubmit({
-                                      lastEncodedBytes:
-                                          this._lastEncodedShardBytes.get(
-                                              packet.documentId
-                                          ) || 0,
-                                      packetBytes: stampedUpdate.byteLength,
-                                      encodeFullShard: () =>
-                                          collectedEncodedByteLength(doc)
-                                  })
-                                : { shardBytes: packet.shardBytes };
-                            this._noteBroadcastStateVector(packet.documentId);
+            this._withGlyphRevisionCatchUp(
+                this._glyphIdsTouchedByOperations(routedOperations).filter(
+                    (glyphId) => sentDocumentIds.has(`glyph:${glyphId}`)
+                ),
+                () => {
+                    const uiPackets: Array<{
+                        update: YjsUpdate;
+                        entries: ChangeLogEntry[];
+                        documentId: string;
+                        options: { skipCollaborationLog: true };
+                    }> = [];
+                    for (const documentId of docsTouched) {
+                        const update = this._takeOutbox(documentId);
+                        if (isEmptyYjsUpdate(update)) {
+                            // A room a whole-value write could reach but
+                            // did not.
+                            continue;
+                        }
+                        // A glyph the commit deleted may have left; its
+                        // queued updates are sent all the same.
+                        const doc = this._docForId(documentId);
+                        if (doc) {
+                            const measured = measureShardBytesForSubmit({
+                                lastEncodedBytes:
+                                    this._lastEncodedShardBytes.get(
+                                        documentId
+                                    ) || 0,
+                                packetBytes: update.byteLength,
+                                encodeFullShard: () =>
+                                    collectedEncodedByteLength(doc)
+                            });
                             this._lastEncodedShardBytes.set(
-                                packet.documentId,
+                                documentId,
                                 measured.shardBytes
                             );
-                            uiPackets.push({
-                                update: stampedUpdate,
-                                entries: packet.entries,
-                                documentId: packet.documentId,
-                                options: { skipCollaborationLog: true }
-                            });
                         }
-                        this._emitLocalUpdateBatch(uiPackets);
+                        const docEntries = changeLogEntries.filter(
+                            (_entry, index) => {
+                                const operation = routedOperations[index];
+                                const applyPath = this._toYDocPath(
+                                    operation.applyPath ?? operation.path
+                                );
+                                return (
+                                    this.documentIdForPath(applyPath) ===
+                                    documentId
+                                );
+                            }
+                        );
+                        uiPackets.push({
+                            update,
+                            // A document that changed with no entries of
+                            // its own (an observer or stamp write) is
+                            // described whole, never by another
+                            // document's paths.
+                            entries: docEntries.length
+                                ? docEntries
+                                : [
+                                      this._wholeDocumentEntry(
+                                          documentId,
+                                          label ?? 'Document update'
+                                      )
+                                  ],
+                            documentId,
+                            options: { skipCollaborationLog: true }
+                        });
                     }
-                );
-            } finally {
-                const persistChainAfterEmit = this._cloudEmitPersistChain;
-                const releaseCatalogDefer = (): void =>
-                    this._releaseCatalogDefer();
-                if (persistChainAfterEmit !== persistChainBeforeEmit) {
-                    persistChainAfterEmit.then(
-                        releaseCatalogDefer,
-                        releaseCatalogDefer
+                    this._appendCommitCollaborationItem(
+                        changeLogEntries,
+                        uiPackets
                     );
-                } else {
-                    releaseCatalogDefer();
+                    this._emitLocalUpdateBatch(uiPackets);
                 }
+            );
+        } finally {
+            const persistChainAfterEmit = this._cloudEmitPersistChain;
+            const releaseCatalogDefer = (): void => this._releaseCatalogDefer();
+            if (persistChainAfterEmit !== persistChainBeforeEmit) {
+                persistChainAfterEmit.then(
+                    releaseCatalogDefer,
+                    releaseCatalogDefer
+                );
+            } else {
+                releaseCatalogDefer();
             }
         }
 
@@ -11595,7 +13783,13 @@ export class PatchSyncEngine {
         }
 
         if (!this._isApplyingRemote) {
-            this._syncRemoteJsonFromYDoc(changeLogEntries);
+            // The commit reads back what it just wrote.
+            this._withGlyphModelRebuild(
+                'read-back',
+                null,
+                () => this._syncRemoteJsonFromYDoc(changeLogEntries),
+                { silent: true }
+            );
         }
 
         this._flushDestroyedGlyphDocs();
@@ -11840,94 +14034,48 @@ export class PatchSyncEngine {
         });
     }
 
-    private _repairGeometryOrphansForOperations(
-        operations: TransactionBufferedOperation[]
-    ): void {
-        // A topology mutation can be concurrent with a remote topology that
-        // retains one of its removed nodes. Leave those positions as harmless
-        // orphans until a later converged repair pass rather than tombstoning
-        // a coordinate that the winning topology still references.
-        if (
-            operations.some((operation) => {
-                const path = this._toYDocPath(
-                    operation.applyPath ?? operation.path
-                );
-                return (
-                    path[path.length - 1] === 'shapes' ||
-                    path[path.length - 1] === 'nodes'
-                );
-            })
-        ) {
-            return;
-        }
-        const seen = new Set<string>();
-        for (const operation of operations) {
-            const path = this._toYDocPath(
-                operation.applyPath ?? operation.path
-            );
-            if (path[0] !== 'glyphs' || path[2] !== 'layers') {
-                continue;
-            }
-            const glyphName = String(path[1]);
-            const drawingId = String(path[3]);
-            const key = `${glyphName}:${drawingId}`;
-            if (seen.has(key)) {
-                continue;
-            }
-            seen.add(key);
-            const glyphMap = this._glyphMapForName(glyphName);
-            if (!(glyphMap instanceof Y.Map)) {
-                continue;
-            }
-            const drawingsMap = glyphMap.get('layers');
-            if (!(drawingsMap instanceof Y.Map)) {
-                continue;
-            }
-            const drawingMap = drawingsMap.get(drawingId);
-            if (drawingMap instanceof Y.Map) {
-                repairDrawingGeometryOrphans(drawingMap);
-            }
-        }
-    }
-
     /**
-     * A complete document-set state is a convergence boundary. Never schedule
-     * this after a local structural edit: an unseen topology may still retain
-     * a node while deliberately omitting its unchanged packed coordinate.
+     * A complete document-set state is a convergence boundary: every node a
+     * drawing's topology names must have its position there. A missing one
+     * means an update never arrived; nothing fills it in or deletes around
+     * it, the document is refused.
      */
-    private _repairGeometryOrphansAfterConvergedState(
+    private _assertGeometryCompleteAfterConvergedState(
         documentId?: string
     ): void {
         const targetDoc = documentId ? this._docForId(documentId) : undefined;
-        const drawingsByDoc = new Map<Y.Doc, Y.Map<unknown>[]>();
         for (const glyphName of new Set(this._glyphNameById.values())) {
             const glyphMap = this._glyphMapForName(glyphName);
             if (!(glyphMap instanceof Y.Map)) {
                 continue;
             }
+            if (targetDoc && glyphMap.doc !== targetDoc) {
+                continue;
+            }
             const drawingsMap = glyphMap.get('layers');
             if (!(drawingsMap instanceof Y.Map)) {
                 continue;
             }
-            drawingsMap.forEach((drawing) => {
-                if (
-                    !(drawing instanceof Y.Map) ||
-                    !drawing.doc ||
-                    (targetDoc && drawing.doc !== targetDoc)
-                ) {
+            drawingsMap.forEach((drawing, drawingId) => {
+                if (!(drawing instanceof Y.Map)) {
                     return;
                 }
-                const drawings = drawingsByDoc.get(drawing.doc) || [];
-                drawings.push(drawing);
-                drawingsByDoc.set(drawing.doc, drawings);
-            });
-        }
-        for (const [doc, drawings] of drawingsByDoc) {
-            doc.transact(() => {
-                for (const drawing of drawings) {
-                    repairDrawingGeometryOrphans(drawing);
+                try {
+                    assertDrawingGeometryComplete(drawing);
+                } catch (cause) {
+                    const error = new DrawingInvariantError(
+                        drawingId,
+                        cause instanceof Error ? cause.message : String(cause),
+                        `glyph ${glyphName}`
+                    );
+                    const glyphDocumentId =
+                        this.glyphDocumentIdForName(glyphName);
+                    if (glyphDocumentId) {
+                        this.markDocumentBroken(glyphDocumentId, error);
+                    }
+                    throw error;
                 }
-            }, SYSTEM_REMOTE_ORIGIN);
+            });
         }
     }
 
@@ -12052,6 +14200,16 @@ export class PatchSyncEngine {
                 continue;
             }
             const glyphName = String(applyPath[1]);
+            if (applyPath.length > 2) {
+                // Only a whole-glyph write creates a glyph; an edit inside
+                // one that has no document here is refused.
+                if (!this._glyphMapForName(glyphName)) {
+                    throw new Error(
+                        `[PatchSyncEngine] Refusing to write ${applyPath.join('.')}: glyph ${glyphName} has no document`
+                    );
+                }
+                continue;
+            }
             const addedId =
                 applyPath.length === 2 &&
                 operation.newValue &&
@@ -12219,7 +14377,11 @@ export class PatchSyncEngine {
                     this._fontJson as Record<string, unknown>
                 )?.glyphCatalog;
                 const generation = catalog?.[glyphId]?.generation;
-                if (generation != null) {
+                // An unchanged value is not written again (no new item).
+                if (
+                    generation != null &&
+                    sync.get('generation') !== generation
+                ) {
                     sync.set('generation', generation);
                 }
             }, GLYPH_REVISION_ORIGIN);
@@ -12293,77 +14455,6 @@ export class PatchSyncEngine {
             return 'layer';
         }
         return 'glyph';
-    }
-
-    private _getRemoteUpdateOrigin(remoteEntries?: ChangeLogEntry[]): string {
-        if (!remoteEntries?.length) {
-            return USER_EDIT_ORIGIN;
-        }
-
-        const targetItem = remoteEntries.find(
-            (entry) => entry.historyAction === 'change'
-        );
-        const glyphNames = new Set(
-            remoteEntries
-                .map((entry) => this._deriveGlyphNameFromPath(entry.path))
-                .filter((glyphName): glyphName is string => !!glyphName)
-        );
-        const drawingKeys = new Set(
-            remoteEntries
-                .filter((entry) => entry.undoScope === 'layer')
-                .map((entry) => {
-                    const glyphName = this._deriveGlyphNameFromPath(entry.path);
-                    const drawingId = this._deriveDrawingIdFromPath(entry.path);
-                    return glyphName && drawingId
-                        ? getDrawingManagerKey(glyphName, drawingId)
-                        : null;
-                })
-                .filter((key): key is string => !!key)
-        );
-
-        if (remoteEntries.some((entry) => entry.undoScope === 'font')) {
-            return FONT_EDIT_ORIGIN;
-        }
-        // Composite/dependent drawing packets keep the originating drawing's
-        // edit origin rather than FONT_EDIT_ORIGIN.
-        if (
-            remoteEntries.some((entry) => entry.undoScope === 'layer') &&
-            !remoteEntries.some((entry) => entry.undoScope === 'glyph')
-        ) {
-            const originating = remoteEntries.find(
-                (entry) =>
-                    !!entry.originatingGlyphName && !!entry.originatingLayerId
-            );
-            if (
-                originating?.originatingGlyphName &&
-                originating.originatingLayerId
-            ) {
-                return getDrawingEditOrigin(
-                    originating.originatingGlyphName,
-                    originating.originatingLayerId
-                );
-            }
-        }
-        if (drawingKeys.size === 1 && glyphNames.size === 1) {
-            const entry =
-                targetItem ??
-                remoteEntries.find(
-                    (candidate) =>
-                        !!this._deriveGlyphNameFromPath(candidate.path) &&
-                        !!this._deriveDrawingIdFromPath(candidate.path)
-                );
-            if (entry) {
-                const glyphName = this._deriveGlyphNameFromPath(entry.path);
-                const drawingId = this._deriveDrawingIdFromPath(entry.path);
-                if (glyphName && drawingId) {
-                    return getDrawingEditOrigin(glyphName, drawingId);
-                }
-            }
-        }
-        if (glyphNames.size === 1) {
-            return GLYPH_EDIT_ORIGIN;
-        }
-        return FONT_EDIT_ORIGIN;
     }
 
     private _getRemoteDrawingSyncScopes(
@@ -12559,27 +14650,12 @@ export class PatchSyncEngine {
 
     private _applyHistoryItem(
         item: HistoryStackItem,
-        direction: 'undo' | 'redo'
+        direction: 'undo' | 'redo',
+        prepared: PreparedHistoryReplay,
+        committed: Array<[string, ChangeLogEntry[]]>
     ): WorkerReplayTarget[] {
-        const resettleDerivedDrawings =
-            shouldResettleDerivedDrawingsOnHistoryReplay(
-                item,
-                !!this._getResettleFontModel()
-            );
-        const orderedEntries = (
-            direction === 'undo' ? [...item.entries].reverse() : item.entries
-        ).filter(isReplayableHistoryEntry);
-        const replayEntries = resettleDerivedDrawings
-            ? orderedEntries.filter(
-                  (entry) =>
-                      !isDerivedDrawingChangePath(
-                          entry.path,
-                          item.originatingGlyphName
-                      )
-              )
-            : orderedEntries;
-
-        this._replayHistoryEntries(replayEntries, direction);
+        const { resettleDerivedDrawings } = prepared;
+        this._replayHistoryEntries(prepared, direction, committed);
         const settled = resettleDerivedDrawings
             ? this._resettleDerivedDrawingsAfterOriginReplay(item)
             : this._reflowDependentsAfterReplay(item);
@@ -12671,44 +14747,392 @@ export class PatchSyncEngine {
         return recomposed;
     }
 
-    /** Apply already-ordered forward entries in the given direction, one Yjs transaction per document. */
+    /**
+     * Resolve and check everything an undo or redo of `item` writes, before
+     * the history moves: the entries it replays, one bucket per document
+     * (font-core first), every document resident and writable, and every
+     * value one a drawing may hold. Returns null when a document is not
+     * held here (the replay is refused, nothing written); throws when one
+     * is broken or a value is invalid.
+     */
+    private _prepareHistoryReplay(
+        item: HistoryStackItem,
+        direction: 'undo' | 'redo'
+    ): PreparedHistoryReplay | null {
+        const resettleDerivedDrawings =
+            shouldResettleDerivedDrawingsOnHistoryReplay(
+                item,
+                !!this._getResettleFontModel()
+            );
+        const orderedEntries = (
+            direction === 'undo' ? [...item.entries].reverse() : item.entries
+        ).filter(isReplayableHistoryEntry);
+        const replayEntries = resettleDerivedDrawings
+            ? orderedEntries.filter(
+                  (entry) =>
+                      !isDerivedDrawingChangePath(
+                          entry.path,
+                          item.originatingGlyphName
+                      )
+              )
+            : orderedEntries;
+        const itemRenames = this._collectGlyphRenamesFromEntries(replayEntries);
+        // An undo maps names back before it resolves documents; done here on
+        // a copy of the index, which is then restored untouched.
+        const nameMaps = this._snapshotGlyphNameMaps();
+        const entriesByDocument = new Map<string, ChangeLogEntry[]>();
+        const reached = new Set<string>();
+        try {
+            if (direction === 'undo') {
+                this._applyGlyphNameRemapsFromEntries(replayEntries, direction);
+            }
+            for (const entry of replayEntries) {
+                const documentId = this._documentIdForHistoryEntry(
+                    entry,
+                    itemRenames
+                );
+                const bucket = entriesByDocument.get(documentId) || [];
+                bucket.push(entry);
+                entriesByDocument.set(documentId, bucket);
+                for (const reachedId of this._documentIdsForHistoryEntry(
+                    entry,
+                    itemRenames
+                )) {
+                    reached.add(reachedId);
+                }
+            }
+        } finally {
+            this._restoreGlyphNameMaps(nameMaps);
+        }
+        // Font-core goes first: a drawing restored by undo (say of “Remove
+        // station”) must find its station back in font-core.
+        const buckets = [...entriesByDocument].sort(
+            ([a], [b]) =>
+                Number(b === FONT_CORE_DOCUMENT_ID) -
+                Number(a === FONT_CORE_DOCUMENT_ID)
+        );
+        const documentIds = [
+            ...new Set([...entriesByDocument.keys(), ...reached])
+        ];
+        const missing = documentIds.filter(
+            (documentId) => !this._docForId(documentId)
+        );
+        if (missing.length) {
+            console.warn(
+                `Skipping ${direction}: history item ${item.id} writes ${missing.join(', ')}, which this window does not hold`
+            );
+            this._announceHistoryReplayProblem({
+                kind: 'blocked',
+                reason: 'document-not-loaded',
+                historyAction: direction,
+                historyItemId: item.id,
+                documentIds: missing
+            });
+            return null;
+        }
+        for (const documentId of documentIds) {
+            assertDocumentWritable(
+                this._docForId(documentId),
+                documentId,
+                this._brokenScope
+            );
+        }
+        for (const entry of replayEntries) {
+            this._assertHistoryReplayValue(entry, direction);
+        }
+        return { replayEntries, resettleDerivedDrawings, itemRenames, buckets };
+    }
+
+    /**
+     * A drawing never loses its id, width or station: a replay value that
+     * would delete one is a broken history entry, refused before anything
+     * is written.
+     */
+    private _assertHistoryReplayValue(
+        entry: ChangeLogEntry,
+        direction: 'undo' | 'redo'
+    ): void {
+        if (!entry.path || entry.path === 'font') {
+            return;
+        }
+        const path = this._toYDocPath(this._parseEntryPath(entry.path));
+        if (
+            path.length >= 5 &&
+            path[0] === 'glyphs' &&
+            path[2] === 'layers' &&
+            (RESTING_DRAWING_IDENTITY_KEYS as readonly string[]).includes(
+                String(path[4])
+            )
+        ) {
+            const replayValue = this._getHistoryReplayValue(entry, direction);
+            if (replayValue === null || replayValue === undefined) {
+                throw new DrawingInvariantError(
+                    String(path[3]),
+                    `would lose ${String(path[4])} in ${direction}`,
+                    `glyph ${String(path[1])}`
+                );
+            }
+        }
+    }
+
+    /** The glyph name index, copied, so a replay can put it back. */
+    private _snapshotGlyphNameMaps(): GlyphNameMapsSnapshot {
+        return {
+            idByName: new Map(this._glyphIdByName),
+            nameById: new Map(this._glyphNameById),
+            retiredIdByName: new Map(this._retiredGlyphIdByName),
+            removedNameById: new Map(this._removedGlyphNameById),
+            pendingDestroyedIds: new Set(this._pendingDestroyedGlyphIds)
+        };
+    }
+
+    private _restoreGlyphNameMaps(snapshot: GlyphNameMapsSnapshot): void {
+        const refill = <K, V>(target: Map<K, V>, source: Map<K, V>): void => {
+            target.clear();
+            for (const [key, value] of source) target.set(key, value);
+        };
+        refill(this._glyphIdByName, snapshot.idByName);
+        refill(this._glyphNameById, snapshot.nameById);
+        refill(this._retiredGlyphIdByName, snapshot.retiredIdByName);
+        refill(this._removedGlyphNameById, snapshot.removedNameById);
+        this._pendingDestroyedGlyphIds.clear();
+        for (const glyphId of snapshot.pendingDestroyedIds) {
+            this._pendingDestroyedGlyphIds.add(glyphId);
+        }
+    }
+
+    /**
+     * An undo or redo threw after its checks, part way through its writes.
+     * The history does not move: its entry is taken out. The documents it
+     * already wrote get the opposite replay, so they hold what they held
+     * before; the name index is put back. Everything both wrote is sent now
+     * (Yjs keeps every operation, and later edits build on them), described
+     * as whole documents since no history entry names it. A document whose
+     * own write threw part way was marked broken by `_transactOrMarkBroken`.
+     */
+    private _abandonHistoryReplay(
+        replay: {
+            historyAction: 'undo' | 'redo';
+            historyItemId: string;
+            prepared: PreparedHistoryReplay;
+            committed: Array<[string, ChangeLogEntry[]]>;
+            nameMaps: GlyphNameMapsSnapshot;
+            loggedEntry: ChangeLogEntry | undefined;
+            loggedEntryIndex: number;
+            baselines: Map<string, Uint8Array>;
+            dependentTargets: WorkerReplayTarget[];
+        },
+        failure: unknown
+    ): void {
+        const reverse = replay.historyAction === 'undo' ? 'redo' : 'undo';
+        const notRolledBack: string[] = [];
+        for (const [documentId, entries] of [...replay.committed].reverse()) {
+            const doc = this._docForId(documentId);
+            if (
+                !doc ||
+                isDocumentBroken(doc) ||
+                this.isDocumentIdBroken(documentId)
+            ) {
+                notRolledBack.push(documentId);
+                continue;
+            }
+            try {
+                this._transactOrMarkBroken(
+                    doc,
+                    documentId,
+                    () => {
+                        for (const entry of [...entries].reverse()) {
+                            this._applyHistoryReplayEntry(
+                                entry,
+                                reverse,
+                                replay.prepared.itemRenames
+                            );
+                        }
+                    },
+                    HISTORY_REPLAY_ORIGIN
+                );
+            } catch (error) {
+                notRolledBack.push(documentId);
+                console.error(
+                    `Could not take back the ${replay.historyAction} of ${documentId}:`,
+                    error
+                );
+            }
+        }
+        this._restoreGlyphNameMaps(replay.nameMaps);
+        let takenBackHistoryItemId: string | undefined;
+        if (
+            replay.loggedEntry &&
+            this._changeLog[replay.loggedEntryIndex] === replay.loggedEntry
+        ) {
+            this._removeChangeLogEntriesAt([replay.loggedEntryIndex]);
+            takenBackHistoryItemId = replay.loggedEntry.historyItemId;
+        }
+        try {
+            this._syncRemoteJsonFromYDoc(replay.prepared.replayEntries);
+            // Derived drawings the replay already rewrote keep that write
+            // (it is sent below); the font shows what the documents hold.
+            if (replay.dependentTargets.length) {
+                this._syncJsonFromYDoc(replay.dependentTargets);
+            }
+        } catch (error) {
+            console.error(
+                `Could not refresh the font after a failed ${replay.historyAction}:`,
+                error
+            );
+        }
+        if (!this._isApplyingRemote) {
+            try {
+                this._emitCanonicalLocalUpdatesSince(replay.baselines);
+            } catch (error) {
+                console.error(
+                    `Could not send what a failed ${replay.historyAction} wrote:`,
+                    error
+                );
+            }
+        }
+        console.error(
+            `${replay.historyAction} of history item ${replay.historyItemId} failed; the history did not move`,
+            failure
+        );
+        this._announceHistoryReplayProblem({
+            kind: 'failed',
+            historyAction: replay.historyAction,
+            historyItemId: replay.historyItemId,
+            reason:
+                failure instanceof Error ? failure.message : String(failure),
+            documentIdsNotRolledBack: notRolledBack,
+            ...(takenBackHistoryItemId ? { takenBackHistoryItemId } : {})
+        });
+    }
+
+    /**
+     * Take out change-log entries at `indices`. A cursor past a removed
+     * entry steps back over it, so the next entry is neither skipped nor
+     * sent twice. Listeners hear of it once.
+     */
+    private _removeChangeLogEntriesAt(indices: number[]): void {
+        const sorted = [...new Set(indices)]
+            .filter((index) => index >= 0 && index < this._changeLog.length)
+            .sort((left, right) => right - left);
+        if (!sorted.length) {
+            return;
+        }
+        for (const index of sorted) {
+            this._changeLog.splice(index, 1);
+            if (this._lastLocalUpdateLogIndex > index) {
+                this._lastLocalUpdateLogIndex -= 1;
+            }
+            if (this._lastBroadcastLogIndex > index) {
+                this._lastBroadcastLogIndex -= 1;
+            }
+        }
+        this._notifyChangeLogListeners();
+    }
+
+    /**
+     * Another window's undo or redo failed and was taken back there; take
+     * the entries it relayed for it out of this window's change log too, so
+     * every window's history matches. The author holds one control entry
+     * with its own history item id (`entryHistoryItemId`); the replay's
+     * packets reach this window as entries that carry the replayed item's
+     * id instead (the target), one per change and document. Either id
+     * matches, with the same action, target and author window; without an
+     * entry id, any id does. The newest match is taken with the entries of
+     * the same id and author before it, up to the author's previous other
+     * entry (another undo or redo of the same target always has a redo or
+     * undo between). Returns false when this window holds no such entry
+     * (nothing is inferred or removed then).
+     */
+    takeBackHistoryEntry(takeBack: HistoryEntryTakeBack): boolean {
+        // The author names ids as it holds them; this window logged the
+        // relayed entries with them namespaced like every relayed entry
+        // (`createChangeLogEntriesFromCollaborationMessageEnvelope`): the
+        // author's own ids get its window prefix, and an id this window
+        // created comes back without its prefix.
+        const asLogged = (id: string): string => {
+            if (takeBack.windowId === this.windowId) {
+                return id;
+            }
+            const ownPrefix = `${this.windowId}:`;
+            return id.startsWith(ownPrefix)
+                ? id.slice(ownPrefix.length)
+                : `${takeBack.windowId}:${id}`;
+        };
+        const targetHistoryItemId = asLogged(takeBack.targetHistoryItemId);
+        const acceptedIds = takeBack.entryHistoryItemId
+            ? new Set([
+                  asLogged(takeBack.entryHistoryItemId),
+                  targetHistoryItemId
+              ])
+            : null;
+        const matches = (entry: ChangeLogEntry): boolean =>
+            entry.historyAction === takeBack.historyAction &&
+            entry.targetHistoryItemId === targetHistoryItemId &&
+            entry.windowId === takeBack.windowId &&
+            (!acceptedIds || acceptedIds.has(entry.historyItemId));
+        let newest = -1;
+        for (let index = this._changeLog.length - 1; index >= 0; index--) {
+            if (matches(this._changeLog[index])) {
+                newest = index;
+                break;
+            }
+        }
+        if (newest < 0) {
+            return false;
+        }
+        const runId = this._changeLog[newest].historyItemId;
+        const indices: number[] = [newest];
+        for (let index = newest - 1; index >= 0; index--) {
+            const entry = this._changeLog[index];
+            if (entry.windowId !== takeBack.windowId) {
+                continue;
+            }
+            if (!matches(entry) || entry.historyItemId !== runId) {
+                break;
+            }
+            indices.push(index);
+        }
+        this._removeChangeLogEntriesAt(indices);
+        return true;
+    }
+
+    /** Apply a prepared replay in the given direction, one Yjs transaction per document. */
     private _replayHistoryEntries(
-        replayEntries: ChangeLogEntry[],
+        prepared: PreparedHistoryReplay,
         direction: 'undo' | 'redo',
+        committed: Array<[string, ChangeLogEntry[]]>,
         collectDeletedContent = false
     ): void {
-        const itemRenames = this._collectGlyphRenamesFromEntries(replayEntries);
+        const { replayEntries, itemRenames } = prepared;
         if (direction === 'undo') {
             this._applyGlyphNameRemapsFromEntries(replayEntries, direction);
         }
-        const entriesByDocument = new Map<string, ChangeLogEntry[]>();
-        for (const entry of replayEntries) {
-            const documentId = this._documentIdForHistoryEntry(
-                entry,
-                itemRenames
-            );
-            const bucket = entriesByDocument.get(documentId) || [];
-            bucket.push(entry);
-            entriesByDocument.set(documentId, bucket);
-        }
-        for (const [documentId, entries] of entriesByDocument) {
-            const doc = this._docForId(documentId) || this.yDoc;
+        for (const [documentId, entries] of prepared.buckets) {
+            const doc = this._requireDocForId(documentId);
+            assertDocumentWritable(doc, documentId, this._brokenScope);
             const keepGc = doc.gc;
             // Yjs GCs a transaction's deletions at cleanup when doc.gc is set.
             doc.gc = keepGc || collectDeletedContent;
             try {
-                doc.transact(() => {
-                    for (const entry of entries) {
-                        this._applyHistoryReplayEntry(
-                            entry,
-                            direction,
-                            itemRenames
-                        );
-                    }
-                }, HISTORY_REPLAY_ORIGIN);
+                this._transactOrMarkBroken(
+                    doc,
+                    documentId,
+                    () => {
+                        for (const entry of entries) {
+                            this._applyHistoryReplayEntry(
+                                entry,
+                                direction,
+                                itemRenames
+                            );
+                        }
+                    },
+                    HISTORY_REPLAY_ORIGIN
+                );
             } finally {
                 doc.gc = keepGc;
             }
+            committed.push([documentId, entries]);
         }
         if (direction === 'redo') {
             this._applyGlyphNameRemapsFromEntries(replayEntries, direction);
@@ -12746,6 +15170,28 @@ export class PatchSyncEngine {
         }
         if (this._isGlyphRootPath(path) && replayValue) {
             this._applyGlyphSnapshot(String(path[1]), replayValue);
+            return;
+        }
+        if (
+            path.length >= 5 &&
+            path[0] === 'glyphs' &&
+            path[2] === 'layers' &&
+            (RESTING_DRAWING_IDENTITY_KEYS as readonly string[]).includes(
+                String(path[4])
+            )
+        ) {
+            // A drawing never loses its id, width or station: undo and redo
+            // write the value the entry recorded for that side, whatever the
+            // entry's op. A replay value that would delete one is a broken
+            // history entry.
+            if (replayValue === null || replayValue === undefined) {
+                throw new DrawingInvariantError(
+                    String(path[3]),
+                    `would lose ${String(path[4])} in ${direction}`,
+                    `glyph ${String(path[1])}`
+                );
+            }
+            this._setRoutedYPath(path, replayValue);
             return;
         }
         if (this._isDrawingRootPath(path)) {
@@ -13049,13 +15495,9 @@ export class PatchSyncEngine {
             existingDrawingMap instanceof Y.Map &&
             !Object.prototype.hasOwnProperty.call(prepared, 'shapes')
         ) {
-            try {
-                const yShapes = readDrawingGeometry(existingDrawingMap);
-                if (yShapes && yShapes.length > 0) {
-                    prepared = { ...prepared, shapes: yShapes };
-                }
-            } catch {
-                // Keep the prepared snapshot if packed geometry cannot be read.
+            const yShapes = readDrawingGeometry(existingDrawingMap);
+            if (yShapes && yShapes.length > 0) {
+                prepared = { ...prepared, shapes: yShapes };
             }
         }
         return this._normalizeDrawingSnapshot(
@@ -13122,12 +15564,29 @@ export class PatchSyncEngine {
         for (const path of new Set(paths)) {
             if (path) {
                 this._collaboratorTouches.push({ seq, path });
+                const glyphName = drawingSetChangeGlyphName(path);
+                if (glyphName) {
+                    this._collaboratorDrawingSetTouches.push({
+                        seq,
+                        glyphName
+                    });
+                }
             }
         }
         if (this._collaboratorTouches.length > MAX_COLLABORATOR_TOUCHES) {
             this._collaboratorTouches.splice(
                 0,
                 this._collaboratorTouches.length - MAX_COLLABORATOR_TOUCHES
+            );
+        }
+        if (
+            this._collaboratorDrawingSetTouches.length >
+            MAX_COLLABORATOR_TOUCHES
+        ) {
+            this._collaboratorDrawingSetTouches.splice(
+                0,
+                this._collaboratorDrawingSetTouches.length -
+                    MAX_COLLABORATOR_TOUCHES
             );
         }
     }
@@ -13144,15 +15603,37 @@ export class PatchSyncEngine {
         ) {
             // The change log was reset; its indexes no longer line up.
             this._collaboratorTouches = [];
+            this._collaboratorDrawingSetTouches = [];
             return false;
         }
         const paths = item.entries
             .map((entry) => String(entry.path || ''))
             .filter(Boolean);
-        return this._collaboratorTouches.some(
-            (touch) =>
-                touch.seq > item.transitionSeq &&
-                paths.some((path) => historyPathsOverlap(path, touch.path))
+        if (
+            this._collaboratorTouches.some(
+                (touch) =>
+                    touch.seq > item.transitionSeq &&
+                    paths.some((path) => historyPathsOverlap(path, touch.path))
+            )
+        ) {
+            return true;
+        }
+        // A drawing a collaborator added, removed or replaced later was made
+        // to match this glyph’s drawings as they were then. Replaying a
+        // structural edit of the other drawings would change them but not
+        // it, and the glyph would no longer interpolate.
+        const structurallyChangedGlyphs = new Set(
+            item.entries
+                .filter(historyEntryChangesInterpolationStructure)
+                .map((entry) => historyPathSegments(String(entry.path))[1])
+        );
+        return (
+            structurallyChangedGlyphs.size > 0 &&
+            this._collaboratorDrawingSetTouches.some(
+                (touch) =>
+                    touch.seq > item.transitionSeq &&
+                    structurallyChangedGlyphs.has(touch.glyphName)
+            )
         );
     }
 
@@ -13464,6 +15945,11 @@ export class PatchSyncEngine {
             mode: 'replace',
             context: 'Y.Doc write'
         });
+        this._assertDrawingInvariants(
+            typeof sanitizedRecord.id === 'string' ? sanitizedRecord.id : '',
+            sanitizedRecord,
+            'Y.Doc write'
+        );
         const nextKeys = new Set(Object.keys(sanitizedRecord));
         const indexedStorageKeysToKeep = new Set<string>();
         for (const key of nextKeys) {
@@ -13486,6 +15972,12 @@ export class PatchSyncEngine {
             ) {
                 return;
             }
+            if (key === DRAWING_FORMAT_SPECIFIC_KEY) {
+                // Emptied, never deleted: the map is created with the
+                // drawing so collaborators share it.
+                writeDrawingFormatSpecific(drawingMap, undefined);
+                return;
+            }
 
             drawingMap.delete(key);
         });
@@ -13499,6 +15991,10 @@ export class PatchSyncEngine {
                 writeDrawingGeometry(drawingMap, value, toYType);
                 continue;
             }
+            if (key === DRAWING_FORMAT_SPECIFIC_KEY) {
+                writeDrawingFormatSpecific(drawingMap, value);
+                continue;
+            }
             const mapping = INDEXED_MAP_KEYS[key];
             if (mapping) {
                 drawingMap.delete(key);
@@ -13506,11 +16002,35 @@ export class PatchSyncEngine {
                     applyIndexedMapArrayToYMap(drawingMap, key, value);
                     continue;
                 }
-                drawingMap.delete(mapping.byId);
-                drawingMap.delete(mapping.order);
+                if (
+                    (key === 'anchors' || key === 'guides') &&
+                    (value === null || value === undefined)
+                ) {
+                    // The keyed maps are created with the drawing and never
+                    // deleted: a map created again later races a
+                    // collaborator's. Only the entries go.
+                    applyIndexedMapArrayToYMap(drawingMap, key, []);
+                    continue;
+                }
+                throw new DrawingInvariantError(
+                    typeof sanitizedRecord.id === 'string'
+                        ? sanitizedRecord.id
+                        : '',
+                    `has ${key} that are not a list`,
+                    'Y.Doc write'
+                );
             }
 
             this._replaceYMapEntry(drawingMap, key, value);
+        }
+        // Both callers write a whole drawing (the model's drawing, or a
+        // snapshot normalized over the stored one), and Babelfont leaves an
+        // empty list out: a drawing without anchors or guides has none. The
+        // keyed maps stay, emptied, like an explicit empty list.
+        for (const key of ['anchors', 'guides'] as const) {
+            if (!Object.prototype.hasOwnProperty.call(sanitizedRecord, key)) {
+                applyIndexedMapArrayToYMap(drawingMap, key, []);
+            }
         }
     }
 
@@ -13526,9 +16046,16 @@ export class PatchSyncEngine {
         const glyphRecord = glyphSnapshot as Record<string, unknown>;
         const glyphId = ensureImmutableGlyphId(glyphRecord);
         this._ensureGlyphDoc(glyphId, glyphName);
-        let glyphMap = this._glyphMapForName(glyphName);
+        const glyphMap = this._glyphMapForName(glyphName);
         if (!(glyphMap instanceof Y.Map)) {
-            return;
+            throw new Error(
+                `[PatchSyncEngine] Refusing the snapshot of glyph ${glyphName}: its document has no glyph map`
+            );
+        }
+        // A glyph this snapshot creates gets its drawings map now, in the
+        // same transaction as its name, so its first packet is whole.
+        if (glyphMap.size === 0) {
+            createGlyphDrawingsMap(glyphMap);
         }
 
         const existingGlyphSnapshot =
@@ -13540,54 +16067,72 @@ export class PatchSyncEngine {
             glyphSnapshot,
             existingGlyphSnapshot
         ) as Record<string, unknown>;
-        if (!Object.prototype.hasOwnProperty.call(glyphJson, 'category')) {
-            const existingCategory = (
-                existingGlyphSnapshot as { category?: unknown } | undefined
-            )?.category;
-            if (typeof existingCategory === 'string' && existingCategory) {
-                glyphJson.category = existingCategory;
-            }
+        // Every glyph writer stores a category (Rust always serializes it,
+        // and glyphs created in the editor get one). A snapshot is merged
+        // over the stored glyph above, so a glyph that still has none lost
+        // it; it is refused, never filled in.
+        if (typeof glyphJson.category !== 'string' || !glyphJson.category) {
+            throw new Error(
+                `[PatchSyncEngine] Refusing the snapshot of glyph ${glyphName}: it has no category`
+            );
         }
         for (const [gk, gv] of Object.entries(glyphJson)) {
             if (gk === 'layers' && Array.isArray(gv)) {
-                let drawingsMap = glyphMap.get('layers') as
-                    Y.Map<unknown> | undefined;
-                if (!(drawingsMap instanceof Y.Map)) {
-                    drawingsMap = new Y.Map<unknown>();
-                    glyphMap.set('layers', drawingsMap);
-                }
+                // Created with the glyph; any other state is refused.
+                const drawingsMap = ensureGlyphDrawingsMap(glyphMap);
 
                 const nextDrawingIds = new Set<string>();
-                for (const drawingJson of gv as Record<string, unknown>[]) {
-                    const drawingId = (drawingJson.id as string) ?? '';
+                // Every drawing is normalized and checked before any map is
+                // written, so a bad one leaves the glyph as it was.
+                const normalizedDrawings = (
+                    gv as Record<string, unknown>[]
+                ).map((drawingJson) => {
+                    const drawingId =
+                        typeof drawingJson.id === 'string'
+                            ? drawingJson.id
+                            : '';
                     if (!drawingId) {
-                        continue;
+                        throw new DrawingInvariantError(
+                            '',
+                            'has no id',
+                            `glyph snapshot ${glyphName}`
+                        );
                     }
-                    nextDrawingIds.add(drawingId);
-                    // Patch the existing drawingMap in place so the snapshot
-                    // produces minimal Yjs deltas.
-                    let drawingMap = drawingsMap.get(drawingId) as
-                        Y.Map<unknown> | undefined;
-                    if (!(drawingMap instanceof Y.Map)) {
-                        drawingMap = new Y.Map<unknown>();
-                        drawingsMap.set(drawingId, drawingMap);
-                    }
-                    const normalizedDrawingJson =
-                        this._normalizeDrawingSnapshot(
+                    const existing = drawingsMap.get(drawingId);
+                    return {
+                        drawingId,
+                        existing:
+                            existing instanceof Y.Map ? existing : undefined,
+                        json: this._normalizeDrawingSnapshot(
                             drawingId,
                             drawingJson,
-                            fromYType(drawingMap)
-                        ) as Record<string, unknown>;
-                    this._replaceDrawingMapContents(
-                        drawingMap,
-                        normalizedDrawingJson
-                    );
+                            existing instanceof Y.Map
+                                ? fromYType(existing)
+                                : undefined
+                        ) as Record<string, unknown>
+                    };
+                });
+                for (const {
+                    drawingId,
+                    existing,
+                    json
+                } of normalizedDrawings) {
+                    nextDrawingIds.add(drawingId);
+                    if (existing) {
+                        // Patch the existing drawing in place so the
+                        // snapshot produces minimal Yjs deltas.
+                        this._replaceDrawingMapContents(existing, json);
+                        continue;
+                    }
+                    // A new drawing is built whole while detached, then
+                    // inserted, so it never exists half-written.
+                    drawingsMap.set(drawingId, drawingToYMap(json));
                 }
 
                 // Remove drawings that are no longer in the snapshot
                 drawingsMap.forEach((_value: unknown, key: string) => {
                     if (!nextDrawingIds.has(key)) {
-                        drawingsMap?.delete(key);
+                        drawingsMap.delete(key);
                     }
                 });
                 setYPath(glyphMap, ['layerOrder'], Array.from(nextDrawingIds));
@@ -13597,14 +16142,15 @@ export class PatchSyncEngine {
             this._replaceYMapEntry(glyphMap, gk, gv);
         }
 
-        // Remove glyph-level keys no longer in the snapshot
+        // Remove glyph-level keys no longer in the snapshot. The drawings
+        // map and its order are created once, with the glyph, and never
+        // deleted: a snapshot without `layers` leaves the drawings alone.
         const glyphKeys = new Set(Object.keys(glyphJson));
-        if (Array.isArray(glyphJson.layers)) {
-            glyphKeys.add('layerOrder');
-        }
+        glyphKeys.add('layers');
+        glyphKeys.add('layerOrder');
         glyphMap.forEach((_value: unknown, key: string) => {
             if (!glyphKeys.has(key)) {
-                glyphMap?.delete(key);
+                glyphMap.delete(key);
             }
         });
     }
@@ -13833,12 +16379,11 @@ export class PatchSyncEngine {
                             ? String(drawing.id || '')
                             : '';
                     if (!drawingId) {
-                        if (options?.strictDrawings) {
-                            throw new Error(
-                                'malformed glyph snapshot: drawing missing id'
-                            );
-                        }
-                        return null;
+                        throw new DrawingInvariantError(
+                            '',
+                            'has no id',
+                            'glyph snapshot'
+                        );
                     }
                     return this._normalizeDrawingSnapshot(
                         drawingId,
@@ -13846,7 +16391,9 @@ export class PatchSyncEngine {
                         ignoreExisting
                             ? undefined
                             : existingDrawingsById.get(drawingId),
-                        !ignoreExisting
+                        !ignoreExisting,
+                        undefined,
+                        options?.strictDrawings === true
                     );
                 })
                 .filter(
@@ -13883,11 +16430,16 @@ export class PatchSyncEngine {
                         string,
                         unknown
                     >;
-                    if (
-                        typeof drawingRecord.id !== 'string' ||
-                        !drawingRecord.id.length
-                    ) {
-                        drawingRecord.id = drawingId;
+                    // The key never stands in for a missing id.
+                    if (drawingRecord.id !== drawingId) {
+                        throw new DrawingInvariantError(
+                            drawingId,
+                            typeof drawingRecord.id === 'string' &&
+                                drawingRecord.id.length
+                                ? `carries the id ${drawingRecord.id}`
+                                : 'has no id',
+                            'glyph drawings'
+                        );
                     }
                     return drawingRecord;
                 });
@@ -13998,30 +16550,8 @@ export class PatchSyncEngine {
         }
     }
 
-    private _getKnownStationIds(): Set<string> {
-        const stationIds = new Set<string>();
-        const stations = (this._fontJson as Unsafe)?.masters;
-        if (!Array.isArray(stations)) {
-            return stationIds;
-        }
-
-        for (const station of stations) {
-            const stationId =
-                station && typeof station === 'object'
-                    ? String((station as Record<string, unknown>).id || '')
-                    : '';
-            if (stationId) {
-                stationIds.add(stationId);
-            }
-        }
-
-        return stationIds;
-    }
-
     private _normalizeDrawingStationSnapshot(
-        drawingId: string,
-        drawingRecord: Record<string, unknown>,
-        existingDrawingRecord: Record<string, unknown>
+        drawingRecord: Record<string, unknown>
     ): void {
         const normalizeStationValue = (
             stationValue: unknown
@@ -14120,29 +16650,83 @@ export class PatchSyncEngine {
 
         const normalizedStation = normalizeStationValue(drawingRecord.master);
 
+        // A station link the drawing does not carry is never taken from the
+        // stored drawing: a whole drawing without one, or a delta that
+        // writes a missing or unreadable one, is left as it is and refused
+        // by the invariant checks that follow. A delta that does not touch
+        // `master` never gets here.
         if (normalizedStation) {
             drawingRecord.master = normalizedStation;
-        } else {
-            const existingStation = normalizeStationValue(
-                existingDrawingRecord.master
-            );
-            if (existingStation) {
-                drawingRecord.master = existingStation;
-            } else if (this._getKnownStationIds().has(drawingId)) {
-                drawingRecord.master = {
-                    type: 'DefaultForMaster',
-                    master: drawingId
-                };
-            }
         }
     }
 
+    /**
+     * Every drawing has a finite width, a non-empty string id equal to its
+     * key, and a station reference (`master`) naming a station by id or
+     * marking it a free drawing. A background drawing belongs to the drawing
+     * it is behind and does not interpolate: its reference must be there,
+     * but imported fonts leave its station id empty. Throws
+     * DrawingInvariantError otherwise.
+     */
+    private _assertDrawingInvariants(
+        drawingId: string,
+        record: Record<string, unknown>,
+        context: string
+    ): void {
+        if (
+            typeof record.width !== 'number' ||
+            !Number.isFinite(record.width)
+        ) {
+            throw new DrawingInvariantError(
+                drawingId,
+                'has no finite width',
+                context
+            );
+        }
+        if (typeof record.id !== 'string' || !record.id.length) {
+            throw new DrawingInvariantError(drawingId, 'has no id', context);
+        }
+        if (record.id !== drawingId) {
+            throw new DrawingInvariantError(
+                drawingId,
+                `carries the id ${record.id}`,
+                context
+            );
+        }
+        // One rule with the Y.Doc write gate: a background drawing may leave
+        // its station id empty, every other link names its type and station.
+        const isBackground = record.is_background === true;
+        const violation = describeDrawingStationViolation(record.master, {
+            isBackground
+        });
+        if (violation) {
+            throw new DrawingInvariantError(drawingId, violation, context);
+        }
+        // Whether the station exists is not checked here: it is a fact of
+        // font-core, and adding or removing a station reaches font-core and
+        // each glyph document in separate packets (undo replays them one
+        // document at a time too), so a glyph document can hold a drawing
+        // whose station is not there yet, or not any more. Only an entry
+        // point that makes a new drawing from this window’s own station
+        // list (Glyph.addDrawing) checks it.
+    }
+
+    /**
+     * `fromStore`: the snapshot is a whole drawing read from its Yjs
+     * document (a projection into the model). Every top-level key then comes
+     * from it alone: a key the stored drawing no longer has (an undo, redo
+     * or remote update deleted it) is gone from the result too, and nothing
+     * is taken from `existingDrawingSnapshot`. Runtime-only keys
+     * (RESTING_DRAWING_RUNTIME_KEYS) never rest in a drawing either way. A
+     * local write's partial JSON still merges with what is stored.
+     */
     private _normalizeDrawingSnapshot(
         drawingId: string,
         drawingSnapshot: unknown,
         existingDrawingSnapshot?: unknown,
         preserveMissingKeys = true,
-        isExistingFresh?: boolean
+        isExistingFresh?: boolean,
+        fromStore = false
     ): unknown {
         if (
             !drawingSnapshot ||
@@ -14150,6 +16734,10 @@ export class PatchSyncEngine {
             Array.isArray(drawingSnapshot)
         ) {
             return drawingSnapshot;
+        }
+        if (fromStore) {
+            preserveMissingKeys = false;
+            existingDrawingSnapshot = undefined;
         }
 
         const existingDrawingRecord =
@@ -14172,18 +16760,20 @@ export class PatchSyncEngine {
                   ...incomingDrawingRecord
               }
             : { ...incomingDrawingRecord };
-
-        if (
-            typeof mergedDrawingRecord.id !== 'string' ||
-            !mergedDrawingRecord.id.length
-        ) {
-            mergedDrawingRecord.id = drawingId;
+        // A drawing's identity comes from the incoming drawing alone, never
+        // from an older copy: a snapshot is a whole drawing, and one without
+        // its width, id or station is refused below, not patched up.
+        for (const key of RESTING_DRAWING_IDENTITY_KEYS as readonly string[]) {
+            if (incomingDrawingRecord[key] === undefined) {
+                delete mergedDrawingRecord[key];
+            }
         }
 
-        this._normalizeDrawingStationSnapshot(
+        this._normalizeDrawingStationSnapshot(mergedDrawingRecord);
+        this._assertDrawingInvariants(
             drawingId,
             mergedDrawingRecord,
-            existingDrawingRecord
+            'projection'
         );
 
         const drawingStation = mergedDrawingRecord.master as
@@ -14218,27 +16808,6 @@ export class PatchSyncEngine {
             }
         }
 
-        if (
-            typeof mergedDrawingRecord.width !== 'number' ||
-            !Number.isFinite(mergedDrawingRecord.width)
-        ) {
-            // A remote update can arrive before one it builds on: Yjs holds
-            // part of it back, and the drawing briefly has no valid width.
-            // Keep the width this window has until the rest arrives; a
-            // throw here stops the socket and the rest never comes.
-            const existingWidth = existingDrawingRecord.width;
-            if (
-                typeof existingWidth === 'number' &&
-                Number.isFinite(existingWidth)
-            ) {
-                mergedDrawingRecord.width = existingWidth;
-            } else {
-                throw new Error(
-                    `[PatchSyncEngine] Drawing ${drawingId} has invalid width; refusing to normalize malformed drawing snapshot.`
-                );
-            }
-        }
-
         for (const [key, value] of Object.entries(mergedDrawingRecord)) {
             if (value === undefined) {
                 delete mergedDrawingRecord[key];
@@ -14261,6 +16830,18 @@ export class PatchSyncEngine {
 
         if (mergedDrawingRecord.isInterpolated === false) {
             delete mergedDrawingRecord.isInterpolated;
+        }
+        // An empty format_specific is the drawing having no format-specific
+        // data, as the stored drawing says it (its empty map is read back
+        // as no key; see fromYDrawingMap). It is not a missing value.
+        const formatSpecific = mergedDrawingRecord[DRAWING_FORMAT_SPECIFIC_KEY];
+        if (
+            formatSpecific &&
+            typeof formatSpecific === 'object' &&
+            !Array.isArray(formatSpecific) &&
+            Object.keys(formatSpecific).length === 0
+        ) {
+            delete mergedDrawingRecord[DRAWING_FORMAT_SPECIFIC_KEY];
         }
 
         return toRestingDrawingJson(mergedDrawingRecord, {
@@ -14288,18 +16869,20 @@ export class PatchSyncEngine {
         drawingId: string,
         delta: unknown
     ): void {
+        const context = `drawing delta for glyph ${glyphName}`;
         const glyphMap = this._glyphMapForName(glyphName);
         if (!(glyphMap instanceof Y.Map)) {
-            return;
+            throw new Error(
+                `[PatchSyncEngine] Refusing a ${context}: the glyph has no document`
+            );
         }
 
-        const drawingsMap = ensureGlyphDrawingsMap(glyphMap);
-
         if (!delta || typeof delta !== 'object' || Array.isArray(delta)) {
-            console.warn(
-                `[PatchSyncEngine] Ignoring malformed drawing delta for ${glyphName}/${drawingId}; expected object payload.`
+            throw new DrawingInvariantError(
+                drawingId,
+                'got a delta that is not an object',
+                context
             );
-            return;
         }
 
         const deltaRecord = delta as Record<string, unknown>;
@@ -14310,38 +16893,22 @@ export class PatchSyncEngine {
             return;
         }
 
+        // The drawings map is created with the glyph; a glyph without one
+        // is refused.
+        const drawingsMap = ensureGlyphDrawingsMap(glyphMap);
         const existingDrawingValue = drawingsMap.get(drawingId);
-        let drawingMap =
+        const existingDrawingMap =
             existingDrawingValue instanceof Y.Map
                 ? existingDrawingValue
                 : undefined;
 
-        // Creating a new drawing from a sparse delta requires width and station.
-        if (!(drawingMap instanceof Y.Map)) {
-            const hasWidth =
-                typeof deltaRecord.width === 'number' &&
-                Number.isFinite(deltaRecord.width);
-            const hasStation =
-                !!deltaRecord.master &&
-                typeof deltaRecord.master === 'object' &&
-                !Array.isArray(deltaRecord.master);
-            if (!hasWidth || !hasStation) {
-                console.warn(
-                    `[PatchSyncEngine] Ignoring sparse drawing delta for missing ${glyphName}/${drawingId}; cannot create drawing root from sparse payload.`
-                );
-                return;
-            }
-            drawingMap = new Y.Map<unknown>();
-            drawingsMap.set(drawingId, drawingMap);
-        }
-
         // Read existing Y.Doc state for station normalization context.
-        const existingYDocRecord = fromYType(drawingMap) as Record<
-            string,
-            unknown
-        > | null;
+        const existingYDocRecord = existingDrawingMap
+            ? (fromYType(existingDrawingMap) as Record<string, unknown> | null)
+            : null;
 
-        // Clone the delta — _normalizeDrawingStationSnapshot mutates it.
+        // Clone the delta — _normalizeDrawingStationSnapshot mutates it. All
+        // normalizing happens here, before any map is created or written.
         const workingRecord = toRestingDrawingJson(
             cloneHistoryValue(deltaRecord) as Record<string, unknown>,
             {
@@ -14353,38 +16920,71 @@ export class PatchSyncEngine {
 
         // Normalize station if it changed.
         if ('master' in workingRecord) {
-            this._normalizeDrawingStationSnapshot(
-                drawingId,
-                workingRecord,
-                existingYDocRecord ?? {}
-            );
+            this._normalizeDrawingStationSnapshot(workingRecord);
         }
 
-        // Validate width if it's in the delta.
-        if ('width' in workingRecord) {
-            if (
-                typeof workingRecord.width !== 'number' ||
-                !Number.isFinite(workingRecord.width)
-            ) {
-                console.warn(
-                    `[PatchSyncEngine] Drawing delta for ${glyphName}/${drawingId} has invalid width; refusing to apply width.`
+        // An identity key in a delta is a value to write, never a deletion.
+        for (const key of RESTING_DRAWING_IDENTITY_KEYS as readonly string[]) {
+            if (!(key in workingRecord)) {
+                continue;
+            }
+            const value = workingRecord[key];
+            if (value === null || value === undefined) {
+                throw new DrawingInvariantError(
+                    drawingId,
+                    `would lose ${key}`,
+                    context
                 );
-                delete workingRecord.width;
             }
         }
-
-        // Validate station if it's in the delta.
-        if ('master' in workingRecord && !workingRecord.master) {
-            console.warn(
-                `[PatchSyncEngine] Drawing delta for ${glyphName}/${drawingId} has invalid station; refusing to apply station.`
+        if (
+            'width' in workingRecord &&
+            (typeof workingRecord.width !== 'number' ||
+                !Number.isFinite(workingRecord.width))
+        ) {
+            throw new DrawingInvariantError(
+                drawingId,
+                'got a width that is not a finite number',
+                context
             );
-            delete workingRecord.master;
         }
+        if ('id' in workingRecord && workingRecord.id !== drawingId) {
+            throw new DrawingInvariantError(
+                drawingId,
+                `got the id ${String(workingRecord.id)}`,
+                context
+            );
+        }
+
+        // The drawing after this delta must hold every identity key: a new
+        // drawing is checked whole before its map exists.
+        const resultingRecord: Record<string, unknown> = {
+            ...(existingYDocRecord ?? {}),
+            ...workingRecord
+        };
+        this._assertDrawingInvariants(drawingId, resultingRecord, context);
 
         // Strip isInterpolated if set to false in the delta.
         if (workingRecord.isInterpolated === false) {
             workingRecord.isInterpolated = null;
         }
+
+        if (!existingDrawingMap) {
+            // A new drawing is built whole while detached, then inserted,
+            // so it never exists half-written. A null key is simply absent.
+            drawingsMap.set(
+                drawingId,
+                drawingToYMap(
+                    Object.fromEntries(
+                        Object.entries(workingRecord).filter(
+                            ([, value]) => value !== null && value !== undefined
+                        )
+                    )
+                )
+            );
+            return;
+        }
+        const drawingMap = existingDrawingMap;
 
         for (const runtimeKey of RESTING_DRAWING_RUNTIME_KEYS) {
             drawingMap.delete(runtimeKey);
@@ -14393,18 +16993,22 @@ export class PatchSyncEngine {
         // Apply each delta key to the Y.Map.
         for (const [key, value] of Object.entries(workingRecord)) {
             if (value === null || value === undefined) {
-                if (
-                    (
-                        RESTING_DRAWING_IDENTITY_KEYS as readonly string[]
-                    ).includes(key)
-                ) {
-                    continue;
-                }
-                // For indexed-map keys, delete the *ById+*Order keys
-                // so downstream readers see the data as absent (not
-                // empty), preserving merge semantics.
                 if (key === 'shapes') {
                     writeDrawingGeometry(drawingMap, [], toYType);
+                    continue;
+                }
+                if (key === 'anchors' || key === 'guides') {
+                    // The keyed maps are created with the drawing and never
+                    // deleted: a map created again by a later first entry
+                    // races a collaborator's, and every entry in the map
+                    // that loses disappears. Only the entries go.
+                    applyIndexedMapArrayToYMap(drawingMap, key, []);
+                    continue;
+                }
+                if (key === DRAWING_FORMAT_SPECIFIC_KEY) {
+                    // Emptied, never deleted: the map is created with the
+                    // drawing so collaborators share it.
+                    writeDrawingFormatSpecific(drawingMap, null);
                     continue;
                 }
                 if (INDEXED_MAP_KEYS[key]) {
@@ -14426,6 +17030,10 @@ export class PatchSyncEngine {
                 }
                 if (key === 'shapes' && Array.isArray(value)) {
                     writeDrawingGeometry(drawingMap, value, toYType);
+                    continue;
+                }
+                if (key === DRAWING_FORMAT_SPECIFIC_KEY) {
+                    writeDrawingFormatSpecific(drawingMap, value);
                     continue;
                 }
 
@@ -14583,6 +17191,9 @@ export class PatchSyncEngine {
             workerReplayTargets: normalizeWorkerReplayTargets(
                 message.metadata.workerReplayTargets
             ),
+            ...(message.metadata.allGlyphsChanged === true
+                ? { allGlyphsChanged: true as const }
+                : undefined),
             changes: message.changes.map((change) => ({
                 ...change,
                 workerReplayTargets: change.workerReplayTargets

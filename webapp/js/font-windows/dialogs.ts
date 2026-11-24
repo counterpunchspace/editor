@@ -121,6 +121,68 @@ export function reportError(error: unknown): void {
     showNotice(error instanceof Error ? error.message : String(error));
 }
 
+type HistoryReplayNoticeDetail = {
+    reason?: unknown;
+    historyAction?: unknown;
+    documentIdsNotRolledBack?: unknown;
+};
+
+function historyActionWord(detail: HistoryReplayNoticeDetail | null): string {
+    return detail?.historyAction === 'redo' ? 'Redo' : 'Undo';
+}
+
+/** The message for a refused or failed undo or redo, or null for none. */
+export function historyReplayNoticeMessage(
+    type: 'history-replay-blocked' | 'history-replay-failed',
+    detail: HistoryReplayNoticeDetail | null
+): string | null {
+    const action = historyActionWord(detail);
+    if (type === 'history-replay-blocked') {
+        // A collaborator-edit refusal has its own notice on the cloud asset
+        // (font-manager.ts).
+        if (detail?.reason !== 'document-not-loaded') {
+            return null;
+        }
+        return `${action} didn’t run: it changes parts of the font this window hasn’t loaded yet. Nothing was changed.`;
+    }
+    const notRolledBack = Array.isArray(detail?.documentIdsNotRolledBack)
+        ? detail.documentIdsNotRolledBack.length
+        : 0;
+    if (notRolledBack > 0) {
+        return `${action} failed part way, and some of its changes couldn’t be taken back. Reopen the font to see its current state.`;
+    }
+    return `${action} failed, so nothing was changed and the history stayed where it was.`;
+}
+
+let historyReplayNoticesInstalled = false;
+
+/**
+ * Show the user an undo or redo the engine refused because a document it
+ * writes isn't loaded (`history-replay-blocked`, reason
+ * `document-not-loaded`), or one that failed (`history-replay-failed`).
+ * Safe to call more than once.
+ */
+export function installHistoryReplayNotices(): void {
+    if (historyReplayNoticesInstalled || typeof window === 'undefined') {
+        return;
+    }
+    historyReplayNoticesInstalled = true;
+    for (const type of [
+        'history-replay-blocked',
+        'history-replay-failed'
+    ] as const) {
+        window.addEventListener(type, (event) => {
+            const detail =
+                (event as CustomEvent<HistoryReplayNoticeDetail | null>)
+                    .detail ?? null;
+            const message = historyReplayNoticeMessage(type, detail);
+            if (message) {
+                showNotice(message);
+            }
+        });
+    }
+}
+
 // Platform wording for the file manager and the folder picker's button.
 const platformName = (
     (navigator as Navigator & { userAgentData?: { platform?: string } })

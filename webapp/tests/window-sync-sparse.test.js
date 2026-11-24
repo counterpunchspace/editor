@@ -1,3 +1,14 @@
+const Y = require('yjs');
+
+/** A real (complete) Yjs state: snapshots refuse bytes that are not one. */
+function wholeDocState(tag) {
+    const doc = new Y.Doc();
+    doc.getMap('test').set('tag', tag);
+    const bytes = Y.encodeStateAsUpdate(doc);
+    doc.destroy();
+    return bytes;
+}
+
 const { WindowSync, isLinkedPeerSnapshotSearch } = require('../js/window-sync');
 const {
     createLinkedWindowCatchUpEnvelope
@@ -6,6 +17,23 @@ const {
     FONT_CORE_DOCUMENT_ID,
     FONT_DEPS_DOCUMENT_ID
 } = require('../js/filesystem-plugins/cloud-document-set');
+
+const STATION_ID = 'station-regular';
+const STATION_LINK = Object.freeze({
+    type: 'DefaultForMaster',
+    master: STATION_ID
+});
+
+function stationJson() {
+    return {
+        id: STATION_ID,
+        name: { dflt: 'Regular' },
+        location: {},
+        guides: [],
+        metrics: {},
+        kerning: {}
+    };
+}
 
 describe('linked window resident snapshot', () => {
     const previousFontManager = window.fontManager;
@@ -53,7 +81,7 @@ describe('linked window resident snapshot', () => {
             ],
             encodeDocumentState: (documentId) => {
                 encodedIds.push(documentId);
-                return new Uint8Array([2]);
+                return wholeDocState(documentId);
             }
         };
         const { sync, sent } = makeSync(bridge);
@@ -93,7 +121,7 @@ describe('linked window resident snapshot', () => {
             hasSparseWorkingSet: () => true,
             listSparseWorkingGlyphIds: () => ['a-id'],
             listLiveGlyphDocumentIds: () => ['glyph:a-id', 'glyph:n-id'],
-            encodeDocumentState: () => new Uint8Array([2])
+            encodeDocumentState: () => wholeDocState('2')
         };
         const { sync, sent } = makeSync(bridge);
         await sync.sendFullStateSnapshot();
@@ -128,7 +156,7 @@ describe('linked window resident snapshot', () => {
             hasSparseWorkingSet: () => false,
             listSparseWorkingGlyphIds: () => [],
             listLiveGlyphDocumentIds: () => liveIds,
-            encodeDocumentState: () => new Uint8Array([2])
+            encodeDocumentState: () => wholeDocState('2')
         };
         const { sync, sent } = makeSync(bridge);
         await sync.sendFullStateSnapshot();
@@ -193,15 +221,28 @@ describe('linked window resident snapshot', () => {
             applyCloudOwnedData
         } = require('../js/filesystem-plugins/cloud-glyph-catalog');
         const previousFontModel = window.currentFontModel;
-        const drawing = { id: 'layer-1', width: 600, shapes: [] };
+        const drawing = {
+            id: 'layer-1',
+            width: 600,
+            master: STATION_LINK,
+            shapes: []
+        };
         const sourceJson = {
             upm: 1000,
+            masters: [stationJson()],
             glyphs: [
                 { name: 'a', id: 'id-a', layers: [drawing] },
                 {
                     name: 'newcomp',
                     id: 'id-new',
-                    layers: [{ id: 'layer-new', width: 600, shapes: [] }]
+                    layers: [
+                        {
+                            id: 'layer-new',
+                            width: 600,
+                            master: STATION_LINK,
+                            shapes: []
+                        }
+                    ]
                 }
             ]
         };
@@ -213,6 +254,7 @@ describe('linked window resident snapshot', () => {
 
         const linkedJson = {
             upm: 1000,
+            masters: [stationJson()],
             glyphs: [{ name: 'a', id: 'id-a', layers: [{ ...drawing }] }]
         };
         applyCloudOwnedData(linkedJson);
@@ -270,15 +312,28 @@ describe('linked window resident snapshot', () => {
         const previousSync = window.windowSync;
         const previousFontManager = window.fontManager;
         const previousPatch = window.patchSyncEngine;
-        const drawing = { id: 'layer-1', width: 600, shapes: [] };
+        const drawing = {
+            id: 'layer-1',
+            width: 600,
+            master: STATION_LINK,
+            shapes: []
+        };
         const fullJson = {
             upm: 1000,
+            masters: [stationJson()],
             glyphs: [
                 { name: 'a', id: 'id-a', layers: [drawing] },
                 {
                     name: 'newcomp',
                     id: 'id-new',
-                    layers: [{ id: 'layer-new', width: 600, shapes: [] }]
+                    layers: [
+                        {
+                            id: 'layer-new',
+                            width: 600,
+                            master: STATION_LINK,
+                            shapes: []
+                        }
+                    ]
                 }
             ]
         };
@@ -405,7 +460,7 @@ describe('linked window resident snapshot', () => {
                 }
             }),
             hasResidentGlyphDocument: () => true,
-            encodeDocumentState: () => new Uint8Array([9, 9])
+            encodeDocumentState: () => wholeDocState('9, 9')
         };
         const sync = new WindowSync(bridge, 'test-relay-held-glyph');
         const sent = [];
@@ -722,7 +777,7 @@ describe('linked window resident snapshot', () => {
                 hasSparseWorkingSet: () => false,
                 listSparseWorkingGlyphIds: () => [],
                 listLiveGlyphDocumentIds: () => liveIds,
-                encodeDocumentState: () => new Uint8Array([2])
+                encodeDocumentState: () => wholeDocState('2')
             });
 
             await sync.sendFullStateSnapshot();
@@ -751,7 +806,7 @@ describe('linked window resident snapshot', () => {
             hasSparseWorkingSet: () => false,
             listSparseWorkingGlyphIds: () => [],
             listLiveGlyphDocumentIds: () => liveIds,
-            encodeDocumentState: () => new Uint8Array([2])
+            encodeDocumentState: () => wholeDocState('2')
         };
         const sync = new WindowSync(bridge, 'test-failed-post');
         const sent = [];

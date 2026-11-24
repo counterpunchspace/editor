@@ -8,6 +8,7 @@
  */
 
 import * as Y from 'yjs';
+import { recordCollabTrace } from './collab-trace';
 import {
     yArrayToArray,
     yMapForEach,
@@ -15,6 +16,58 @@ import {
     yMapHas,
     yMapKeys
 } from './yjs-prelim';
+
+/**
+ * Whether a shared type is new: not yet in a document, or inserted by the
+ * transaction that is running now. A child map created next to a new
+ * drawing travels in the drawing's own packet, so no collaborator can
+ * create a competing one.
+ */
+export function isYTypeNewInCurrentTransaction(
+    type: Y.Map<unknown> | Y.Array<unknown>
+): boolean {
+    const doc = type.doc;
+    if (!doc) {
+        return true;
+    }
+    const item = type._item;
+    const transaction = doc._transaction;
+    if (!item || !transaction) {
+        return false;
+    }
+    return item.id.clock >= (transaction.beforeState.get(item.id.client) ?? 0);
+}
+
+/**
+ * Permanent collab trace event `drawing-child-map-created-late`: a keyed
+ * child map (anchors, guides, node positions, shape data, or any other map)
+ * was created inside a drawing that already existed in the document. Two
+ * collaborators doing this at once create competing maps, and every entry
+ * in the losing one disappears. Drawings created since every child map is
+ * made together with the drawing never record it; older drawings and
+ * drawings written by the font worker can.
+ */
+export function recordLateDrawingChildMap(
+    drawingMap: Y.Map<unknown>,
+    key: string
+): void {
+    if (isYTypeNewInCurrentTransaction(drawingMap)) {
+        return;
+    }
+    const drawingsMap = drawingMap.parent;
+    const glyphMap = drawingsMap?.parent;
+    const glyphName =
+        glyphMap instanceof Y.Map ? yMapGet(glyphMap, 'name') : undefined;
+    const drawingId = drawingMap._item?.parentSub;
+    recordCollabTrace(
+        'drawing-child-map-created-late',
+        typeof glyphName === 'string' ? [glyphName] : [],
+        {
+            drawing: typeof drawingId === 'string' ? drawingId : null,
+            key
+        }
+    );
+}
 
 function generateStableId(): string {
     if (
@@ -35,8 +88,19 @@ const PATH_KIND = 'P';
 const COMPONENT_KIND = 'C';
 const NODE_TYPES = new Set(['move', 'line', 'curve', 'qcurve', 'offcurve']);
 
-function normalizeNodeType(value: unknown): string {
-    return String(value || 'Line');
+/**
+ * A node's stored type. A node always carries its own `nodetype`: one
+ * without it is refused, never written as a line.
+ */
+function requireStoredNodeType(value: unknown, nodeId: string): string {
+    if (typeof value !== 'string' || !NODE_TYPES.has(value.toLowerCase())) {
+        throw new TypeError(
+            value === undefined
+                ? `Node ${nodeId} has no nodetype.`
+                : `Node ${nodeId} has an invalid nodetype ${JSON.stringify(value)}.`
+        );
+    }
+    return value;
 }
 
 export type GeometryTopology = {
@@ -45,14 +109,26 @@ export type GeometryTopology = {
     shapes: GeometryShape[];
 };
 
-export type GeometryShape = {
+/**
+ * A path's closed flag, node ids, node types and smooth flags are all
+ * written with it (`splitShapesForYDoc`, the only topology writer), so a
+ * stored path without any of them was damaged and is refused on read.
+ */
+export type PathGeometryShape = {
     id: string;
-    k: typeof PATH_KIND | typeof COMPONENT_KIND;
-    c?: boolean;
-    n?: string[];
-    t?: string[];
-    s?: boolean[];
+    k: typeof PATH_KIND;
+    c: boolean;
+    n: string[];
+    t: string[];
+    s: boolean[];
 };
+
+export type ComponentGeometryShape = {
+    id: string;
+    k: typeof COMPONENT_KIND;
+};
+
+export type GeometryShape = PathGeometryShape | ComponentGeometryShape;
 
 type Unsafe = Record<string, unknown>;
 
@@ -173,7 +249,10 @@ function assertValidTopology(topology: GeometryTopology): void {
                     `Path ${shape.id} node/type length mismatch.`
                 );
             }
-            if (shape.s && shape.s.length !== shape.n.length) {
+            if (!Array.isArray(shape.s)) {
+                throw new TypeError(`Path ${shape.id} has no smooth flags.`);
+            }
+            if (shape.s.length !== shape.n.length) {
                 throw new TypeError(
                     `Path ${shape.id} smooth-flag length mismatch.`
                 );
@@ -189,7 +268,7 @@ function assertValidTopology(topology: GeometryTopology): void {
                     `Path ${shape.id} contains an invalid node type.`
                 );
             }
-            if (shape.s?.some((smooth) => typeof smooth !== 'boolean')) {
+            if (shape.s.some((smooth) => typeof smooth !== 'boolean')) {
                 throw new TypeError(
                     `Path ${shape.id} smooth flags must be booleans.`
                 );
@@ -203,8 +282,10 @@ function assertValidTopology(topology: GeometryTopology): void {
                 }
                 nodeIds.add(nodeId);
             }
-        } else if (shape.k !== COMPONENT_KIND) {
-            throw new TypeError(`Unknown geometry shape kind ${shape.k}.`);
+        } else if ((shape as { k: unknown }).k !== COMPONENT_KIND) {
+            throw new TypeError(
+                `Unknown geometry shape kind ${String((shape as { k: unknown }).k)}.`
+            );
         }
     }
 }
@@ -234,6 +315,12 @@ export function splitShapesForYDoc(shapes: unknown[]): {
         shape.id = id;
 
         if (isPathShape(shape)) {
+            // A path without a boolean closed flag is refused, never read
+            // as closed or open (as the font worker refuses it too).
+            if (typeof shape.closed !== 'boolean') {
+                throw new TypeError(`Path ${id} has no closed flag.`);
+            }
+            const closed = shape.closed;
             const nodes = shape.nodes as Unsafe[];
             const nodeIds: string[] = [];
             const types: string[] = [];
@@ -248,14 +335,14 @@ export function splitShapesForYDoc(shapes: unknown[]): {
                         : generateStableId();
                 node.id = nodeId;
                 nodeIds.push(nodeId);
-                types.push(normalizeNodeType(node.nodetype));
+                types.push(requireStoredNodeType(node.nodetype, nodeId));
                 smooth.push(node.smooth === true);
                 positions[nodeId] = encodePackedXY(node.x, node.y);
             }
             topology.shapes.push({
                 id,
                 k: PATH_KIND,
-                c: shape.closed !== false,
+                c: closed,
                 n: nodeIds,
                 t: types,
                 s: smooth
@@ -284,11 +371,23 @@ export function reconstructShapesFromGeometry(
     assertValidTopology(topology);
     const shapes: Unsafe[] = [];
     for (const entry of topology.shapes) {
-        const data = isPlainObject(shapeData[entry.id])
-            ? { ...(shapeData[entry.id] as Unsafe) }
-            : {};
+        // Every writer stores each shape's data, a path's too (an empty
+        // map when it has nothing besides its nodes). A missing entry was
+        // lost and is never read as empty.
+        const storedData = shapeData[entry.id];
+        if (!isPlainObject(storedData)) {
+            throw new DrawingGeometryIntegrityError(
+                storedData === undefined
+                    ? `Missing data for ${entry.k === PATH_KIND ? 'path' : 'component'} ${entry.id}.`
+                    : `The data of shape ${entry.id} is not a map.`
+            );
+        }
+        const data: Unsafe = { ...storedData };
         if (entry.k === PATH_KIND) {
-            const nodes = (entry.n || []).map((nodeId, index) => {
+            // `assertValidTopology` refused a path without a type and a
+            // smooth flag for every node, or without a closed flag: these
+            // are read as stored, never filled in.
+            const nodes = entry.n.map((nodeId, index) => {
                 const packed = positions[nodeId];
                 if (packed === undefined) {
                     throw new TypeError(`Missing position for node ${nodeId}.`);
@@ -298,14 +397,14 @@ export function reconstructShapesFromGeometry(
                     id: nodeId,
                     x,
                     y,
-                    nodetype: entry.t?.[index] || 'Line',
-                    smooth: entry.s?.[index] === true
+                    nodetype: entry.t[index],
+                    smooth: entry.s[index]
                 };
             });
             shapes.push({
                 ...data,
                 id: entry.id,
-                closed: entry.c !== false,
+                closed: entry.c,
                 nodes
             });
         } else {
@@ -341,17 +440,65 @@ function yValueToJson(value: unknown): unknown {
     return value;
 }
 
+/**
+ * Return a geometry child map. It is created only together with the
+ * drawing's first geometry (`mayCreate`); afterwards a missing one is an
+ * error, because a second map created next to a collaborator's would hide
+ * every position in theirs.
+ */
 function ensureChildMap(
     drawingMap: Y.Map<unknown>,
-    key: string
+    key: string,
+    mayCreate: boolean
 ): Y.Map<unknown> {
     const existing = yMapGet(drawingMap, key);
     if (isYMap(existing)) {
         return existing;
     }
+    if (!mayCreate) {
+        throw new DrawingGeometryIntegrityError(
+            `The drawing’s geometry has no ${key} map.`
+        );
+    }
+    // A drawing gets its geometry maps when it is created. Only a drawing
+    // stored before that, or written by the font worker without them,
+    // gets them here, and that is recorded.
+    recordLateDrawingChildMap(drawingMap, key);
     const created = new Y.Map<unknown>();
     drawingMap.set(key, created);
     return created;
+}
+
+/**
+ * Thrown when a drawing’s normalized geometry is incomplete: a node without
+ * a position, a component without its data, or a missing geometry map.
+ * Nothing is repaired or deleted.
+ */
+export class DrawingGeometryIntegrityError extends TypeError {
+    constructor(message: string) {
+        super(message);
+        this.name = 'DrawingGeometryIntegrityError';
+    }
+}
+
+/**
+ * A geometry child map of a drawing that has a topology. Both maps are
+ * created with the drawing's first topology, even one without shapes, so
+ * a missing one was lost; it is never read as empty.
+ */
+function requireGeometryChildMap(
+    drawingMap: Y.Map<unknown>,
+    key: string
+): Y.Map<unknown> {
+    const childMap = yMapGet(drawingMap, key);
+    if (!isYMap(childMap)) {
+        throw new DrawingGeometryIntegrityError(
+            childMap === undefined
+                ? `The drawing’s geometry has no ${key} map.`
+                : `The drawing’s ${key} is not a map.`
+        );
+    }
+    return childMap;
 }
 
 export function writeDrawingGeometry(
@@ -388,9 +535,6 @@ function writeDrawingGeometryInTransaction(
         !previousTopology ||
         JSON.stringify(previousTopology.shapes) !==
             JSON.stringify(topology.shapes);
-    const previouslyReferencedNodes = new Set(
-        previousTopology?.shapes.flatMap((shape) => shape.n || []) || []
-    );
     topology.g = topologyChanged
         ? (previousTopology?.g ?? 0) + 1
         : previousTopology!.g;
@@ -404,19 +548,26 @@ function writeDrawingGeometryInTransaction(
         drawingMap.set(DRAWING_GEOMETRY_TOPOLOGY_KEY, encodedTopology);
     }
 
-    const positionMap = ensureChildMap(drawingMap, DRAWING_NODE_POSITIONS_KEY);
+    const positionMap = ensureChildMap(
+        drawingMap,
+        DRAWING_NODE_POSITIONS_KEY,
+        !previousTopology
+    );
     for (const [key, value] of Object.entries(positions)) {
-        // Reintroducing a node must restore its coordinate after converged
-        // orphan cleanup. Existing nodes retain a concurrent drag's LWW pair.
-        if (
-            yMapGet(positionMap, key) !== value ||
-            (topologyChanged && !previouslyReferencedNodes.has(key))
-        ) {
+        // An equal position is not written again: each rewrite deletes the
+        // stored item, and a receiver that misses this packet would lose
+        // the coordinate to that deletion. Positions are never deleted, so
+        // a node that comes back still has its own.
+        if (yMapGet(positionMap, key) !== value) {
             positionMap.set(key, value);
         }
     }
 
-    const shapeDataMap = ensureChildMap(drawingMap, DRAWING_SHAPE_DATA_KEY);
+    const shapeDataMap = ensureChildMap(
+        drawingMap,
+        DRAWING_SHAPE_DATA_KEY,
+        !previousTopology
+    );
     for (const [key, value] of Object.entries(shapeData)) {
         const current = yMapGet(shapeDataMap, key);
         if (JSON.stringify(yValueToJson(current)) === JSON.stringify(value)) {
@@ -425,48 +576,52 @@ function writeDrawingGeometryInTransaction(
         shapeDataMap.set(key, toYType(value));
     }
 
-    // Do not delete positions here. Geometry GC runs only during an explicit
-    // generation rebase (`repairLayerGeometryOrphans`), never on ordinary
-    // commits or converged snapshot refreshes.
+    // Positions of removed nodes are never deleted: a concurrent topology
+    // may still reference them, and deleting one loses a collaborator's
+    // coordinate.
 }
 
-export function repairDrawingGeometryOrphans(drawingMap: Y.Map<unknown>): void {
-    // Geometry GC only runs during an explicit generation rebase
-    // (topology.g increment), never on ordinary commits or converged
-    // snapshot refreshes.
+/**
+ * Assert that a drawing's normalized geometry is complete: every node the
+ * topology references has a position, and every component has its data.
+ * Positions no longer referenced are left alone; they are not an error and
+ * deleting them would lose a collaborator's coordinate. Throws
+ * `DrawingGeometryIntegrityError`; nothing is repaired.
+ */
+export function assertDrawingGeometryComplete(
+    drawingMap: Y.Map<unknown>
+): void {
     if (!yMapHas(drawingMap, DRAWING_GEOMETRY_TOPOLOGY_KEY)) {
         return;
     }
     const topology = decodeGeometryTopology(
         yMapGet(drawingMap, DRAWING_GEOMETRY_TOPOLOGY_KEY)
     );
-    const referencedNodes = new Set<string>();
-    const referencedShapes = new Set<string>();
+    const positionMap = requireGeometryChildMap(
+        drawingMap,
+        DRAWING_NODE_POSITIONS_KEY
+    );
+    const shapeDataMap = requireGeometryChildMap(
+        drawingMap,
+        DRAWING_SHAPE_DATA_KEY
+    );
     for (const shape of topology.shapes) {
-        referencedShapes.add(shape.id);
-        for (const nodeId of shape.n || []) {
-            referencedNodes.add(nodeId);
+        if (yMapGet(shapeDataMap, shape.id) === undefined) {
+            throw new DrawingGeometryIntegrityError(
+                `Missing data for ${shape.k === PATH_KIND ? 'path' : 'component'} ${shape.id}.`
+            );
         }
-    }
-    const positionMap = yMapGet(drawingMap, DRAWING_NODE_POSITIONS_KEY);
-    if (isYMap(positionMap)) {
-        for (const key of yMapKeys(positionMap)) {
-            if (!referencedNodes.has(key)) {
-                positionMap.delete(key);
-            }
-        }
-    }
-    const shapeDataMap = yMapGet(drawingMap, DRAWING_SHAPE_DATA_KEY);
-    if (isYMap(shapeDataMap)) {
-        for (const key of yMapKeys(shapeDataMap)) {
-            if (!referencedShapes.has(key)) {
-                shapeDataMap.delete(key);
+        if (shape.k === PATH_KIND) {
+            for (const nodeId of shape.n) {
+                if (yMapGet(positionMap, nodeId) === undefined) {
+                    throw new DrawingGeometryIntegrityError(
+                        `Missing position for node ${nodeId}.`
+                    );
+                }
             }
         }
     }
 }
-
-const lastGoodGeometryPreview = new WeakMap<Y.Map<unknown>, Unsafe[]>();
 
 export function readDrawingGeometry(
     drawingMap: Y.Map<unknown>
@@ -475,49 +630,24 @@ export function readDrawingGeometry(
     if (rawTopology === undefined) {
         return null;
     }
-    try {
-        const topology = decodeGeometryTopology(rawTopology);
-        const positionsRaw = yMapGet(drawingMap, DRAWING_NODE_POSITIONS_KEY);
-        const shapeDataRaw = yMapGet(drawingMap, DRAWING_SHAPE_DATA_KEY);
-        const positions: Record<string, unknown> = {};
-        if (isYMap(positionsRaw)) {
-            yMapForEach(positionsRaw, (value, key) => {
-                positions[key] = value;
-            });
-        }
-        const shapeData: Record<string, unknown> = {};
-        if (isYMap(shapeDataRaw)) {
-            yMapForEach(shapeDataRaw, (value, key) => {
-                shapeData[key] = yValueToJson(value);
-            });
-        }
-        const shapes = reconstructShapesFromGeometry(
-            topology,
-            positions,
-            shapeData
-        );
-        lastGoodGeometryPreview.set(drawingMap, shapes);
-        return shapes;
-    } catch (error) {
-        const lastGood = lastGoodGeometryPreview.get(drawingMap);
-        if (lastGood) {
-            const stale = lastGood.map((shape) => ({ ...shape }));
-            (
-                stale as Unsafe[] & { _geometryPreviewStale?: boolean }
-            )._geometryPreviewStale = true;
-            return stale;
-        }
-        throw error;
-    }
-}
-
-export function drawingGeometryPreviewIsStale(shapes: unknown): boolean {
-    return (
-        !!shapes &&
-        typeof shapes === 'object' &&
-        (shapes as { _geometryPreviewStale?: boolean })
-            ._geometryPreviewStale === true
+    const topology = decodeGeometryTopology(rawTopology);
+    const positionsMap = requireGeometryChildMap(
+        drawingMap,
+        DRAWING_NODE_POSITIONS_KEY
     );
+    const shapeDataMap = requireGeometryChildMap(
+        drawingMap,
+        DRAWING_SHAPE_DATA_KEY
+    );
+    const positions: Record<string, unknown> = {};
+    yMapForEach(positionsMap, (value, key) => {
+        positions[key] = value;
+    });
+    const shapeData: Record<string, unknown> = {};
+    yMapForEach(shapeDataMap, (value, key) => {
+        shapeData[key] = yValueToJson(value);
+    });
+    return reconstructShapesFromGeometry(topology, positions, shapeData);
 }
 
 export function writeNodePosition(
@@ -526,8 +656,16 @@ export function writeNodePosition(
     x: number,
     y: number
 ): void {
-    const positionMap = ensureChildMap(drawingMap, DRAWING_NODE_POSITIONS_KEY);
-    positionMap.set(nodeId, encodePackedXY(x, y));
+    const positionMap = ensureChildMap(
+        drawingMap,
+        DRAWING_NODE_POSITIONS_KEY,
+        false
+    );
+    const packed = encodePackedXY(x, y);
+    if (yMapGet(positionMap, nodeId) === packed) {
+        return;
+    }
+    positionMap.set(nodeId, packed);
 }
 
 export function geometryHasNormalizedStorage(
@@ -561,7 +699,7 @@ export function getNodeIdAt(
     nodeIndex: number
 ): string {
     const shape = getDrawingTopology(drawingMap).shapes[shapeIndex];
-    const nodeId = shape?.n?.[nodeIndex];
+    const nodeId = shape?.k === PATH_KIND ? shape.n[nodeIndex] : undefined;
     if (!nodeId) {
         throw new RangeError(
             `Node index ${nodeIndex} is out of range for shape ${shapeIndex}.`
@@ -585,8 +723,10 @@ export function topologyEqualsForNodes(
         }
         return (
             previous.id === next.id &&
-            String(previous.nodetype || 'Line') ===
-                String(next.nodetype || 'Line') &&
+            // A node without its type is never compared as a line: the
+            // write then goes through the topology, which refuses it.
+            typeof next.nodetype === 'string' &&
+            previous.nodetype === next.nodetype &&
             (previous.smooth === true) === (next.smooth === true)
         );
     });

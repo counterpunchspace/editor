@@ -1,3 +1,14 @@
+const Y = require('yjs');
+
+/** A real (complete) Yjs state: snapshots refuse bytes that are not one. */
+function wholeDocState(tag) {
+    const doc = new Y.Doc();
+    doc.getMap('test').set('tag', tag);
+    const bytes = Y.encodeStateAsUpdate(doc);
+    doc.destroy();
+    return bytes;
+}
+
 const {
     WindowSync,
     isLinkedPeerSnapshotSearch,
@@ -83,7 +94,7 @@ function makeBridge(windowId) {
         getChangeLog: () => [],
         getCollaborationLog: () => [],
         listLiveGlyphDocumentIds: () => [],
-        encodeDocumentState: () => new Uint8Array([1])
+        encodeDocumentState: () => wholeDocState('1')
     };
 }
 
@@ -308,5 +319,69 @@ describe('linked window lifecycle', () => {
             linkedWindowChangeLogSlice(log, 2).map((e) => e.historyItemId)
         ).toEqual(['h2', 'h2', 'h2', 'h3']);
         expect(linkedWindowChangeLogSlice(log, 10)).toHaveLength(5);
+    });
+});
+
+describe('linked-window packets for a document not loaded here', () => {
+    const previousRole = window.windowRole;
+    afterEach(() => {
+        window.windowRole = previousRole;
+    });
+
+    function syncWithGlyph() {
+        window.windowRole = LINKED_ROLE;
+        let loaded = false;
+        const applied = [];
+        const bridge = {
+            ...makeBridge('w-hold'),
+            getDocumentInstance: (documentId) =>
+                documentId === 'glyph:A' && !loaded ? null : {},
+            applyRemoteUpdate: jest.fn((update) => applied.push(update[0])),
+            applyDocumentCatchUp: jest.fn((documentId, update) => {
+                loaded = true;
+                applied.push(update[0]);
+            }),
+            markDocumentBroken: jest.fn()
+        };
+        const sync = new WindowSync(bridge, 'hold-channel');
+        const stats = { updateBytes: 0, collaborationMessageCount: 0 };
+        const deliver = (packets) =>
+            sync._applyInboundYjsMessages(
+                [{ type: 'yjs-update', updates: packets }],
+                stats
+            );
+        return { sync, bridge, applied, deliver, load: () => (loaded = true) };
+    }
+
+    it('holds deltas in order and applies them after the full state', () => {
+        const { sync, bridge, applied, deliver } = syncWithGlyph();
+        deliver([
+            { update: new Uint8Array([1]), documentId: 'glyph:A' },
+            { update: new Uint8Array([9]), documentId: 'font-core' },
+            { update: new Uint8Array([2]), documentId: 'glyph:A' }
+        ]);
+        expect(applied).toEqual([9]);
+        expect(sync.heldUntilLoadedCount('glyph:A')).toBe(2);
+        expect(bridge.markDocumentBroken).not.toHaveBeenCalled();
+
+        deliver([
+            {
+                update: new Uint8Array([0]),
+                documentId: 'glyph:A',
+                collaborationMessage: { source: 'window-sync.catch-up' }
+            }
+        ]);
+        expect(applied).toEqual([9, 0, 1, 2]);
+        expect(sync.heldUntilLoadedCount('glyph:A')).toBe(0);
+        sync.destroy?.();
+    });
+
+    it('applies held deltas first once another path loaded the document', () => {
+        const { sync, applied, deliver, load } = syncWithGlyph();
+        deliver([{ update: new Uint8Array([1]), documentId: 'glyph:A' }]);
+        load();
+        deliver([{ update: new Uint8Array([2]), documentId: 'glyph:A' }]);
+        expect(applied).toEqual([1, 2]);
+        sync.destroy?.();
     });
 });

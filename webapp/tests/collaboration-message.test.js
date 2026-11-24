@@ -661,3 +661,88 @@ describe('replay values for linked windows', () => {
         );
     });
 });
+
+describe('name-keyed path segments', () => {
+    test('a glyph named like a number is addressed by its name', () => {
+        const [operation] = createSyntheticChangeOperationsFromNamedChangePairs(
+            [
+                {
+                    forward: {
+                        op: 'replace',
+                        path: 'glyphs.1:layers.2:shapes.0.nodes',
+                        value: '1 1 l'
+                    },
+                    inverse: {
+                        op: 'replace',
+                        path: 'glyphs.1:layers.2:shapes.0.nodes',
+                        value: '0 0 l'
+                    }
+                }
+            ]
+        );
+        expect(operation.path).toEqual([
+            'glyphs',
+            '1',
+            'layers',
+            '2',
+            'shapes',
+            0,
+            'nodes'
+        ]);
+    });
+
+    test('kerning sides named like numbers stay names', () => {
+        const [operation] = createSyntheticChangeOperationsFromNamedChangePairs(
+            [
+                {
+                    forward: {
+                        op: 'replace',
+                        path: 'masters.0.kerning.1.2',
+                        value: -20
+                    },
+                    inverse: {
+                        op: 'replace',
+                        path: 'masters.0.kerning.1.2',
+                        value: -10
+                    }
+                }
+            ]
+        );
+        expect(operation.path).toEqual(['masters', 0, 'kerning', '1', '2']);
+    });
+
+    test('a JSON pointer over a keyed glyph map uses the segment as the name', () => {
+        const pair = createNamedChangePairFromJsonPatchPair(
+            { op: 'replace', path: '/glyphs/1/category', value: 'Mark' },
+            { op: 'replace', path: '/glyphs/1/category', value: 'Base' },
+            {
+                forwardSnapshot: {
+                    glyphs: { 0: { name: '0' }, 1: { name: '1' } }
+                },
+                inverseSnapshot: {
+                    glyphs: { 0: { name: '0' }, 1: { name: '1' } }
+                }
+            }
+        );
+        expect(pair.forward.path).toBe('glyphs.1:category');
+    });
+
+    test('a JSON pointer position with no glyph in its snapshot is refused', () => {
+        expect(() =>
+            createNamedChangePairFromJsonPatchPair(
+                { op: 'replace', path: '/glyphs/5/category', value: 'Mark' },
+                undefined,
+                { forwardSnapshot: { glyphs: [{ name: 'A' }] } }
+            )
+        ).toThrow(/addresses no element/);
+    });
+
+    test('an envelope without entries is refused', () => {
+        expect(() =>
+            createCollaborationMessageEnvelopeFromChangeLogEntries([], {
+                localSequence: 1,
+                source: 'test'
+            })
+        ).toThrow(/at least one change-log entry/);
+    });
+});

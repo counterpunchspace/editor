@@ -3,6 +3,9 @@
  * The WebSocket transport + outbox class lives in cloud-adapter.ts.
  */
 
+import { recordCollabTrace } from './collab-trace';
+import { BrokenDocumentError, ClockGapError } from './yjs-update-integrity';
+import { assertEncodableDocumentState } from './cloud-document-encode-gate';
 import {
     needsOutboundParts,
     planOutboundParts
@@ -35,11 +38,325 @@ import {
 import {
     decodeCollabLiveFrames,
     decodeCheckpointMeta,
-    assembleTailTransactionsFromFrames
+    assembleTailTransactionsFromFrames,
+    CollabFrameError
 } from './cloud-adapter-frames';
 import { CloudDurableWal } from './cloud-durable-wal';
 
 const console = new Logger('CloudAdapterSupport');
+
+/** The room’s stream broke its own ordering rules (a log id hole, a bad page). */
+export class CloudProtocolError extends Error {
+    constructor(documentId: string, detail: string) {
+        super(`Cloud collaboration protocol error in ${documentId}: ${detail}`);
+        this.name = 'CloudProtocolError';
+    }
+}
+
+/**
+ * Check a page of journal rows before any of it applies: rows follow one
+ * another from `afterLogId + 1` (when known), each row frame is whole, a
+ * transaction split into chunks has every chunk in the page, and the page
+ * does not end before its last row. Throws `CloudProtocolError`; nothing in
+ * the page may apply after a hole.
+ */
+export function assertContiguousTailFrames(
+    documentId: string,
+    frames: Array<{ type: number; logId: number; payload?: Uint8Array }>,
+    afterLogId: number | null,
+    throughLogId: number
+): void {
+    let previous = afterLogId;
+    const chunked = new Map<string, { total: number; seen: Set<number> }>();
+    for (const frame of frames) {
+        if (frame.type !== 2) {
+            continue;
+        }
+        if (!Number.isInteger(frame.logId) || frame.logId <= 0) {
+            throw new CloudProtocolError(
+                documentId,
+                'sync page row without a log id'
+            );
+        }
+        if (previous !== null && frame.logId !== previous + 1) {
+            throw new CloudProtocolError(
+                documentId,
+                `sync page row ${frame.logId} does not follow ${previous}`
+            );
+        }
+        previous = frame.logId;
+        const payload = frame.payload;
+        if (!payload) {
+            continue;
+        }
+        if (payload.byteLength < 12) {
+            throw new CloudProtocolError(
+                documentId,
+                `sync page row ${frame.logId} is truncated`
+            );
+        }
+        const view = new DataView(
+            payload.buffer,
+            payload.byteOffset,
+            payload.byteLength
+        );
+        const chunkIndex = view.getUint32(0, false);
+        const totalChunks = Math.max(1, view.getUint32(4, false));
+        if (totalChunks <= 1) {
+            continue;
+        }
+        const txnLen = view.getUint32(8, false);
+        const key =
+            new TextDecoder().decode(payload.subarray(12, 12 + txnLen)) ||
+            String(frame.logId);
+        const state = chunked.get(key) || {
+            total: totalChunks,
+            seen: new Set<number>()
+        };
+        state.seen.add(chunkIndex);
+        chunked.set(key, state);
+    }
+    for (const [key, state] of chunked) {
+        if (state.seen.size < state.total) {
+            throw new CloudProtocolError(
+                documentId,
+                `sync page carries ${state.seen.size} of ${state.total} chunks of transaction ${key}`
+            );
+        }
+    }
+    if (
+        previous !== null &&
+        Number.isInteger(throughLogId) &&
+        throughLogId > 0 &&
+        throughLogId < previous
+    ) {
+        throw new CloudProtocolError(
+            documentId,
+            `sync page ends at ${throughLogId} but carries row ${previous}`
+        );
+    }
+}
+
+/**
+ * The room refused one of this window’s transactions (`clock_gap` or another
+ * permanent refusal). The document’s queue stops at `seq`; its rows stay in
+ * the write-ahead log.
+ */
+/**
+ * Refusal codes the room sends for one of this window’s rows, over the
+ * socket (`{type: 'error', code, seq, …}`) or as an HTTP body. Each is
+ * terminal for that document: `clock_gap` (the room misses an earlier row
+ * of ours), `prior_refused` (a row after a refusal that already stopped the
+ * queue), `metadata_too_large` (our own envelope fitter failed),
+ * `packet_too_large`, `digest_mismatch` (the bytes are not what their
+ * digest names) and `broken_journal` (the room can't read its own journal).
+ */
+export const TERMINAL_REFUSAL_CODES: ReadonlySet<string> = new Set([
+    'clock_gap',
+    'prior_refused',
+    'metadata_too_large',
+    'packet_too_large',
+    'digest_mismatch',
+    'broken_journal'
+]);
+
+/**
+ * Codes the room answers an HTTP request with when it can't take or serve
+ * it right now. Nothing is missing: the same request (same seq) is sent
+ * again later.
+ */
+export const TRANSIENT_ROOM_HTTP_CODES: ReadonlySet<string> = new Set([
+    'tail_full',
+    'rate_limit',
+    'journal_failed',
+    'validator_unavailable',
+    'spool_busy',
+    'incomplete_limit',
+    'asset_migrating',
+    'commit_unacknowledged',
+    'state_superseded',
+    'state_unavailable'
+]);
+
+/**
+ * A room HTTP answer that is not a terminal refusal, with what its JSON
+ * body says: `code`, `retryable` and the `seq` it is about.
+ */
+export class CloudRoomHttpError extends Error {
+    readonly status: number;
+    readonly code: string | null;
+    readonly retryable: boolean | null;
+    readonly seq: number | null;
+    /**
+     * A held row: the earlier seq of this writer the room waits for. The
+     * writer sends again from that row, with the same seqs.
+     */
+    readonly refusedSeq: number | null;
+
+    constructor(
+        message: string,
+        details: {
+            status: number;
+            code?: unknown;
+            retryable?: unknown;
+            seq?: unknown;
+            refusedSeq?: unknown;
+        }
+    ) {
+        super(message);
+        this.name = 'CloudRoomHttpError';
+        this.status = details.status;
+        this.code = typeof details.code === 'string' ? details.code : null;
+        this.retryable =
+            typeof details.retryable === 'boolean' ? details.retryable : null;
+        this.seq =
+            typeof details.seq === 'number' && Number.isFinite(details.seq)
+                ? details.seq
+                : null;
+        this.refusedSeq =
+            typeof details.refusedSeq === 'number' &&
+            Number.isFinite(details.refusedSeq)
+                ? details.refusedSeq
+                : null;
+    }
+}
+
+/**
+ * True when a room HTTP answer says “not now”: the same request succeeds
+ * later. A terminal code, or `retryable: false`, never is.
+ */
+export function isTransientRoomHttpAnswer(answer: {
+    status: number;
+    code?: string | null;
+    retryable?: boolean | null;
+}): boolean {
+    if (answer.code && TERMINAL_REFUSAL_CODES.has(answer.code)) {
+        return false;
+    }
+    if (answer.retryable === true) {
+        return true;
+    }
+    if (answer.retryable === false) {
+        return false;
+    }
+    if (answer.code && TRANSIENT_ROOM_HTTP_CODES.has(answer.code)) {
+        return true;
+    }
+    return (
+        answer.status === 408 ||
+        answer.status === 409 ||
+        answer.status === 429 ||
+        answer.status >= 500
+    );
+}
+
+/** The JSON body of a room error answer, or null. */
+export async function readRoomErrorBody(
+    response: Response
+): Promise<Record<string, unknown> | null> {
+    if (typeof response.text !== 'function') {
+        const parsed: unknown = await response.json().catch(() => null);
+        return parsed && typeof parsed === 'object'
+            ? (parsed as Record<string, unknown>)
+            : null;
+    }
+    const text = await response.text().catch(() => '');
+    if (!text) {
+        return null;
+    }
+    try {
+        const parsed: unknown = JSON.parse(text);
+        return parsed && typeof parsed === 'object'
+            ? (parsed as Record<string, unknown>)
+            : null;
+    } catch {
+        return null;
+    }
+}
+
+export class CloudRefusalError extends Error {
+    readonly code: string;
+    readonly seq: number | null;
+    readonly client: number | null;
+    readonly need: number | null;
+    readonly have: number | null;
+    readonly refusedSeq: number | null;
+
+    constructor(
+        documentId: string,
+        refusal: {
+            code: string;
+            message?: string;
+            seq?: unknown;
+            client?: unknown;
+            need?: unknown;
+            have?: unknown;
+            refusedSeq?: unknown;
+        }
+    ) {
+        const num = (value: unknown): number | null =>
+            typeof value === 'number' && Number.isFinite(value) ? value : null;
+        const seq = num(refusal.seq);
+        const detail =
+            refusal.code === 'clock_gap'
+                ? `client ${String(num(refusal.client) ?? '?')} needs clock ${String(num(refusal.need) ?? '?')}, the room has ${String(num(refusal.have) ?? '?')}`
+                : refusal.code === 'prior_refused'
+                  ? `update ${String(num(refusal.refusedSeq) ?? '?')} was refused before it`
+                  : refusal.message || refusal.code;
+        super(
+            `The room refused update ${seq === null ? '?' : seq} of ${documentId} (${refusal.code}): ${detail}`
+        );
+        this.name = 'CloudRefusalError';
+        this.code = refusal.code;
+        this.seq = seq;
+        this.client = num(refusal.client);
+        this.need = num(refusal.need);
+        this.have = num(refusal.have);
+        this.refusedSeq = num(refusal.refusedSeq);
+    }
+}
+
+/**
+ * The room’s refusal of one row, read from an HTTP body, or null when the
+ * body names no terminal refusal code.
+ */
+export function cloudRefusalFromBody(
+    documentId: string,
+    body: Record<string, unknown> | null,
+    seq: number | undefined
+): CloudRefusalError | null {
+    const code = body?.code;
+    if (typeof code !== 'string' || !TERMINAL_REFUSAL_CODES.has(code)) {
+        return null;
+    }
+    return new CloudRefusalError(documentId, {
+        code,
+        message: typeof body?.message === 'string' ? body.message : undefined,
+        seq: body?.seq ?? seq,
+        client: body?.client,
+        need: body?.need,
+        have: body?.have,
+        refusedSeq: body?.refusedSeq
+    });
+}
+
+/**
+ * Errors no retry can fix: the document is missing an update, is broken, or
+ * holds a drawing that breaks its invariants, or the room refused a row.
+ * `DrawingInvariantError` is matched by name; the engine defines it.
+ */
+export function isTerminalDocumentError(error: unknown): boolean {
+    return (
+        error instanceof ClockGapError ||
+        error instanceof BrokenDocumentError ||
+        error instanceof CloudRefusalError ||
+        error instanceof CloudProtocolError ||
+        error instanceof CollabFrameError ||
+        (error instanceof Error && error.name === 'DrawingInvariantError')
+    );
+}
+
+export { assertEncodableDocumentState };
 
 const DEFAULT_PRODUCTION_ROOM_WORKER_URL =
     'https://room.fonteditor.workers.dev';
@@ -263,6 +580,17 @@ export function shouldRetryHydrateTransport(
     if (name === 'AbortError') {
         return false;
     }
+    // The room can't read its own journal: every try fails the same way.
+    if (error instanceof CloudRefusalError || /broken_journal/.test(message)) {
+        return false;
+    }
+    // The state moved on or is being rebuilt: asking again gets it.
+    if (error instanceof CloudRoomHttpError) {
+        return isTransientRoomHttpAnswer(error);
+    }
+    if (/state_superseded|state_unavailable/.test(message)) {
+        return true;
+    }
     return /503|Failed to fetch|ERR_ABORTED|ERR_FAILED|NETWORK_CHANGED|unavailable|do_timeout|incomplete|aborted|shard pack hydrate failed: 5\d\d/i.test(
         message
     );
@@ -427,6 +755,9 @@ export function relayGlyphStateToLinkedWindows(
     if (!bytes?.byteLength) {
         return;
     }
+    // Linked windows get only what this window integrated, never changes
+    // it holds pending or a document it marked broken.
+    assertEncodableDocumentState(bytes, documentId);
     window.windowSync?.broadcastCloudRelayUpdate?.(
         bytes,
         createLinkedWindowCatchUpEnvelope(
@@ -465,43 +796,104 @@ export function refreshEditorAfterGlyphDocumentCatchUp(
 }
 
 /**
- * The room log id each loaded glyph document already holds, per asset. A
- * catch-up asks only for log entries after it; without one, `/live` from log
- * zero is refused once the room has a checkpoint and the window downloads the
- * whole shard from `/state`. Used only while the document stays loaded.
+ * The room log id each loaded glyph document already holds. A catch-up asks
+ * only for log entries after it; without one, `/live` from log zero is
+ * answered with the folded shard state. The cursor lives on the document
+ * object itself: a document that is unloaded or replaced starts without
+ * one, so a cursor never outlives the rows it stands for.
  */
-const glyphLogCursors = new Map<string, number>();
-const MAX_GLYPH_LOG_CURSORS = 20_000;
+let glyphLogCursors = new WeakMap<object, number>();
 
-function glyphLogCursorKey(assetId: string, documentId: string): string {
-    return `${assetId}\u0000${documentId}`;
+type GlyphDocumentInstanceSource = {
+    getDocumentInstance?: (documentId: string) => object | null | undefined;
+};
+
+function glyphDocumentInstance(
+    bridge: unknown,
+    documentId: string
+): object | null {
+    return (
+        (bridge as GlyphDocumentInstanceSource | null)?.getDocumentInstance?.(
+            documentId
+        ) ?? null
+    );
 }
 
+function glyphLogCursorFor(bridge: unknown, documentId: string): number {
+    const doc = glyphDocumentInstance(bridge, documentId);
+    return doc ? (glyphLogCursors.get(doc) ?? 0) : 0;
+}
+
+/** Move the cursor; call only after every row through `logId` applied. */
 function rememberGlyphLogCursor(
-    assetId: string,
+    bridge: unknown,
     documentId: string,
     logId: number
 ): void {
     if (!Number.isFinite(logId) || logId <= 0) {
         return;
     }
-    const key = glyphLogCursorKey(assetId, documentId);
-    if ((glyphLogCursors.get(key) ?? 0) >= logId) {
+    const doc = glyphDocumentInstance(bridge, documentId);
+    if (!doc || (glyphLogCursors.get(doc) ?? 0) >= logId) {
         return;
     }
-    glyphLogCursors.delete(key);
-    glyphLogCursors.set(key, logId);
-    if (glyphLogCursors.size > MAX_GLYPH_LOG_CURSORS) {
-        const oldest = glyphLogCursors.keys().next().value;
-        if (oldest !== undefined) {
-            glyphLogCursors.delete(oldest);
+    glyphLogCursors.set(doc, logId);
+}
+
+/**
+ * Record the log id a room state carried once that state is in the loaded
+ * document, so the next catch-up asks only for rows after it. `logId` is
+ * what the room said the state holds (`X-Checkpoint-Log-Id`, a pack
+ * receipt’s `throughLogId`); a load path that got none leaves the cursor
+ * where it is (0 for a fresh document, so the next catch-up gets the whole
+ * state) and says so in the trace. Call only after the state applied.
+ */
+export function rememberLoadedDocumentLogCursor(
+    bridge: unknown,
+    documentId: string,
+    logId: number | null | undefined,
+    path: string
+): void {
+    rememberLoadedDocumentLogCursors(bridge, [[documentId, logId]], path);
+}
+
+/**
+ * `rememberLoadedDocumentLogCursor` for every document one load applied.
+ * Documents without a log id share one trace naming the path.
+ */
+export function rememberLoadedDocumentLogCursors(
+    bridge: unknown,
+    loads: Iterable<readonly [string, number | null | undefined]>,
+    path: string
+): void {
+    const withoutLogId: string[] = [];
+    for (const [documentId, logId] of loads) {
+        if (typeof logId === 'number' && Number.isInteger(logId) && logId > 0) {
+            rememberGlyphLogCursor(bridge, documentId, logId);
+        } else {
+            withoutLogId.push(documentId);
         }
+    }
+    if (withoutLogId.length) {
+        recordCollabTrace('log-cursor-unknown', [], {
+            path,
+            count: withoutLogId.length,
+            documents: withoutLogId.slice(0, 20)
+        });
     }
 }
 
-/** Forget every cursor (tests, and a window that drops its documents). */
+/** The cursor the next catch-up of `documentId` asks after (tests, traces). */
+export function loadedDocumentLogCursor(
+    bridge: unknown,
+    documentId: string
+): number {
+    return glyphLogCursorFor(bridge, documentId);
+}
+
+/** Forget every cursor (tests). */
 export function resetGlyphLogCursors(): void {
-    glyphLogCursors.clear();
+    glyphLogCursors = new WeakMap();
 }
 
 export async function catchUpCloudDocument(options: {
@@ -536,13 +928,51 @@ export async function catchUpCloudDocument(options: {
     // folded shard state (`X-Catch-Up: state`) instead of a 409 and a second
     // request to /state.
     liveUrl.searchParams.set('rebaseline', 'state');
+    // The cursor belongs to one document instance. Rows after it apply only
+    // to that instance: an unload or a new hydrate meanwhile replaces it.
+    let cursorInstance = resident
+        ? glyphDocumentInstance(options.bridge, options.documentId)
+        : null;
     setAfterLogId(
-        resident
-            ? (glyphLogCursors.get(
-                  glyphLogCursorKey(options.assetId, options.documentId)
-              ) ?? 0)
-            : 0
+        resident ? glyphLogCursorFor(options.bridge, options.documentId) : 0
     );
+    recordCollabTrace('log-fetch', [], {
+        document: options.documentId,
+        after: afterLogId,
+        resident,
+        caller: new Error().stack?.split('\n').slice(2, 6) ?? []
+    });
+    /**
+     * True when the document the cursor was read from is gone or replaced.
+     * The cursor then restarts from the current instance (0, the folded
+     * state, when it is not loaded); the response is thrown away.
+     */
+    const cursorInstanceReplaced = (): boolean => {
+        if (afterLogId <= 0) {
+            // From 0 the room answers with the whole state, which applies
+            // to whichever instance holds the document.
+            return false;
+        }
+        const current = glyphDocumentInstance(
+            options.bridge,
+            options.documentId
+        );
+        if (current === cursorInstance) {
+            return false;
+        }
+        cursorInstance = current;
+        setAfterLogId(
+            current ? glyphLogCursorFor(options.bridge, options.documentId) : 0
+        );
+        return true;
+    };
+    const noteCursorInstance = (): void => {
+        cursorInstance = glyphDocumentInstance(
+            options.bridge,
+            options.documentId
+        );
+    };
+    let instanceRestarts = 0;
     const maxAttempts = Math.max(
         1,
         options.maxAttempts ?? CLOUD_GLYPH_CATCH_UP_MAX_ATTEMPTS
@@ -618,11 +1048,8 @@ export async function catchUpCloudDocument(options: {
         if (bytes.byteLength) {
             // The state is the checkpoint folded with the live tail through
             // this log id; later catch-ups start after it.
-            rememberGlyphLogCursor(
-                options.assetId,
-                options.documentId,
-                through
-            );
+            noteCursorInstance();
+            rememberGlyphLogCursor(options.bridge, options.documentId, through);
             if (Number.isInteger(through) && through > afterLogId) {
                 setAfterLogId(through);
             }
@@ -701,8 +1128,24 @@ export async function catchUpCloudDocument(options: {
                 continue;
             }
             if (!response.ok) {
-                lastError = new Error(
-                    `Live glyph catch-up failed (${response.status}) for ${options.documentId}`
+                const body = await readRoomErrorBody(response);
+                const refusal = cloudRefusalFromBody(
+                    options.documentId,
+                    body,
+                    undefined
+                );
+                if (refusal) {
+                    // `broken_journal`: the room can't read this glyph's
+                    // journal; asking again gets the same answer.
+                    throw refusal;
+                }
+                lastError = new CloudRoomHttpError(
+                    `Live glyph catch-up failed (${response.status}${typeof body?.code === 'string' ? ` ${body.code}` : ''}) for ${options.documentId}`,
+                    {
+                        status: response.status,
+                        code: body?.code,
+                        retryable: body?.retryable
+                    }
                 );
                 continue;
             }
@@ -743,6 +1186,20 @@ export async function catchUpCloudDocument(options: {
                         checkpoint.payload
                     ).collaborationMessageHistory;
                 }
+                // Rows follow the cursor, or the room's checkpoint when the
+                // cursor is older; a hole throws before anything applies.
+                const checkpointLogId =
+                    checkpoint && Number.isInteger(checkpoint.logId)
+                        ? checkpoint.logId
+                        : 0;
+                assertContiguousTailFrames(
+                    options.documentId,
+                    frames,
+                    afterLogId > 0
+                        ? Math.max(afterLogId, checkpointLogId)
+                        : null,
+                    tailHighWater
+                );
                 payloadsToApply = assembleTailTransactionsFromFrames(frames);
                 update = payloadsToApply[0] || new Uint8Array();
             } else {
@@ -758,6 +1215,19 @@ export async function catchUpCloudDocument(options: {
                     payload.update.length > 0
                         ? base64ToU8(payload.update)
                         : new Uint8Array();
+            }
+            if (cursorInstanceReplaced()) {
+                // Rows after the old cursor would land on a document that
+                // does not hold the rows before them. Ask again from the
+                // current instance's cursor; this does not use up an attempt.
+                lastError = new Error(
+                    `Live glyph catch-up for ${options.documentId} started on a document that was unloaded or replaced`
+                );
+                if (instanceRestarts < maxAttempts) {
+                    instanceRestarts += 1;
+                    attempt -= 1;
+                }
+                continue;
             }
             if (!update.length && !payloadsToApply.length) {
                 // Nothing after this document's cursor: it already holds the
@@ -777,10 +1247,12 @@ export async function catchUpCloudDocument(options: {
                 continue;
             }
             let applied = false;
-            let appliedAny = false;
             const updatesToApply = payloadsToApply.length
                 ? payloadsToApply
                 : [update];
+            // Parts apply strictly in log order; a part that does not
+            // integrate throws (the integrity gate), so the cursor below only
+            // moves once every part is in the document.
             for (const part of updatesToApply) {
                 if (!part.byteLength) {
                     continue;
@@ -798,12 +1270,12 @@ export async function catchUpCloudDocument(options: {
                     );
                     applied = true;
                 }
-                appliedAny ||= applied;
             }
             // Everything through the tail’s high-water log id is now in the
             // document; a retry or the next catch-up starts after it.
+            noteCursorInstance();
             rememberGlyphLogCursor(
-                options.assetId,
+                options.bridge,
                 options.documentId,
                 tailHighWater
             );
@@ -841,9 +1313,12 @@ export async function catchUpCloudDocument(options: {
             refreshEditorAfterGlyphDocumentCatchUp(options.documentId);
             return true;
         } catch (error) {
+            // A gap, a broken document or a drawing that breaks its
+            // invariants comes back the same on every attempt.
             if (
-                error instanceof Error &&
-                /Live glyph catch-up failed \(40[13]\)/.test(error.message)
+                isTerminalDocumentError(error) ||
+                (error instanceof Error &&
+                    /Live glyph catch-up failed \(40[13]\)/.test(error.message))
             ) {
                 throw error;
             }
@@ -870,11 +1345,61 @@ type PublishCloudDocumentUpdateOptions = {
     documentId: string;
     update: Uint8Array;
     collaborationMessage?: CollaborationMessageEnvelope | null;
-    clientId?: string;
+    /**
+     * This writer's name in the room, one per live session: the room keeps
+     * its refusals and holds under it. Required; never derived.
+     */
+    clientId: string;
+    /** The seq of an update sent as one transaction. */
     seq: number;
+    /**
+     * The seqs of an update sent in several parts, one increasing seq per
+     * part, asked for once per update with the part count. The caller keeps
+     * them, so a resend uses the same seqs. Required for a parted update.
+     */
+    partSeqs?: (count: number) => readonly number[];
     clientTransactionId?: string | null;
     signal?: AbortSignal;
 };
+
+/** The writer name a publish carries; throws when it has none. */
+function requireHttpClientId(options: { clientId?: unknown }): string {
+    const clientId =
+        typeof options.clientId === 'string' ? options.clientId.trim() : '';
+    if (!clientId) {
+        throw new TypeError(
+            'A cloud HTTP publish needs the live session’s writer name (clientId).'
+        );
+    }
+    return clientId;
+}
+
+/** The part seqs `options.partSeqs` gives for `count` parts, checked. */
+function requirePartSeqs(
+    options: PublishCloudDocumentUpdateOptions,
+    count: number
+): readonly number[] {
+    if (typeof options.partSeqs !== 'function') {
+        throw new TypeError(
+            `A cloud HTTP update of ${options.documentId} in ${count} parts needs one seq per part.`
+        );
+    }
+    const seqs = options.partSeqs(count);
+    const valid =
+        seqs.length === count &&
+        seqs.every(
+            (seq, index) =>
+                Number.isSafeInteger(seq) &&
+                seq > 0 &&
+                (index === 0 || seq > seqs[index - 1])
+        );
+    if (!valid) {
+        throw new TypeError(
+            `The part seqs of a cloud HTTP update of ${options.documentId} must be ${count} increasing numbers, got ${JSON.stringify(seqs)}.`
+        );
+    }
+    return seqs;
+}
 
 /** Acknowledged parts per large HTTP edit, so a retried publish resumes. */
 const httpPartProgress = new Map<string, number>();
@@ -917,6 +1442,7 @@ export async function publishCloudDocumentUpdate(
     ) {
         return false;
     }
+    requireHttpClientId(options);
     const clientTransactionId =
         options.clientTransactionId || allocateClientTransactionId('http');
     const parts = needsOutboundParts(options.update)
@@ -929,47 +1455,76 @@ export async function publishCloudDocumentUpdate(
     if (!parts || parts.length <= 1) {
         return publishCloudDocumentPart({ ...options, clientTransactionId });
     }
+    // One increasing seq per part, the same on every resend: the room
+    // orders the parts against each other and holds a later part behind an
+    // earlier one it has not committed.
+    const seqs = requirePartSeqs(options, parts.length);
+    const noteProgress = (nextIndex: number): void => {
+        if (httpPartProgress.size >= MAX_HTTP_PART_PROGRESS_ENTRIES) {
+            const oldest = httpPartProgress.keys().next().value;
+            if (oldest !== undefined) {
+                httpPartProgress.delete(oldest);
+            }
+        }
+        httpPartProgress.set(clientTransactionId, nextIndex);
+    };
     let index = Math.min(
         httpPartProgress.get(clientTransactionId) ?? 0,
         parts.length - 1
     );
-    for (; index < parts.length; index += 1) {
+    let attempt = 0;
+    while (index < parts.length) {
         const part = parts[index];
-        for (let attempt = 0; ; attempt += 1) {
-            try {
-                const durable = await publishCloudDocumentPart({
-                    ...options,
-                    update: part.update,
-                    collaborationMessage: part.collaborationMessage ?? null,
-                    clientTransactionId:
-                        part.clientTransactionId || clientTransactionId
-                });
-                if (!durable) {
-                    return false;
-                }
-                break;
-            } catch (error) {
-                const status = (error as { status?: number }).status;
-                // A full tail clears once the room has compacted the parts
-                // before this one; a busy validator answers again shortly.
-                const retryable = status === 409 || status === 503;
-                if (!retryable || attempt >= HTTP_PART_RETRY_DELAYS_MS.length) {
-                    throw error;
-                }
-                await waitForRetry(
-                    HTTP_PART_RETRY_DELAYS_MS[attempt],
-                    options.signal
-                );
+        try {
+            const durable = await publishCloudDocumentPart({
+                ...options,
+                update: part.update,
+                collaborationMessage: part.collaborationMessage ?? null,
+                seq: seqs[index],
+                clientTransactionId:
+                    part.clientTransactionId || clientTransactionId
+            });
+            if (!durable) {
+                return false;
             }
+        } catch (error) {
+            const status = (error as { status?: number }).status;
+            // A full tail clears once the room has compacted the parts
+            // before this one; a busy validator answers again shortly.
+            // A refusal (`clock_gap`, `prior_refused`, also a 409) is
+            // terminal and never retried.
+            const retryable =
+                !(error instanceof CloudRefusalError) &&
+                (error instanceof CloudRoomHttpError
+                    ? isTransientRoomHttpAnswer(error)
+                    : status === 409 || status === 503);
+            if (!retryable) {
+                throw error;
+            }
+            // A held part names the earlier part the room waits for: send
+            // again from that one, with the same seqs.
+            const refusedIndex =
+                error instanceof CloudRoomHttpError && error.refusedSeq !== null
+                    ? seqs.indexOf(error.refusedSeq)
+                    : -1;
+            if (refusedIndex >= 0 && refusedIndex < index) {
+                index = refusedIndex;
+                noteProgress(index);
+            }
+            if (attempt >= HTTP_PART_RETRY_DELAYS_MS.length) {
+                throw error;
+            }
+            await waitForRetry(
+                HTTP_PART_RETRY_DELAYS_MS[attempt],
+                options.signal
+            );
+            attempt += 1;
+            continue;
         }
-        if (index < parts.length - 1) {
-            if (httpPartProgress.size >= MAX_HTTP_PART_PROGRESS_ENTRIES) {
-                const oldest = httpPartProgress.keys().next().value;
-                if (oldest !== undefined) {
-                    httpPartProgress.delete(oldest);
-                }
-            }
-            httpPartProgress.set(clientTransactionId, index + 1);
+        attempt = 0;
+        index += 1;
+        if (index < parts.length) {
+            noteProgress(index);
         }
     }
     httpPartProgress.delete(clientTransactionId);
@@ -990,7 +1545,7 @@ async function publishCloudDocumentPart(
         type: 'update',
         update: u8ToBase64(options.update),
         seq: options.seq,
-        clientId: options.clientId || `http:${options.assetId}`,
+        clientId: requireHttpClientId(options),
         clientTransactionId
     };
     if (options.collaborationMessage) {
@@ -1014,16 +1569,67 @@ async function publishCloudDocumentPart(
         throw error;
     }
     if (!response.ok) {
-        const error = new Error(
-            `Live glyph publish failed (${response.status}) for ${options.documentId}`
-        ) as Error & { status?: number };
-        error.status = response.status;
-        throw error;
+        const refusal = await readRoomErrorBody(response);
+        const refusalError = cloudRefusalFromBody(
+            options.documentId,
+            refusal,
+            options.seq
+        );
+        if (refusalError) {
+            // The room refused this row for good (a missing earlier row, an
+            // earlier refusal): stop here, never retry like `tail_full`.
+            const error = refusalError as CloudRefusalError & {
+                status?: number;
+            };
+            error.status = response.status;
+            throw error;
+        }
+        const answer = new CloudRoomHttpError(
+            `Live glyph publish failed (${response.status}${typeof refusal?.code === 'string' ? ` ${refusal.code}` : ''}) for ${options.documentId}`,
+            {
+                status: response.status,
+                code: refusal?.code,
+                retryable: refusal?.retryable,
+                seq: refusal?.seq ?? options.seq,
+                refusedSeq: refusal?.refusedSeq
+            }
+        );
+        if (
+            !isTransientRoomHttpAnswer(answer) &&
+            refusal?.code &&
+            (answer.retryable === false ||
+                response.status === 400 ||
+                response.status === 413 ||
+                response.status === 422)
+        ) {
+            // A code the room says it refuses every time (`retryable:
+            // false`): terminal for this row, like the codes above.
+            const error = new CloudRefusalError(options.documentId, {
+                code: String(refusal.code),
+                message:
+                    typeof refusal.message === 'string'
+                        ? refusal.message
+                        : undefined,
+                seq: refusal.seq ?? options.seq,
+                refusedSeq: refusal.refusedSeq
+            }) as CloudRefusalError & { status?: number };
+            error.status = response.status;
+            throw error;
+        }
+        throw answer;
     }
     const payload = (await response.json().catch(() => null)) as Record<
         string,
         unknown
     > | null;
+    const acceptedRefusal = cloudRefusalFromBody(
+        options.documentId,
+        payload,
+        options.seq
+    );
+    if (acceptedRefusal) {
+        throw acceptedRefusal;
+    }
     return isExactDurableAck(
         payload
             ? {
@@ -1078,9 +1684,21 @@ export type CloudAdapterOptions = {
     refreshCredentials?: () => Promise<{ token: string; roomUrl: string }>;
     /**
      * The room refused an edit because this user may no longer write. The
-     * owner of the shared outbox (the session) discards every unsent edit.
+     * owner of the shared outbox (the session) keeps every unsent edit in
+     * the write-ahead log and stops sending.
      */
     onWriteAccessLost?: () => void;
+    /** True while this window may not send edits (the session knows). */
+    isReadOnly?: () => boolean;
+    /**
+     * True while this document's edits go out through the session's HTTP
+     * outbox (it still has HTTP rows to send). The socket then leaves this
+     * window's local edits to that outbox, so the room gets the document's
+     * edits over one channel, in order, and never a later one first.
+     */
+    routesOutboundElsewhere?: () => boolean;
+    /** Unsent edits were found and kept, not restored, while read-only. */
+    onUnsentEditsKept?: (count: number) => void;
 };
 
 export type CloudConnectionHealth = {
@@ -1121,6 +1739,8 @@ export type CloudLiveUpdateMessage = {
     logId?: number;
     /** Sender's client id, kept for protocol error reports. */
     clientId?: string;
+    /** This window's own row: already in the document, only the cursor moves. */
+    ownRow?: boolean;
 };
 
 type CloudVisibleRebaselineTargets = {
@@ -1257,10 +1877,25 @@ export function importCollaborationMessageHistory(
             changedGlyphNames: [...message.metadata.changedGlyphNames],
             changedLayerIds: [...message.metadata.changedLayerIds],
             workerReplayTargets: [...message.metadata.workerReplayTargets],
+            ...allGlyphsChangedFlag(message.metadata),
             changes: message.changes,
             derivedForwardChanges: []
         }))
     );
+}
+
+/**
+ * `metadata.allGlyphsChanged` says the envelope was widened to every glyph
+ * of its document (its glyph lists are empty on purpose). Every copy of an
+ * envelope's metadata carries it, or a receiver would read “no glyphs”.
+ */
+export function allGlyphsChangedFlag(metadata: object): {
+    allGlyphsChanged?: true;
+} {
+    return (metadata as { allGlyphsChanged?: unknown }).allGlyphsChanged ===
+        true
+        ? { allGlyphsChanged: true }
+        : {};
 }
 
 // ── Binary ↔ base64 helpers ──────────────────────────────────────────────────

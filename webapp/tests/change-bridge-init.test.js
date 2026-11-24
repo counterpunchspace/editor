@@ -3141,7 +3141,9 @@ describe('bridge Yjs worker callback', () => {
             date: '2024-01-01',
             names: { familyName: 'TestFont' },
             axes: [],
-            masters: [],
+            masters: [
+                { id: 'master-1', name: { dflt: 'Regular' }, location: {} }
+            ],
             instances: [],
             glyphs: [
                 {
@@ -3150,6 +3152,10 @@ describe('bridge Yjs worker callback', () => {
                         {
                             id: 'layer-1',
                             width: 600,
+                            master: {
+                                type: 'DefaultForMaster',
+                                master: 'master-1'
+                            },
                             anchors: [],
                             shapes: []
                         }
@@ -3478,8 +3484,9 @@ describe('bridge Yjs worker callback', () => {
                 path: 'features.features.0.1.code'
             }
         ]);
-        await Promise.resolve();
-        await Promise.resolve();
+        // The full-compile mirror queues behind the worker's earlier
+        // document syncs; let that chain settle.
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(forwardWorkerYjsUpdate).toHaveBeenCalledWith(
             expect.any(Uint8Array),
@@ -3523,8 +3530,9 @@ describe('bridge Yjs worker callback', () => {
                 path: 'format_specific["com.example.vendor"].value'
             }
         ]);
-        await Promise.resolve();
-        await Promise.resolve();
+        // The full-compile mirror queues behind the worker's earlier
+        // document syncs; let that chain settle.
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(forwardWorkerYjsUpdate).toHaveBeenCalledWith(
             expect.any(Uint8Array),
@@ -3579,8 +3587,9 @@ describe('bridge Yjs worker callback', () => {
         );
 
         receiverBridge.applyRemoteUpdate(remoteUpdate, remoteEntries);
-        await Promise.resolve();
-        await Promise.resolve();
+        // The full-compile mirror queues behind the worker's earlier
+        // document syncs; let that chain settle.
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(forwardWorkerYjsUpdate).toHaveBeenCalledWith(
             remoteUpdate,
@@ -3594,7 +3603,7 @@ describe('bridge Yjs worker callback', () => {
         senderBridge.destroy();
     });
 
-    test('worker callback ignores empty-metadata Yjs updates', async () => {
+    test('worker callback forwards Yjs updates without cache metadata', async () => {
         const forwardWorkerYjsUpdate = jest.fn().mockResolvedValue(true);
         const workerSeedSpy = jest
             .spyOn(fontCompilation, 'sendMessage')
@@ -3620,11 +3629,64 @@ describe('bridge Yjs worker callback', () => {
         fullWorkerUpdateSpy.mockClear();
 
         bridge._yjsWorkerCallback(new Uint8Array([4, 2]), []);
-        await Promise.resolve();
-        await Promise.resolve();
+        // The full-compile mirror queues behind the worker's earlier
+        // document syncs; let that chain settle.
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
-        expect(forwardWorkerYjsUpdate).not.toHaveBeenCalled();
-        expect(fullWorkerUpdateSpy).not.toHaveBeenCalled();
+        // Nothing is held back: the worker's document history must stay
+        // complete, so even a packet without cache hints is forwarded.
+        expect(forwardWorkerYjsUpdate).toHaveBeenCalledWith(
+            new Uint8Array([4, 2]),
+            [],
+            expect.objectContaining({ nonGlyphChangeHints: [] })
+        );
+        expect(fullWorkerUpdateSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'applyYjsUpdate' })
+        );
+    });
+
+    test('marks a revision stamp cache-neutral so the worker applies it without a gap', async () => {
+        const forwardWorkerYjsUpdate = jest.fn().mockResolvedValue(true);
+        const workerSeedSpy = jest
+            .spyOn(fontCompilation, 'sendMessage')
+            .mockResolvedValue({ success: true });
+        const hasWorkerCacheDocumentSpy = jest
+            .spyOn(fullFontCompilation, 'hasSeededWorkerDocuments')
+            .mockReturnValue(true);
+        const fullWorkerUpdateSpy = jest
+            .spyOn(fullFontCompilation, 'sendMessage')
+            .mockResolvedValue({ success: true });
+
+        fontCompilation.isInitialized = true;
+        window.windowRole = {
+            isLinkedWindow: () => false
+        };
+        window.fontManager = {
+            buildWorkerSeedYjsState: jest.fn(() => new Uint8Array([1, 2, 3])),
+            forwardWorkerYjsUpdate
+        };
+
+        const bridge = initializeBridgeHarness();
+        workerSeedSpy.mockClear();
+        fullWorkerUpdateSpy.mockClear();
+
+        bridge._yjsWorkerCallback(new Uint8Array([4, 2]), [
+            { op: 'set', path: 'glyphRevisions.id-a', newValue: 'r2' }
+        ]);
+        // The full-compile mirror queues behind the worker's earlier
+        // document syncs; let that chain settle.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        // Nothing is held back: the worker's document history must stay
+        // complete, so even a packet without cache hints is forwarded.
+        expect(forwardWorkerYjsUpdate).toHaveBeenCalledWith(
+            new Uint8Array([4, 2]),
+            [],
+            expect.objectContaining({ nonGlyphChangeHints: ['cache-neutral'] })
+        );
+        expect(fullWorkerUpdateSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ type: 'applyYjsUpdate' })
+        );
     });
 
     test('forwards kerning-pair Yjs updates with non-glyph kerning hints', async () => {
@@ -3658,8 +3720,9 @@ describe('bridge Yjs worker callback', () => {
                 transactionLabel: 'Edit kerning pair'
             }
         ]);
-        await Promise.resolve();
-        await Promise.resolve();
+        // The full-compile mirror queues behind the worker's earlier
+        // document syncs; let that chain settle.
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(forwardWorkerYjsUpdate).toHaveBeenCalledWith(
             expect.any(Uint8Array),
@@ -3685,8 +3748,9 @@ describe('bridge Yjs worker callback', () => {
                 path: 'format_specific.com.schriftgestalt.Glyphs.kerningRTL.master-regular.@MMK_R_A.@MMK_L_V'
             }
         ]);
-        await Promise.resolve();
-        await Promise.resolve();
+        // The full-compile mirror queues behind the worker's earlier
+        // document syncs; let that chain settle.
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(forwardWorkerYjsUpdate).toHaveBeenCalledWith(
             expect.any(Uint8Array),
@@ -3733,8 +3797,9 @@ describe('bridge Yjs worker callback', () => {
                 transactionLabel: 'Edit kerning pair'
             }
         ]);
-        await Promise.resolve();
-        await Promise.resolve();
+        // The full-compile mirror queues behind the worker's earlier
+        // document syncs; let that chain settle.
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(forwardWorkerYjsUpdate).toHaveBeenCalledWith(
             expect.any(Uint8Array),
@@ -3786,8 +3851,9 @@ describe('bridge Yjs worker callback', () => {
                 transactionLabel: 'Add kern group membership'
             }
         ]);
-        await Promise.resolve();
-        await Promise.resolve();
+        // The full-compile mirror queues behind the worker's earlier
+        // document syncs; let that chain settle.
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(forwardWorkerYjsUpdate).toHaveBeenCalledWith(
             expect.any(Uint8Array),
@@ -3826,8 +3892,9 @@ describe('bridge Yjs worker callback', () => {
                 ]
             }
         ]);
-        await Promise.resolve();
-        await Promise.resolve();
+        // The full-compile mirror queues behind the worker's earlier
+        // document syncs; let that chain settle.
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(forwardWorkerYjsUpdate).toHaveBeenCalledWith(
             expect.any(Uint8Array),
@@ -3862,8 +3929,9 @@ describe('bridge Yjs worker callback', () => {
                 path: 'glyphs.alef'
             }
         ]);
-        await Promise.resolve();
-        await Promise.resolve();
+        // The full-compile mirror queues behind the worker's earlier
+        // document syncs; let that chain settle.
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(forwardWorkerYjsUpdate).toHaveBeenCalledWith(
             expect.any(Uint8Array),
@@ -3908,8 +3976,9 @@ describe('bridge Yjs worker callback', () => {
                 workerReplayTargets: [{ glyphName: 'A', layerId: 'layer-1' }]
             }
         ]);
-        await Promise.resolve();
-        await Promise.resolve();
+        // The full-compile mirror queues behind the worker's earlier
+        // document syncs; let that chain settle.
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(forwardWorkerYjsUpdate).toHaveBeenCalledWith(
             expect.any(Uint8Array),
@@ -3966,8 +4035,9 @@ describe('bridge Yjs worker callback', () => {
                 ]
             }
         ]);
-        await Promise.resolve();
-        await Promise.resolve();
+        // The full-compile mirror queues behind the worker's earlier
+        // document syncs; let that chain settle.
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(forwardWorkerYjsUpdate).toHaveBeenCalledWith(
             expect.any(Uint8Array),
@@ -4013,8 +4083,9 @@ describe('bridge Yjs worker callback', () => {
                 workerReplayTargets: [{ glyphName: 'A', layerId: 'layer-1' }]
             }
         ]);
-        await Promise.resolve();
-        await Promise.resolve();
+        // The full-compile mirror queues behind the worker's earlier
+        // document syncs; let that chain settle.
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(forwardWorkerYjsUpdate).toHaveBeenCalledWith(
             expect.any(Uint8Array),
@@ -4052,8 +4123,9 @@ describe('bridge Yjs worker callback', () => {
                 workerReplayTargets: [{ glyphName: 'A', layerId: 'layer-1' }]
             }
         ]);
-        await Promise.resolve();
-        await Promise.resolve();
+        // The full-compile mirror queues behind the worker's earlier
+        // document syncs; let that chain settle.
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(forwardWorkerYjsUpdate).toHaveBeenCalledWith(
             expect.any(Uint8Array),
@@ -4077,6 +4149,9 @@ describe('buildCascadingRecompositionOperations', () => {
 
     function makeBridgeFont() {
         return {
+            masters: [
+                { id: 'master-1', name: { dflt: 'Regular' }, location: {} }
+            ],
             glyphs: [
                 {
                     name: 'A',
@@ -4084,6 +4159,10 @@ describe('buildCascadingRecompositionOperations', () => {
                         {
                             id: 'layer-1',
                             width: 600,
+                            master: {
+                                type: 'DefaultForMaster',
+                                master: 'master-1'
+                            },
                             anchors: [{ name: 'top', x: 100, y: 700 }],
                             shapes: []
                         }
@@ -4095,6 +4174,10 @@ describe('buildCascadingRecompositionOperations', () => {
                         {
                             id: 'layer-2',
                             width: 650,
+                            master: {
+                                type: 'DefaultForMaster',
+                                master: 'master-1'
+                            },
                             anchors: [],
                             shapes: []
                         }
@@ -4864,11 +4947,23 @@ describe('committed Yjs emission funnel', () => {
     test('uses one committed listener with the forward semantic entry for forward edits, undo, and redo', () => {
         const bridge = new ChangeBridge('committed-emission-funnel');
         bridge.initFromJson({
+            masters: [
+                { id: 'master-1', name: { dflt: 'Regular' }, location: {} }
+            ],
             glyphs: [
                 {
                     name: 'A',
                     layers: [
-                        { id: 'layer-1', width: 600, anchors: [], shapes: [] }
+                        {
+                            id: 'layer-1',
+                            width: 600,
+                            master: {
+                                type: 'DefaultForMaster',
+                                master: 'master-1'
+                            },
+                            anchors: [],
+                            shapes: []
+                        }
                     ]
                 }
             ]

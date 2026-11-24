@@ -6,6 +6,7 @@ function makeDrawingArrayReplacementFont() {
         upm: 1000,
         version: [1, 0],
         names: { familyName: 'TestFont' },
+        masters: [{ id: 'L0', name: { dflt: 'Regular' }, location: {} }],
         glyphs: [
             {
                 name: 'oacute',

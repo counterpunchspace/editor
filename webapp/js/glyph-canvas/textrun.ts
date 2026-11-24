@@ -586,6 +586,26 @@ export class TextRunEditor {
         );
     }
 
+    /**
+     * The font's glyph for a character the compiled editing font shaped as
+     * .notdef: a glyph set not to export is left out of the compiled font,
+     * yet it is still the glyph that character stands for here. Naming it
+     * keeps the editor (and its live glyph room) on that glyph instead of
+     * switching to .notdef. Null when the font has no glyph for the
+     * character, or when the cluster holds more than this one glyph.
+     */
+    private sourceNameForNotdefGlyph(glyph: ShapedGlyph): string | null {
+        const cluster = glyph.cl || 0;
+        const clusterSize = this.shapedGlyphs.filter(
+            (other) => (other.cl || 0) === cluster
+        ).length;
+        if (clusterSize !== 1) {
+            return null;
+        }
+        const name = this.sourceNameForShapedGlyph(glyph);
+        return name && name !== '.notdef' ? name : null;
+    }
+
     private applyCompositionSelectionHold(): void {
         const hold = this.compositionSelectionHold;
         if (!hold || this.shapedGlyphs.length === 0) {
@@ -3001,7 +3021,11 @@ export class TextRunEditor {
 
             try {
                 const name = get_glyph_name(shapingFontBlob, glyph.g);
-                names.push(name || '.notdef');
+                names.push(
+                    !name || name === '.notdef'
+                        ? (this.sourceNameForNotdefGlyph(glyph) ?? '.notdef')
+                        : name
+                );
             } catch (error) {
                 console.warn(
                     '[TextRun]',

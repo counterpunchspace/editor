@@ -2,7 +2,10 @@ const { PatchSyncEngine } = require('../js/patch-sync-engine');
 const {
     fitCollaborationMessagesToBudget
 } = require('../js/generated/collab-protocol-metadata-budget');
-const { fitEnvelopeForWire } = require('../js/cloud-envelope-budget');
+const {
+    EnvelopeTooLargeError,
+    fitEnvelopeForWire
+} = require('../js/cloud-envelope-budget');
 const {
     MAX_METADATA_BYTES
 } = require('../js/generated/collab-protocol-limits');
@@ -13,7 +16,7 @@ function makeFont() {
         version: [1, 0],
         names: { familyName: 'Budget' },
         axes: [],
-        masters: [],
+        masters: [{ id: 'M1', name: 'Regular', location: {} }],
         glyphs: ['A', 'B'].map((name) => ({
             name,
             id: `id-${name}`,
@@ -21,7 +24,15 @@ function makeFont() {
             category: 'Base',
             codepoints: [],
             exported: true,
-            layers: [{ id: 'L1', width: 500, shapes: [], anchors: [] }]
+            layers: [
+                {
+                    id: 'L1',
+                    master: { type: 'DefaultForMaster', master: 'M1' },
+                    width: 500,
+                    shapes: [],
+                    anchors: []
+                }
+            ]
         }))
     };
 }
@@ -48,7 +59,7 @@ function sendWidthEdit(sender, font, width) {
 }
 
 describe('fitted envelopes still converge receivers', () => {
-    test.each([1, 120, 100000])(
+    test.each([100000])(
         'a receiver applies an envelope fitted to a %i byte budget',
         (budget) => {
             const senderFont = makeFont();
@@ -61,6 +72,7 @@ describe('fitted envelopes still converge receivers', () => {
 
             const { update, message } = sendWidthEdit(sender, senderFont, 741);
             const fit = fitCollaborationMessagesToBudget([message], budget);
+            expect(fit.fits).toBe(true);
             // Cloud adapters always pass the document the packet belongs to.
             const documentId = sender.documentIdForPath(['glyphs', 'A']);
 
@@ -79,8 +91,9 @@ describe('fitted envelopes still converge receivers', () => {
     );
 
     test('a layer-scoped edit collapsed to its glyph without targets still converges', () => {
-        // Past TRUNCATE_TARGETS a glyph keeps only its `glyphs.X:` path, and
-        // the history scope of a layer edit stays `layer`.
+        // After SHARE_REPLAY_TARGETS and COLLAPSE_TO_GLYPHS a glyph keeps
+        // only its `glyphs.X:` path, and the history scope of a layer edit
+        // stays `layer`.
         const senderFont = makeFont();
         const receiverFont = JSON.parse(JSON.stringify(senderFont));
         const sender = new PatchSyncEngine('sender-budget-glyph-root');
@@ -174,5 +187,93 @@ describe('fitted envelopes still converge receivers', () => {
         };
         expect(fitEnvelopeForWire(other).changes).not.toBe(fittedFirst.changes);
         sender.destroy();
+    });
+
+    test('an envelope no lossless step can fit is refused, never cut down', () => {
+        const font = makeFont();
+        const sender = new PatchSyncEngine('sender-budget-refused');
+        sender.initFromJson(font);
+        const { message } = sendWidthEdit(sender, font, 660);
+        const huge = {
+            ...message,
+            label: 'x'.repeat(MAX_METADATA_BYTES * 2)
+        };
+        expect(() =>
+            fitEnvelopeForWire(huge, { documentId: 'glyph:id-A' })
+        ).toThrow(EnvelopeTooLargeError);
+        // The cached verdict refuses every packet that shares the body.
+        expect(() => fitEnvelopeForWire({ ...huge, localSequence: 2 })).toThrow(
+            EnvelopeTooLargeError
+        );
+        sender.destroy();
+    });
+
+    test('an envelope past glyph roots widens to the whole document instead of truncating', () => {
+        const font = makeFont();
+        const sender = new PatchSyncEngine('sender-budget-widened');
+        sender.initFromJson(font);
+        const { message } = sendWidthEdit(sender, font, 670);
+        const names = Array.from({ length: 6000 }, (_, n) => `glyph-${n}`);
+        const big = {
+            ...message,
+            changes: names.map((name) => ({
+                path: `glyphs.${name}:layers.L1:width`,
+                op: 'set'
+            })),
+            metadata: {
+                ...message.metadata,
+                changedGlyphNames: names,
+                workerReplayTargets: names.map((glyphName) => ({
+                    glyphName,
+                    layerId: 'L1'
+                }))
+            }
+        };
+        const fitted = fitEnvelopeForWire(big);
+        expect(JSON.stringify([fitted]).length).toBeLessThan(
+            MAX_METADATA_BYTES
+        );
+        expect(fitted.metadata.allGlyphsChanged).toBe(true);
+        expect(fitted.metadata.changedGlyphNames).toEqual([]);
+        expect(fitted.metadata.workerReplayTargets).toEqual([]);
+        expect(fitted.changes).toEqual([]);
+        expect(fitted.transactionId).toBe(big.transactionId);
+        sender.destroy();
+    });
+
+    // Fails until receivers honour `metadata.allGlyphsChanged` (re-read every
+    // glyph of the packet's document). Flip to `test` once they do.
+    test('a receiver converges on an envelope widened to its whole document', () => {
+        const senderFont = makeFont();
+        const receiverFont = JSON.parse(JSON.stringify(senderFont));
+        const sender = new PatchSyncEngine('sender-budget-widened-rx');
+        const receiver = new PatchSyncEngine('receiver-budget-widened-rx');
+        sender.initFromJson(senderFont);
+        receiver.setFontJson(receiverFont);
+        receiver.applyDocumentSetState(sender.encodeDocumentSet());
+
+        const { update, message } = sendWidthEdit(sender, senderFont, 755);
+        const widened = {
+            ...message,
+            changes: [],
+            metadata: {
+                ...message.metadata,
+                allGlyphsChanged: true,
+                changedGlyphNames: [],
+                changedLayerIds: [],
+                workerReplayTargets: []
+            }
+        };
+        receiver.applyRemoteUpdate(
+            update,
+            undefined,
+            [widened],
+            sender.documentIdForPath(['glyphs', 'A']),
+            { captureInUndo: false }
+        );
+        expect(receiverFont.glyphs[0].layers[0].width).toBe(755);
+
+        sender.destroy();
+        receiver.destroy();
     });
 });

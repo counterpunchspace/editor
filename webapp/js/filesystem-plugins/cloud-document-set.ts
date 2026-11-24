@@ -1,4 +1,5 @@
 import * as Y from 'yjs';
+import { applyUpdateWithIntegrity } from '../yjs-update-integrity';
 import {
     applyCloudOwnedData,
     catalogFromCoreJson,
@@ -549,7 +550,7 @@ export class CloudDocumentSet {
         if (!doc || !update.byteLength) {
             return;
         }
-        Y.applyUpdate(doc, update);
+        applyUpdateWithIntegrity(doc, update, documentId);
     }
 
     destroy(): void {

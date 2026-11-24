@@ -123,6 +123,10 @@ function createRenameRoundTripFontData() {
                     },
                     {
                         id: 'layer-1-bg',
+                        master: {
+                            type: 'AssociatedWithMaster',
+                            master: 'master-regular'
+                        },
                         is_background: true,
                         background_layer_id: 'layer-1',
                         width: 700,

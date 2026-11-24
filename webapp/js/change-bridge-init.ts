@@ -11,6 +11,7 @@
  * window's resident snapshot. The font is adopted once that snapshot ends.
  */
 
+import { BrokenDocumentError, onDocumentBroken } from './yjs-update-integrity';
 import {
     CATCH_UP_COMPILE_SOURCE,
     FONT_DEPS_ENTRY_PATH,
@@ -152,26 +153,110 @@ function enqueueCatchUpRefresh(
 
 /**
  * Wait for the compiler worker before a refresh compiles. A worker update
- * that fails (a catch-up can bring a shard in an in-between state) reseeds
- * the worker from the bridge; compile from that, not skip the refresh.
+ * that fails is an error: the refresh stops and the failure is shown. The
+ * worker is not reseeded behind it, which would compile from a document
+ * that never received the update.
  */
 async function awaitWorkerReadyForRefresh(
     workerForwards: Promise<void>[]
 ): Promise<void> {
+    await Promise.all(workerForwards);
+    await fontCompilation.awaitWorkerDocumentReadyForCompile();
+}
+
+export function logRefreshFailure(error: unknown): void {
+    // A worker failure the refresh awaited was shown when it happened.
+    if (wasWorkerFailureReported(error)) {
+        return;
+    }
+    console.error('[ChangeBridge] Committed change refresh failed', error);
+    sidebarErrorDisplay.showError(error, 'editing', { sticky: true });
+}
+
+// A document that refused an update stays refused until the font is
+// reloaded; say so where errors stay visible, not only in the console.
+onDocumentBroken((documentId, error) => {
+    sidebarErrorDisplay.showError(
+        new BrokenDocumentError(documentId, error),
+        'editing',
+        { sticky: true }
+    );
+});
+
+// Worker failures already shown, so a refresh or cache wait that sees the
+// same rejection again does not show it a second time.
+const reportedWorkerFailures = new WeakSet<object>();
+
+function wasWorkerFailureReported(error: unknown): boolean {
+    return (
+        typeof error === 'object' &&
+        error !== null &&
+        reportedWorkerFailures.has(error)
+    );
+}
+
+/**
+ * Show a compile worker document failure; it is never swallowed, and shown
+ * once however many waiters see it.
+ */
+function reportWorkerDocumentFailure(message: string, error: unknown): void {
+    if (wasWorkerFailureReported(error)) {
+        return;
+    }
+    if (typeof error === 'object' && error !== null) {
+        reportedWorkerFailures.add(error);
+    }
+    console.error(`[ChangeBridge] ${message}`, error);
+    sidebarErrorDisplay.showError(error, 'editing', { sticky: true });
+}
+
+/**
+ * Wait for the font manager's worker cache update. A failure is shown and
+ * thrown on, so the caller stops instead of compiling from a stale cache.
+ */
+async function awaitWorkerCacheUpdateOrReport(
+    awaitWorkerCacheUpdate: (() => Promise<void>) | undefined
+): Promise<void> {
+    if (!awaitWorkerCacheUpdate) {
+        return;
+    }
     try {
-        await Promise.all(workerForwards);
-        await fontCompilation.awaitWorkerDocumentReadyForCompile();
+        await awaitWorkerCacheUpdate();
     } catch (error) {
-        console.warn(
-            '[ChangeBridge] Worker sync failed; compiling after its recovery',
+        reportWorkerDocumentFailure(
+            'Failed to update the compile worker cache',
             error
         );
-        await fontCompilation.awaitWorkerDocumentReadyForCompile();
+        throw error;
     }
 }
 
-function logRefreshFailure(error: unknown): void {
-    console.warn('[ChangeBridge] Committed change refresh failed', error);
+/**
+ * Keep a worker packet's completion for later refreshes to wait on, and
+ * show its failure at once: a refresh that awaits it still sees the
+ * rejection, and one that never does leaves no unhandled rejection.
+ */
+export function trackWorkerForward(
+    forwarded: Promise<unknown>,
+    message: string
+): Promise<void> {
+    const settled = forwarded.then(
+        () => undefined,
+        (error: unknown) => {
+            // An object, so the refresh that awaits it can tell it was
+            // shown already (reportWorkerDocumentFailure).
+            const failure =
+                typeof error === 'object' && error !== null
+                    ? error
+                    : new Error(String(error));
+            fullFontCompilation.setWorkerCacheDocumentReady(false);
+            reportWorkerDocumentFailure(message, failure);
+            throw failure;
+        }
+    );
+    // Shown above; a refresh that awaits it still sees the rejection.
+    settled.catch(() => undefined);
+    return settled;
 }
 
 /** Return the completion promise for all packets enqueued so far. */
@@ -1024,6 +1109,7 @@ type NonGlyphChangeHint =
     | 'kerning-value'
     | 'kerning-groups'
     | 'masters'
+    | 'cache-neutral'
     | `top-level:${string}`;
 
 function pathTouchesStationKerning(path: string): boolean {
@@ -1109,6 +1195,9 @@ function collectNonGlyphChangeHints(
             path.startsWith('glyphRevisions.') ||
             path === FONT_DEPS_ENTRY_PATH
         ) {
+            // The worker still applies it, so its copy has no gap; no
+            // compile cache reads these keys.
+            hints.add('cache-neutral');
             continue;
         }
         const kerningEditType =
@@ -1760,12 +1849,12 @@ async function refreshRustWorkerCache(
         return;
     }
 
-    try {
-        await fontCompilation.awaitWorkerDocumentSync();
-        await window.fontManager.awaitWorkerCacheUpdate?.();
-    } catch {
-        // Non-fatal — the scheduled compile will update the cache later
-    }
+    // A failed worker sync is an error, not something a later compile
+    // papers over.
+    await fontCompilation.awaitWorkerDocumentSync();
+    await awaitWorkerCacheUpdateOrReport(
+        window.fontManager.awaitWorkerCacheUpdate?.bind(window.fontManager)
+    );
 }
 
 export async function syncRustCacheAndRefreshCanvas(
@@ -1957,15 +2046,11 @@ export function recomposeCollaboratorCascade(
         if (!drawing) {
             return null;
         }
-        try {
-            return JSON.stringify(
-                typeof drawing.toJSON === 'function'
-                    ? drawing.toJSON()
-                    : drawing
-            );
-        } catch {
-            return null;
-        }
+        // A drawing that cannot be read throws; reading it as absent would
+        // hide a cascade change.
+        return JSON.stringify(
+            typeof drawing.toJSON === 'function' ? drawing.toJSON() : drawing
+        );
     };
 
     // What the cascade may change, as it is now.
@@ -2101,13 +2186,9 @@ export function recomposeForSettle(
     if (!targets.length || !sources.length) {
         return [];
     }
-    let changed: CascadeDrawingTarget[];
-    try {
-        changed = recomposeCollaboratorCascade(bridge, sources);
-    } catch (error) {
-        console.warn('Could not recompose a cascade to settle it:', error);
-        return [];
-    }
+    // A cascade that cannot be recomposed is an error; it is not settled
+    // by leaving the drawings as they were.
+    const changed = recomposeCollaboratorCascade(bridge, sources);
     const targetKeys = new Set(targets.map(cascadeTargetKey));
     const pendingKeys = new Set(stillPending.map(cascadeTargetKey));
     const writtenTargets = changed.filter((target) =>
@@ -2160,15 +2241,12 @@ export function recomposeStaleComposites(
     ) ?? []) {
         names.add(dependent);
     }
-    // Held here and complete: a document still waiting for updates it never
-    // received shows a glyph older than everyone else's.
+    // Held here. A document can never wait for updates it did not
+    // receive: the integrity gate refuses such an update and marks the
+    // document broken instead of applying part of it.
     const isResident = (glyphName: string): boolean => {
         const documentId = bridge.glyphDocumentIdForName(glyphName);
-        return (
-            !!documentId &&
-            bridge.hasResidentGlyphDocument(documentId) &&
-            !bridge.glyphDocumentHasPendingUpdates?.(documentId)
-        );
+        return !!documentId && bridge.hasResidentGlyphDocument(documentId);
     };
     const references = (drawing: any): string[] =>
         ((drawing?.components ?? []) as Array<{ reference?: unknown }>)
@@ -2263,16 +2341,11 @@ export function recomposeStaleComposites(
             ) {
                 continue;
             }
-            try {
-                withSuppressedModelRecording(() => {
-                    drawing.invalidateContentCaches?.();
-                    drawing.invalidateLayoutCache?.();
-                    drawing.rebuildAutomaticComposition?.();
-                });
-            } catch (error) {
-                console.warn('Could not recompose a composite:', error);
-                continue;
-            }
+            withSuppressedModelRecording(() => {
+                drawing.invalidateContentCaches?.();
+                drawing.invalidateLayoutCache?.();
+                drawing.rebuildAutomaticComposition?.();
+            });
             rebuilt.push(target);
         }
     }
@@ -2313,6 +2386,22 @@ function sourceDrawingFingerprints(
         }
     }
     return out;
+}
+
+/**
+ * Trace a committed local change, unless it is a `localOnly` notice: that
+ * wrote nothing and sent no packet (it only refreshes compile and caches in
+ * this window), so there is no local change to record. True when traced.
+ */
+export function traceCommittedLocalChange(
+    entries: ChangeLogEntry[],
+    context: { documentId?: string; localOnly?: boolean }
+): boolean {
+    if (context.localOnly || !isCollabTraceOn()) {
+        return false;
+    }
+    traceLocalCommit(entries, context.documentId);
+    return true;
 }
 
 /** A committed local change, undo or redo, with what the model holds after it. */
@@ -2653,7 +2742,9 @@ async function awaitCommittedWorkerCacheSettled(
         }
 
         awaitedPromise = pendingPromise;
-        await fontManager.awaitWorkerCacheUpdate();
+        await awaitWorkerCacheUpdateOrReport(
+            fontManager.awaitWorkerCacheUpdate.bind(fontManager)
+        );
         await awaitWorkerSync();
     }
 }
@@ -3602,7 +3693,11 @@ export function runBridgeUndoRedo(
             if (!bridge) {
                 return;
             }
-            await window.fontManager?.awaitWorkerCacheUpdate?.();
+            await awaitWorkerCacheUpdateOrReport(
+                window.fontManager?.awaitWorkerCacheUpdate?.bind(
+                    window.fontManager
+                )
+            );
             // Always undo/redo the glyph currently being edited.
             // This is the last glyph in glyph stack, passed as glyphName.
             const targetGlyph = glyphName;
@@ -3979,36 +4074,10 @@ function initializeBridge(detail: {
     // YJS_ONLY: Binary Yjs update forwarded to worker — no full JSON
     // crossing. changedGlyphs hint enables targeted Rust-side cache patching.
     // The worker's Y.Docs must see every byte of each document's history, in
-    // order: Yjs keeps an update whose earlier clocks are missing pending
-    // forever, so one dropped packet silently stalls every later edit of that
-    // document in the worker. Packets the worker needs no cache work for
-    // (glyph-revision stamps, packets without change metadata) are therefore
-    // held per document and merged in front of the next packet sent for it.
-    const heldWorkerUpdates = new Map<string, Uint8Array[]>();
-    const holdWorkerUpdate = (documentId: string, update: Uint8Array) => {
-        if (!update.length) {
-            return;
-        }
-        const held = heldWorkerUpdates.get(documentId);
-        if (held) {
-            held.push(update);
-        } else {
-            heldWorkerUpdates.set(documentId, [update]);
-        }
-    };
-    const withHeldWorkerUpdates = (
-        documentId: string,
-        update: Uint8Array
-    ): Uint8Array => {
-        const held = heldWorkerUpdates.get(documentId);
-        if (!held?.length) {
-            return update;
-        }
-        heldWorkerUpdates.delete(documentId);
-        return Y.mergeUpdates([...held, update]);
-    };
+    // order: every packet is forwarded as it comes. Every packet carries
+    // entries (the engine describes one without entries of its own as its
+    // whole document), so none is held back.
     bridge.setWorkerDocumentReplaceCallback((documentId, state) => {
-        heldWorkerUpdates.delete(documentId);
         // Read the document when the replace runs, not now: updates forwarded
         // in between must not be overwritten by this older snapshot.
         const readCurrent = () => bridge.encodeDocumentState(documentId);
@@ -4035,12 +4104,14 @@ function initializeBridge(detail: {
                 return;
             }
             if (options?.renameBatch === 'last') {
-                heldWorkerUpdates.clear();
                 const reseeded =
                     window.fontManager?.reseedWorkerFromBridge?.(
                         'multi-document glyph rename commit'
                     ) ?? Promise.resolve(false);
-                latestWorkerForward = reseeded.then(() => undefined);
+                latestWorkerForward = trackWorkerForward(
+                    reseeded,
+                    'Failed to reseed the compile worker after a multi-document glyph rename'
+                );
                 fullFontCompilation.setWorkerCacheDocumentReady(false);
                 return;
             }
@@ -4063,18 +4134,7 @@ function initializeBridge(detail: {
                 shouldInvalidateLayoutClosureForCommittedEntries(
                     changeLogEntries
                 );
-            const hasWorkerCacheMetadata =
-                changedGlyphs.length > 0 ||
-                nonGlyphChangeHints.length > 0 ||
-                drawingTargets.length > 0 ||
-                glyphRenames.length > 0;
-            const heldKey = documentId ?? FONT_CORE_DOCUMENT_ID;
-            if (!hasWorkerCacheMetadata) {
-                holdWorkerUpdate(heldKey, update);
-                latestWorkerForward = Promise.resolve();
-                return;
-            }
-            const workerUpdate = withHeldWorkerUpdates(heldKey, update);
+            const workerUpdate = update;
 
             const forwarded =
                 window.fontManager?.forwardWorkerYjsUpdate?.(
@@ -4090,7 +4150,10 @@ function initializeBridge(detail: {
                         documentId
                     }
                 ) ?? Promise.resolve(false);
-            latestWorkerForward = forwarded.then(() => undefined);
+            latestWorkerForward = trackWorkerForward(
+                forwarded,
+                'Failed to forward a Yjs update to the compile worker'
+            );
 
             // Queued behind the worker's seed and earlier updates: one it
             // missed would leave every later update of that document pending.
@@ -4107,11 +4170,14 @@ function initializeBridge(detail: {
                     documentId
                 })
                 .catch((error) => {
-                    console.warn(
+                    // The worker’s copy is a compile cache; the next compile
+                    // reads the bridge’s documents whole. The failure itself
+                    // is shown, never swallowed.
+                    fullFontCompilation.setWorkerCacheDocumentReady(false);
+                    reportWorkerDocumentFailure(
                         'Failed to mirror Yjs update to full compile worker',
                         error
                     );
-                    fullFontCompilation.setWorkerCacheDocumentReady(false);
                 });
         }
     );
@@ -4125,10 +4191,13 @@ function initializeBridge(detail: {
         const documentSet = bridge.encodeDocumentSet?.();
         const state = bridge.encodeBridgeState();
         if (!documentSet?.length && !state?.length) {
-            console.warn(
-                'Failed to build worker seed Yjs state for initial worker seed'
-            );
             fontCompilation.setWorkerCacheDocumentReady(false);
+            reportWorkerDocumentFailure(
+                'Failed to build worker seed Yjs state for initial worker seed',
+                new Error(
+                    'The bridge has no documents to seed the worker with.'
+                )
+            );
         } else {
             void fontCompilation
                 .trackWorkerDocumentSync(
@@ -4137,11 +4206,11 @@ function initializeBridge(detail: {
                         : fontCompilation.seedWorkerYDocFromState(state)
                 )
                 .catch((error) => {
-                    console.warn(
+                    fontCompilation.setWorkerCacheDocumentReady(false);
+                    reportWorkerDocumentFailure(
                         'Failed to seed worker Y.Doc after bridge init',
                         error
                     );
-                    fontCompilation.setWorkerCacheDocumentReady(false);
                 });
         }
     }
@@ -4161,9 +4230,7 @@ function initializeBridge(detail: {
     (window as any).remoteCascadePreview = remoteCascadePreview;
     bridge.onCommittedChange((entries, context) => {
         if (context.origin !== 'remote') {
-            if (isCollabTraceOn()) {
-                traceLocalCommit(entries, context.documentId);
-            }
+            traceCommittedLocalChange(entries, context);
             return;
         }
         if (

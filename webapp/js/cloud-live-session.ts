@@ -1,4 +1,9 @@
 import { recordCollabTrace } from './collab-trace';
+import { subscribeDocumentLoaded } from './cloud-adapter-held-deltas';
+import {
+    applyUnsentRowsInOrder,
+    documentInstanceOf
+} from './cloud-adapter-wal-restore';
 /**
  * Live cloud session: one WebSocket per Durable Object shard.
  *
@@ -8,11 +13,14 @@ import { recordCollabTrace } from './collab-trace';
  */
 import { isLayoutDocumentId } from './filesystem-plugins/cloud-room-layout';
 import {
-    fetchCloudDocumentState,
+    fetchCloudDocumentStateWithLogId,
     normalizeCloudShardHttpUrl
 } from './cloud-adapter-bootstrap';
 import * as Y from 'yjs';
-import { fitEnvelopeForWire } from './cloud-envelope-budget';
+import {
+    EnvelopeTooLargeError,
+    fitEnvelopeForWire
+} from './cloud-envelope-budget';
 import {
     CloudAdapter,
     catchUpCloudDocument,
@@ -27,7 +35,8 @@ import {
     type CloudConnectionStatus,
     type CloudTransferActivity,
     normalizeCloudShardWebSocketUrl,
-    cloudReconnectDelayMs
+    cloudReconnectDelayMs,
+    unsentEditsKeptMessage
 } from './cloud-adapter';
 import {
     CloudDurableWal,
@@ -50,9 +59,52 @@ import {
 } from './collaboration-message';
 import { Logger } from './logger';
 import { pushCollabIntegrityEvent } from './cloud-collab-integrity-debug';
-import { allocateClientTransactionId } from './generated/collab-protocol-durability-contract';
+import {
+    CloudRefusalError,
+    CloudRoomHttpError,
+    isTerminalDocumentError,
+    isTransientRoomHttpAnswer,
+    OUTBOUND_ACK_TIMEOUT_MS,
+    rememberLoadedDocumentLogCursor
+} from './cloud-adapter-support';
+import {
+    CloudReadOnlyError,
+    MissingEnvelopeError
+} from './cloud-adapter-outbox';
 
 const console = new Logger('CloudLiveSession');
+
+/** `_erroredDocuments` key of the kept-edits notice. */
+const WRITE_ACCESS_ERROR_KEY = 'write-access';
+
+/** One edit in a glyph's HTTP outbox. */
+type HttpOutboxPacket = {
+    clientTransactionId: string;
+    update: Uint8Array;
+    collaborationMessage: CollaborationMessageEnvelope;
+    /**
+     * Its seq, taken when it is first sent (null before), so a packet sent
+     * in parts gets increasing seqs below every later packet's. A resend
+     * uses the same seq.
+     */
+    seq: number | null;
+    /** The seqs of its parts when it is sent in several, kept for resends. */
+    partSeqs: number[] | null;
+    walRecord: CloudWalRecord | null;
+    /** Its WAL row exists (on disk, or kept in memory while storage recovers). */
+    written: boolean;
+};
+
+/** The ordered HTTP outbox of one glyph without a socket. */
+type HttpDocumentOutbox = {
+    packets: HttpOutboxPacket[];
+    sending: boolean;
+    /** The room refused the head: nothing more is sent for this glyph. */
+    halted: Error | null;
+    attempts: number;
+    refreshed: boolean;
+    retryTimer: ReturnType<typeof setTimeout> | null;
+};
 
 export type CloudLiveSessionOptions = {
     assetId: string;
@@ -76,10 +128,17 @@ export type CloudLiveSessionOptions = {
     /** Fired once the shard sockets exist, before the ready barrier. */
     onSocketsReady?: () => void;
     /**
-     * The room refused edits because this user is now a viewer. The unsent
-     * edits were discarded; `discarded` is how many.
+     * This user may no longer write (the room refused an edit, or a reload
+     * found the user is a viewer). Unsent edits stay in the write-ahead log
+     * untouched and are neither restored nor sent; `kept` is how many.
      */
-    onWriteAccessLost?: (discarded: number) => void;
+    onWriteAccessLost?: (kept: number) => void;
+    /**
+     * Fired synchronously the moment this window stops sending edits
+     * (before `onWriteAccessLost`, which waits for the write-ahead log), so
+     * the font can refuse local edits before another one is made.
+     */
+    onReadOnly?: () => void;
 };
 
 function roleFromRoomToken(token: string): string | null {
@@ -223,9 +282,7 @@ function retriesConnect(documentId: string): boolean {
     return documentId.startsWith('glyph:') || isLayoutDocumentId(documentId);
 }
 
-const MAX_REFUSED_HTTP_PUBLISHES = 6;
 /** Merged HTTP publishes stay well under the room's packet limit. */
-const MAX_MERGED_HTTP_PUBLISH_BYTES = 128 * 1024;
 const READY_BARRIER_ERROR_KEY = '\u0000ready-barrier';
 
 const DEGRADED_BARRIER_RETRY_BASE_MS = 10_000;
@@ -253,6 +310,54 @@ export function roomTokenExpiresAt(token: string | null | undefined): number {
     }
 }
 
+/**
+ * The envelope a WAL row keeps: fitted to the room's cap, or, when no
+ * lossless step fits, the envelope as it came together with the refusal.
+ * The row is written either way, so the packet is never dropped.
+ */
+function fitEnvelopeForWal(
+    message: CollaborationMessageEnvelope,
+    documentId: string
+): {
+    message: CollaborationMessageEnvelope;
+    tooLarge: EnvelopeTooLargeError | null;
+} {
+    try {
+        return {
+            message: fitEnvelopeForWire(message, { documentId }),
+            tooLarge: null
+        };
+    } catch (error) {
+        if (!(error instanceof EnvelopeTooLargeError)) {
+            throw error;
+        }
+        return { message, tooLarge: error };
+    }
+}
+
+export type CatchUpBatchFailure = { documentId: string; error: Error };
+
+export type CatchUpBatchOutcome = {
+    /** Documents brought to the room's tail. */
+    succeeded: string[];
+    /** Every document that failed, with its own error. */
+    failed: CatchUpBatchFailure[];
+};
+
+const catchUpBatchOutcomes = new WeakMap<Error, CatchUpBatchOutcome>();
+
+/**
+ * The per-document outcome of the `catchUpDocuments` batch that threw
+ * `error`, or null when `error` did not come from one.
+ */
+export function catchUpBatchOutcome(
+    error: unknown
+): CatchUpBatchOutcome | null {
+    return error instanceof Error
+        ? (catchUpBatchOutcomes.get(error) ?? null)
+        : null;
+}
+
 export class CloudLiveSession {
     private readonly _adapters = new Map<string, CloudAdapter>();
     private readonly _options: CloudLiveSessionOptions;
@@ -265,22 +370,82 @@ export class CloudLiveSession {
     private _httpReceivingCount = 0;
     private _coreAdapterStatus: CloudConnectionStatus | null = null;
     private _httpPublishingCount = 0;
-    private _relayChain: Promise<void> = Promise.resolve();
+    /**
+     * One write chain per document for every device outbox write: this
+     * window's own rows, staged burst rows, their drops and linked-window
+     * relays. Each call takes its place synchronously, so the WAL holds a
+     * document's rows in the order the calls came, whatever each write
+     * awaits on the way.
+     */
+    private readonly _walWriteChains = new Map<string, Promise<void>>();
     /** Documents (or the reconnect barrier) currently failed, with detail. */
     private _erroredDocuments = new Map<string, string>();
     private _signedOut = false;
     private _httpPublishSeq = 0;
-    private _httpPublishQueue: Array<() => Promise<void>> = [];
+    /**
+     * This session's writer name for HTTP publishes. Every session (and
+     * tab) has its own, since each starts its seqs at 1 again: the room
+     * keeps a writer's refusals and holds under it, and another session's
+     * must never refuse this one's rows.
+     */
+    readonly httpClientId: string;
+    /**
+     * The writer name each glyph publishes under: this session's name plus
+     * a number per glyph. The room keeps a writer's holds and refusals
+     * across all its rows, so a refusal of one glyph's row (its own real
+     * gap) must not refuse another glyph's rows as `prior_refused` and mark
+     * that glyph broken too. Glyphs' HTTP rows never depend on each other.
+     */
+    private readonly _httpWriterIds = new Map<string, string>();
+    /** Per glyph without a socket: its edits, in the order they were made. */
+    private readonly _httpOutboxes = new Map<string, HttpDocumentOutbox>();
     private _writeAccessLostHandling: Promise<void> | null = null;
+    /** Write access was removed: nothing is sent, unsent rows are kept. */
+    private _writeAccessLost = false;
+    /** The kept-edits count reported last, so a reload reports it once. */
+    private _reportedKeptEdits: number | null = null;
     private _httpPublishActive = 0;
     private readonly _httpPublishInFlight = new Set<Promise<void>>();
     private readonly _httpEnqueueInFlight = new Set<Promise<void>>();
     private _localUpdateUnsubscribe: (() => void) | null = null;
+    private _documentLoadedUnsubscribe: (() => void) | null = null;
     private _lastEmittedTransferActivity: CloudTransferActivity = 'idle';
     private _syncLiveChain: Promise<void> = Promise.resolve();
     private readonly _wal = new CloudDurableWal();
+    /**
+     * Glyph sockets this window no longer wants that still wait for the
+     * room to acknowledge edits they sent. They stay open (and keep taking
+     * the glyph's edits) until acknowledged, at most this long; only then
+     * are rows still unacknowledged handed to HTTP.
+     */
+    private readonly _glyphSocketDrains = new Map<
+        string,
+        {
+            adapter: CloudAdapter;
+            unsubscribe: () => void;
+            timer: ReturnType<typeof setTimeout> | null;
+        }
+    >();
+    _glyphSocketDrainMs = OUTBOUND_ACK_TIMEOUT_MS;
     private _walLoad: Promise<void> | null = null;
     private _walLoadAttempts = 0;
+    /**
+     * Unsent HTTP rows per glyph that do not fit on what the glyph holds
+     * yet (it is not loaded, or lacks the room's state the row builds on),
+     * in WAL order. They are sent all the same; they show once the glyph's
+     * state is loaded from the room.
+     */
+    private readonly _walRowsAwaitingState = new Map<
+        string,
+        CloudWalRecord[]
+    >();
+    /**
+     * Glyphs the running ready barrier caught up from the room. The WAL
+     * replay that follows in the same barrier restores their unsent rows
+     * on the room's complete state, so a row that still does not fit there
+     * is a real gap, not a row to wait for. Null outside a barrier.
+     */
+    private _caughtUpForWalReplay: Set<string> | null = null;
     private _token: string;
     private _roomUrl: string;
     private _keepRequestedGlyphSockets: boolean;
@@ -298,11 +463,13 @@ export class CloudLiveSession {
 
     constructor(options: CloudLiveSessionOptions) {
         this._options = options;
+        this.httpClientId = `http:${options.assetId}:${crypto.randomUUID()}`;
         this._token = options.token;
         this._roomUrl = options.roomUrl;
         this._keepRequestedGlyphSockets =
             options.keepRequestedGlyphSockets === true;
         this._bindDependentPublishHook();
+        this._bindDocumentLoadedHook();
         void this._ensureWalLoaded();
     }
 
@@ -453,51 +620,101 @@ export class CloudLiveSession {
     }
 
     /**
-     * The room refused edits from this user, who is now a viewer. Those edits
-     * can never be saved, and keeping them would resend them on every
-     * reconnect and restore them into the font on every reload. Drop every
-     * unsent edit for this font and tell the plugin how many.
+     * True while this window may not send edits: the room refused an edit
+     * for lack of write access, or the room token says viewer. Write access
+     * lost this way comes back only with a new session.
      */
-    discardUnsentEditsAfterWriteAccessLost(): Promise<void> {
+    get readOnly(): boolean {
+        return this._isReadOnly();
+    }
+
+    /** True while this window may not send edits. */
+    private _isReadOnly(): boolean {
+        return (
+            this._writeAccessLost || roleFromRoomToken(this._token) === 'viewer'
+        );
+    }
+
+    /**
+     * Unsent edits were found while this window is read-only: they stay in
+     * the write-ahead log untouched. Say so once per count.
+     */
+    private _reportKeptEdits(count: number): void {
+        if (count <= 0 || this._reportedKeptEdits === count) {
+            return;
+        }
+        this._reportedKeptEdits = count;
+        const detail = unsentEditsKeptMessage(count);
+        this._erroredDocuments.set(WRITE_ACCESS_ERROR_KEY, detail);
+        pushCollabIntegrityEvent('write-access-lost', {
+            assetId: this._options.assetId,
+            kept: count
+        });
+        this._options.onWriteAccessLost?.(count);
+        this._options.onConnectionStatus?.('error', detail);
+    }
+
+    private _keptEditCount(): number {
+        return this._wal.replayableRecords({ includeHeld: true }).length;
+    }
+
+    /**
+     * The room refused edits from this user, who is now a viewer. Those edits
+     * can never be sent while that lasts, so nothing more is sent; they stay
+     * in the write-ahead log untouched and are not restored on reload while
+     * the user is a viewer. The documents holding them are not broken: the
+     * read-only flag stops local edits and sending, and peer rows (which
+     * build on the room’s state, not on the kept clocks) keep applying
+     * through the integrity gate.
+     */
+    keepUnsentEditsAfterWriteAccessLost(): Promise<void> {
         if (this._writeAccessLostHandling) {
             return this._writeAccessLostHandling;
         }
+        this._writeAccessLost = true;
+        this._options.onReadOnly?.();
         this._writeAccessLostHandling = (async () => {
-            this._httpPublishQueue = [];
-            for (const adapter of this._adapters.values()) {
-                adapter.discardUnsentEdits?.();
+            // The queued packets stay in the write-ahead log; only the
+            // in-memory sending stops.
+            for (const outbox of this._httpOutboxes.values()) {
+                if (outbox.retryTimer) {
+                    clearTimeout(outbox.retryTimer);
+                    this._timers.delete(outbox.retryTimer);
+                    outbox.retryTimer = null;
+                }
             }
+            for (const adapter of this._adapters.values()) {
+                adapter.keepUnsentEditsWhileReadOnly?.();
+            }
+            // Packets still being written finish their WAL rows first.
+            await Promise.allSettled([...this._httpEnqueueInFlight]);
             await this._ensureWalLoaded();
-            const idsByDocument = new Map<string, string[]>();
+            const countByDocument = new Map<string, number>();
             for (const record of this._wal.replayableRecords({
                 includeHeld: true
             })) {
-                const ids = idsByDocument.get(record.documentId) ?? [];
-                ids.push(record.clientTransactionId);
-                idsByDocument.set(record.documentId, ids);
+                countByDocument.set(
+                    record.documentId,
+                    (countByDocument.get(record.documentId) ?? 0) + 1
+                );
             }
-            let discarded = 0;
-            for (const [documentId, ids] of idsByDocument) {
-                try {
-                    await this._wal.acknowledgeMany(
-                        this._options.assetId,
-                        documentId,
-                        ids
-                    );
-                    discarded += ids.length;
-                } catch (error) {
-                    console.warn(
-                        `CloudLiveSession: could not discard refused edits for ${documentId}:`,
-                        error
-                    );
-                }
+            let kept = 0;
+            for (const count of countByDocument.values()) {
+                kept += count;
             }
-            pushCollabIntegrityEvent('write-access-lost', {
-                assetId: this._options.assetId,
-                discarded
-            });
+            this._httpOutboxes.clear();
+            this._httpPublishingCount = 0;
             this._emitPendingSyncCount();
-            this._options.onWriteAccessLost?.(discarded);
+            this._emitTransferActivity();
+            if (kept > 0) {
+                this._reportKeptEdits(kept);
+            } else {
+                pushCollabIntegrityEvent('write-access-lost', {
+                    assetId: this._options.assetId,
+                    kept: 0
+                });
+                this._options.onWriteAccessLost?.(0);
+            }
         })().finally(() => {
             this._writeAccessLostHandling = null;
         });
@@ -623,6 +840,7 @@ export class CloudLiveSession {
             const roomUrl = this._roomUrl;
             const succeeded: string[] = [];
             const failures: Error[] = [];
+            const failed: CatchUpBatchFailure[] = [];
             await runWithConcurrency(
                 pending,
                 CLOUD_GLYPH_CATCH_UP_CONCURRENCY,
@@ -667,16 +885,55 @@ export class CloudLiveSession {
                             succeeded.push(target.documentId);
                         }
                     } catch (error) {
-                        failures.push(
+                        const failure =
                             error instanceof Error
                                 ? error
-                                : new Error(String(error))
-                        );
+                                : new Error(String(error));
+                        failures.push(failure);
+                        failed.push({
+                            documentId: target.documentId,
+                            error: failure
+                        });
                     }
                 }
             );
+            // A glyph loaded by this catch-up applies the socket rows that
+            // waited for it, in order, and the unsent rows of this window
+            // that waited for its state. One of those that still does not
+            // fit on the room's complete state is a real gap.
+            for (const documentId of [...succeeded]) {
+                this._adapters.get(documentId)?.drainDeltasHeldUntilLoaded?.();
+                this._adapters
+                    .get(documentId)
+                    ?.applyUnsentRowsAwaitingRoomState?.();
+                try {
+                    this._applyWalRowsAwaitingState(documentId, {
+                        final: true,
+                        stage: 'catch-up'
+                    });
+                    this._caughtUpForWalReplay?.add(documentId);
+                } catch (error) {
+                    const failure =
+                        error instanceof Error
+                            ? error
+                            : new Error(String(error));
+                    succeeded.splice(succeeded.indexOf(documentId), 1);
+                    failures.push(failure);
+                    failed.push({ documentId, error: failure });
+                }
+            }
             if (failures.length) {
-                throw failures[0];
+                // A terminal failure (gap, broken document, bad drawing)
+                // wins over a transient one, so it is never retried away.
+                // The error carries every target's outcome, so the caller
+                // settles the others and stops only the failed documents.
+                const thrown =
+                    failures.find(isTerminalDocumentError) ?? failures[0];
+                catchUpBatchOutcomes.set(thrown, {
+                    succeeded: [...succeeded],
+                    failed: [...failed]
+                });
+                throw thrown;
             }
             return succeeded;
         } finally {
@@ -694,30 +951,52 @@ export class CloudLiveSession {
         collaborationMessage?: CollaborationMessageEnvelope | null,
         documentId?: string
     ): void {
-        const resolvedId = documentId || FONT_CORE_DOCUMENT_ID;
-        const adapter = this._adapters.get(resolvedId);
-        if (adapter) {
-            adapter.sendForwardedUpdate(update, collaborationMessage);
-            return;
-        }
-        if (resolvedId.startsWith('glyph:')) {
-            this._trackDependentPublish(
-                this._enqueueDependentPublish(
-                    resolvedId,
-                    update,
-                    collaborationMessage
-                )
-            );
-            return;
-        }
-        this.coreAdapter?.sendForwardedUpdate(update, collaborationMessage);
+        this._sendForwarded(update, collaborationMessage, documentId);
     }
 
     /**
-     * Send an edit made in a linked window of this font. The socket outbox
-     * only sends packets whose transaction is in the write-ahead log, so the
-     * row is written first; relayed edits keep their order.
-     * Resolves false when the edit could not be made durable before sending.
+     * `sendForwardedUpdate`, returning the HTTP outbox row write when the
+     * edit queued in a glyph's HTTP outbox (true once that row is durable
+     * on this device), or null when it went to a socket's queue (or waits
+     * for one) and its row is written by the caller.
+     */
+    private _sendForwarded(
+        update: Uint8Array,
+        collaborationMessage?: CollaborationMessageEnvelope | null,
+        documentId?: string
+    ): Promise<boolean> | null {
+        const resolvedId = documentId || FONT_CORE_DOCUMENT_ID;
+        const adapter = this._adapters.get(resolvedId);
+        // A glyph that still has HTTP rows keeps sending over HTTP until
+        // they are out, so no edit overtakes an earlier one.
+        if (adapter && !this._hasHttpBacklog(resolvedId)) {
+            adapter.sendForwardedUpdate(update, collaborationMessage);
+            return null;
+        }
+        if (resolvedId.startsWith('glyph:')) {
+            if (adapter) {
+                this._handSocketEditsToHttp(resolvedId);
+            }
+            const written = this._enqueueDependentPublish(
+                resolvedId,
+                update,
+                collaborationMessage
+            );
+            this._trackDependentPublish(written);
+            return written;
+        }
+        // No socket for this document yet: its WAL row (written by
+        // `relayForwardedUpdate`) takes its place in the queue when the
+        // socket's first sync requeues the WAL. Never another room's socket.
+        return null;
+    }
+
+    /**
+     * Send an edit made in a linked window of this font. Its place in the
+     * document's queue is taken now, in the order main received it, among
+     * this window's own edits; the queue sends only a prefix whose WAL rows
+     * exist, so the row written next releases it.
+     * Resolves false when the row is kept only in memory (storage failed).
      */
     relayForwardedUpdate(
         update: Uint8Array,
@@ -726,41 +1005,121 @@ export class CloudLiveSession {
         dependsOn?: string[]
     ): Promise<boolean> {
         const resolvedId = documentId || FONT_CORE_DOCUMENT_ID;
-        const relay = this._relayChain.then(async () => {
-            let durable = true;
-            // Glyphs without a socket write their own row before the POST.
-            const socketDocumentId = this._adapters.has(resolvedId)
-                ? resolvedId
-                : resolvedId.startsWith('glyph:')
-                  ? null
-                  : FONT_CORE_DOCUMENT_ID;
-            if (collaborationMessage && socketDocumentId) {
+        if (!collaborationMessage) {
+            return Promise.reject(new MissingEnvelopeError(resolvedId));
+        }
+        // Glyphs without a socket write their own row in their HTTP outbox;
+        // every other document writes its row under its own id.
+        const socketDocumentId =
+            resolvedId.startsWith('glyph:') &&
+            !(
+                this._adapters.has(resolvedId) &&
+                !this._hasHttpBacklog(resolvedId)
+            )
+                ? null
+                : resolvedId;
+        if (this._isReadOnly()) {
+            // A linked window's edit crossed the lock (it was made before
+            // main's read-only verdict reached that window). It can't be
+            // sent, so it is kept in the write-ahead log with this window's
+            // own unsent edits, in arrival order: never sent, never dropped,
+            // and no broken mark.
+            return this._inWalOrder(resolvedId, dependsOn, async () => {
+                let durable = true;
                 try {
-                    durable = await this.persistOutgoingUpdate(
+                    durable = await this._writeOutgoingRow(
                         update,
                         collaborationMessage,
-                        socketDocumentId,
+                        resolvedId,
                         dependsOn
                     );
                 } catch (error) {
-                    // The row stays in memory and sendable (see
-                    // persistOutgoingUpdate); only durability is reported.
+                    if (!(error instanceof CloudWalPersistError)) {
+                        throw error;
+                    }
                     durable = false;
                 }
+                this._reportKeptEdits(this._keptEditCount());
+                return durable;
+            });
+        }
+        let httpRow: Promise<boolean> | null;
+        try {
+            httpRow = this._sendForwarded(
+                update,
+                collaborationMessage,
+                documentId
+            );
+        } catch (error) {
+            return Promise.reject(error);
+        }
+        if (!socketDocumentId) {
+            // The glyph's HTTP outbox writes its row; the relay is durable
+            // only once that row is, never when it is merely queued.
+            return (httpRow ?? Promise.resolve(false)).then((durable) => {
+                recordCollabTrace('relay-sent', [], {
+                    document: resolvedId,
+                    socket: false,
+                    durable
+                });
+                return durable;
+            });
+        }
+        // The row takes its place in the document's write chain now, among
+        // this window's own rows, so the WAL keeps arrival order.
+        return this._inWalOrder(socketDocumentId, dependsOn, async () => {
+            let durable = true;
+            try {
+                durable = await this._writeOutgoingRow(
+                    update,
+                    collaborationMessage,
+                    socketDocumentId,
+                    dependsOn
+                );
+            } catch (error) {
+                if (!(error instanceof CloudWalPersistError)) {
+                    throw error;
+                }
+                // The WAL keeps the row in memory and retries the write; it
+                // is sendable in its place. Only durability is reported.
+                durable = false;
             }
-            this.sendForwardedUpdate(update, collaborationMessage, documentId);
             recordCollabTrace('relay-sent', [], {
                 document: resolvedId,
-                socket: this._adapters.has(resolvedId),
+                socket: true,
                 durable
             });
             return durable;
         });
-        this._relayChain = relay.then(
+    }
+
+    /**
+     * Run `write` in `documentId`'s write chain: after every outbox write
+     * of that document called before it. A row that depends on others
+     * (`dependsOn`, rows of other documents) also waits for every other
+     * document's writes called before it, so its dependencies are written
+     * first. The place is taken synchronously, when this is called.
+     */
+    private _inWalOrder<T>(
+        documentId: string,
+        dependsOn: readonly string[] | undefined,
+        write: () => Promise<T>
+    ): Promise<T> {
+        const before = dependsOn?.length
+            ? Promise.all([...this._walWriteChains.values()])
+            : (this._walWriteChains.get(documentId) ?? Promise.resolve());
+        const turn = before.then(write);
+        const tail = turn.then(
             () => undefined,
             () => undefined
         );
-        return relay;
+        this._walWriteChains.set(documentId, tail);
+        void tail.then(() => {
+            if (this._walWriteChains.get(documentId) === tail) {
+                this._walWriteChains.delete(documentId);
+            }
+        });
+        return turn;
     }
 
     disconnect(): void {
@@ -773,6 +1132,11 @@ export class CloudLiveSession {
         this._timers.clear();
         this._localUpdateUnsubscribe?.();
         this._localUpdateUnsubscribe = null;
+        this._documentLoadedUnsubscribe?.();
+        this._documentLoadedUnsubscribe = null;
+        for (const documentId of [...this._glyphSocketDrains.keys()]) {
+            this._cancelGlyphSocketDrain(documentId);
+        }
         for (const adapter of this._adapters.values()) {
             adapter.disconnect();
         }
@@ -781,6 +1145,8 @@ export class CloudLiveSession {
         this._connectInFlight.clear();
         this._connectRetryTimers.clear();
         this._layoutJoinCatchUp = Promise.resolve();
+        // They stay in the WAL; the next session replays them.
+        this._walRowsAwaitingState.clear();
         this._desiredDocumentIds = new Set([FONT_CORE_DOCUMENT_ID]);
         this._reportedConnected = false;
         this._readyOnce = false;
@@ -788,7 +1154,8 @@ export class CloudLiveSession {
         this._barrierPromise = null;
         this._httpReceivingCount = 0;
         this._httpPublishingCount = 0;
-        this._httpPublishQueue = [];
+        // Their rows stay in the WAL and go out with the next session.
+        this._httpOutboxes.clear();
         this._httpPublishActive = 0;
         this._httpPublishInFlight.clear();
         this._httpEnqueueInFlight.clear();
@@ -804,23 +1171,41 @@ export class CloudLiveSession {
         await this.flushPendingHttpPublishes();
     }
 
+    /**
+     * Resolves once every glyph's HTTP outbox is empty, or stopped at a
+     * refused row (that error is on the status). A head waiting for its
+     * retry still counts as pending.
+     */
     async flushPendingHttpPublishes(): Promise<void> {
-        while (
-            this._httpEnqueueInFlight.size ||
-            this._httpPublishQueue.length ||
-            this._httpPublishInFlight.size
-        ) {
-            await Promise.all([
+        while (!this._disconnected) {
+            const inFlight = [
                 ...this._httpEnqueueInFlight,
                 ...this._httpPublishInFlight
-            ]);
+            ];
+            if (inFlight.length) {
+                await Promise.all(
+                    inFlight.map((p) => p.catch(() => undefined))
+                );
+                continue;
+            }
+            const waiting = [...this._httpOutboxes.values()].some(
+                (outbox) => outbox.packets.length > 0 && !outbox.halted
+            );
+            if (!waiting) {
+                return;
+            }
+            await new Promise<void>((resolve) => setTimeout(resolve, 25));
         }
     }
 
-    private _trackDependentPublish(pending: Promise<void>): void {
-        this._httpEnqueueInFlight.add(pending);
-        void pending.finally(() => {
-            this._httpEnqueueInFlight.delete(pending);
+    private _trackDependentPublish(pending: Promise<unknown>): void {
+        const tracked = pending.then(
+            () => undefined,
+            () => undefined
+        );
+        this._httpEnqueueInFlight.add(tracked);
+        void tracked.then(() => {
+            this._httpEnqueueInFlight.delete(tracked);
         });
     }
 
@@ -845,27 +1230,38 @@ export class CloudLiveSession {
      * burst's earlier row `replaceId`. A tab closed mid-burst sends it on
      * the next open, like any unsent edit.
      */
-    async stageHeldUpdate(
+    stageHeldUpdate(
         update: Uint8Array,
         collaborationMessage: CollaborationMessageEnvelope,
         documentId: string,
         replaceId?: string | null
     ): Promise<boolean> {
-        const ok = await this.persistOutgoingUpdate(
-            update,
-            collaborationMessage,
-            documentId,
-            undefined,
-            { staged: true }
-        );
-        if (ok && replaceId) {
-            await this.dropStagedUpdate(documentId, replaceId);
-        }
-        return ok;
+        return this._inWalOrder(documentId, undefined, async () => {
+            const ok = await this._writeOutgoingRow(
+                update,
+                collaborationMessage,
+                documentId,
+                undefined,
+                { staged: true }
+            );
+            if (ok && replaceId) {
+                await this._dropStagedRow(documentId, replaceId);
+            }
+            return ok;
+        });
     }
 
     /** Drop a held burst's row once its merged row is in the outbox. */
-    async dropStagedUpdate(
+    dropStagedUpdate(
+        documentId: string,
+        clientTransactionId: string
+    ): Promise<void> {
+        return this._inWalOrder(documentId, undefined, () =>
+            this._dropStagedRow(documentId, clientTransactionId)
+        );
+    }
+
+    private async _dropStagedRow(
         documentId: string,
         clientTransactionId: string
     ): Promise<void> {
@@ -876,26 +1272,59 @@ export class CloudLiveSession {
         this._emitPendingSyncCount();
     }
 
-    async persistOutgoingUpdate(
+    /**
+     * Write an outgoing row into the device outbox, in its document's write
+     * chain (see `_walWriteChains`).
+     */
+    persistOutgoingUpdate(
+        update: Uint8Array,
+        collaborationMessage?: CollaborationMessageEnvelope | null,
+        documentId?: string,
+        dependsOn?: string[]
+    ): Promise<boolean> {
+        return this._inWalOrder(
+            documentId || FONT_CORE_DOCUMENT_ID,
+            dependsOn,
+            () =>
+                this._writeOutgoingRow(
+                    update,
+                    collaborationMessage,
+                    documentId,
+                    dependsOn
+                )
+        );
+    }
+
+    /** One outbox row write; callers hold the document's chain turn. */
+    private async _writeOutgoingRow(
         update: Uint8Array,
         collaborationMessage?: CollaborationMessageEnvelope | null,
         documentId?: string,
         dependsOn?: string[],
         options: { staged?: boolean } = {}
     ): Promise<boolean> {
-        if (this._disconnected) {
-            return false;
-        }
         if (!update?.length) {
             return false;
         }
-        await this._ensureWalLoaded();
-        if (!this._wal.isLoaded) {
-            return false;
+        if (!collaborationMessage) {
+            // A row without an envelope could never be sent in order.
+            throw new MissingEnvelopeError(documentId || FONT_CORE_DOCUMENT_ID);
         }
-        const messageKey = collaborationMessage
-            ? collaborationMessageKey(collaborationMessage)
-            : allocateClientTransactionId('live');
+        // The packet waits in its queue for this row. A WAL that could not
+        // open still takes it: the row is kept in memory, sendable in its
+        // place, and written again when storage recovers; never skipped.
+        // A session closed meanwhile (the font closed right after the edit)
+        // still writes it: the WAL is this device's copy, the next session
+        // sends it.
+        await this._ensureWalLoaded();
+        const messageKey = collaborationMessageKey(collaborationMessage);
+        // An envelope no lossless step fits still gets its row, with the
+        // envelope as it came: the packet is never dropped. The document is
+        // marked broken and the caller gets the error.
+        const { message: walMessage, tooLarge } = fitEnvelopeForWal(
+            collaborationMessage,
+            documentId || FONT_CORE_DOCUMENT_ID
+        );
         try {
             const resolvedDocumentId = documentId || FONT_CORE_DOCUMENT_ID;
             const candidates = this._wal.recordsFor(resolvedDocumentId);
@@ -910,13 +1339,8 @@ export class CloudLiveSession {
                 clientTransactionId,
                 dependsOn: dependsOn || existing?.dependsOn || [],
                 updateBytes: update,
-                collaborationMessage:
-                    fitEnvelopeForWire(collaborationMessage, {
-                        documentId: resolvedDocumentId
-                    }) || existing?.collaborationMessage,
-                collaborationMetadata:
-                    collaborationMessage?.metadata ??
-                    existing?.collaborationMessage?.metadata,
+                collaborationMessage: walMessage,
+                collaborationMetadata: collaborationMessage.metadata,
                 revisionObligations: existing?.revisionObligations || [],
                 state: 'applied',
                 createdAt: existing?.createdAt || Date.now(),
@@ -933,6 +1357,13 @@ export class CloudLiveSession {
                 this._wal.releaseStaged(walKey);
             }
             this._emitPendingSyncCount();
+            if (tooLarge) {
+                this._options.bridge.markDocumentBroken?.(
+                    resolvedDocumentId,
+                    tooLarge
+                );
+                throw tooLarge;
+            }
             if (!options.staged) {
                 // A staged row waits for its burst; nothing is sent yet.
                 this._adapters
@@ -947,6 +1378,9 @@ export class CloudLiveSession {
             });
             return true;
         } catch (error) {
+            if (error === tooLarge) {
+                throw error;
+            }
             console.warn(
                 'CloudLiveSession: write-ahead persist failed before send:',
                 error
@@ -967,7 +1401,7 @@ export class CloudLiveSession {
                     ?.noteOutboundWalReady?.();
                 throw error;
             }
-            return false;
+            throw error;
         }
     }
 
@@ -1072,9 +1506,17 @@ export class CloudLiveSession {
         }
         const infrastructureAlreadyLive = this._hasLiveCoreAndDeps();
         this._desiredDocumentIds = desired;
+        for (const documentId of desired) {
+            // Wanted again while it waited for its acknowledgements: it
+            // simply stays open.
+            this._cancelGlyphSocketDrain(documentId);
+        }
         const droppedGlyphIds = new Set<string>();
         for (const [documentId, adapter] of [...this._adapters]) {
             if (!desired.has(documentId)) {
+                if (this._drainGlyphSocketBeforeClose(documentId, adapter)) {
+                    continue;
+                }
                 adapter.disconnect();
                 this._adapters.delete(documentId);
                 this._clearConnectRetry(documentId);
@@ -1085,15 +1527,9 @@ export class CloudLiveSession {
             }
         }
         if (droppedGlyphIds.size) {
-            // Edits the closed socket had not confirmed go out over HTTP.
-            void this._replayPendingHttpWal({
-                documentIds: droppedGlyphIds
-            }).catch((error) => {
-                console.warn(
-                    'CloudLiveSession: replay after glyph switch failed:',
-                    error
-                );
-            });
+            // Edits the closed socket had not confirmed go out over HTTP,
+            // queued now so no later edit of that glyph overtakes them.
+            this._queueWalRowsForHttp(droppedGlyphIds);
         }
         if (!this._adapters.has(FONT_CORE_DOCUMENT_ID)) {
             await this._connectDocument(FONT_CORE_DOCUMENT_ID);
@@ -1151,25 +1587,28 @@ export class CloudLiveSession {
             _entries?: unknown,
             documentId?: string
         ): void => {
-            if (!documentId || this._adapters.has(documentId)) {
+            if (!documentId || !documentId.startsWith('glyph:')) {
                 return;
             }
-            if (!documentId.startsWith('glyph:')) {
-                return;
-            }
-            const changedNames =
-                collaborationMessage?.metadata?.changedGlyphNames || [];
-            if (changedNames.length) {
-                const allowed = new Set(
-                    changedNames.flatMap((name) => {
-                        const id = bridge.glyphDocumentIdForName?.(name);
-                        return id ? [id] : [];
-                    })
-                );
-                if (allowed.size > 0 && !allowed.has(documentId)) {
+            // A glyph with a socket sends over it, unless it still has HTTP
+            // rows: then this edit queues behind them, so the room gets the
+            // glyph's edits over one channel, in order (the socket leaves
+            // it to this outbox, see `routesOutboundOverHttp`).
+            if (this._adapters.has(documentId)) {
+                if (!this._hasHttpBacklog(documentId)) {
                     return;
                 }
+                const backlog =
+                    this._httpOutboxes.get(documentId)?.packets.length ?? 0;
+                const handedOver = this._handSocketEditsToHttp(documentId);
+                recordCollabTrace('http-backlog-routes-local-edit', [], {
+                    document: documentId,
+                    backlog,
+                    handedOver
+                });
             }
+            // Every update of this glyph's document goes out, whatever its
+            // envelope names: its bytes changed the document.
             this._trackDependentPublish(
                 this._enqueueDependentPublish(
                     documentId,
@@ -1182,6 +1621,84 @@ export class CloudLiveSession {
         this._localUpdateUnsubscribe = () => {
             bridge.offLocalUpdate?.(handler);
         };
+    }
+
+    /**
+     * A glyph that becomes loaded here, by any path (a catch-up, a sparse
+     * hydrate, a residency change), applies this window's unsent rows that
+     * waited for its state, in WAL order, at once. The load may predate the
+     * room's newest rows, so a row that still does not fit keeps waiting.
+     */
+    private _bindDocumentLoadedHook(): void {
+        this._documentLoadedUnsubscribe = subscribeDocumentLoaded(
+            this._options.bridge,
+            (documentId) => {
+                if (
+                    this._disconnected ||
+                    !this._walRowsAwaitingState.has(documentId)
+                ) {
+                    return;
+                }
+                this._applyWalRowsAwaitingState(documentId, {
+                    final: false,
+                    stage: 'document-loaded'
+                });
+            }
+        );
+    }
+
+    /**
+     * True while `documentId` still has HTTP rows to send: every edit of it,
+     * this window's included, queues behind them in its HTTP outbox. Its
+     * socket sends nothing new until they are out.
+     */
+    routesOutboundOverHttp(documentId: string): boolean {
+        return (
+            documentId.startsWith('glyph:') && this._hasHttpBacklog(documentId)
+        );
+    }
+
+    /**
+     * Before an edit of a glyph with a socket queues in its HTTP outbox, the
+     * edits the socket still holds unacknowledged queue there first, in send
+     * order (rows the outbox has are skipped). A replay builds the backlog
+     * from WAL rows already written; an older edit whose row was still
+     * being written, or that waits on a closed socket, would otherwise
+     * reach the room after the newer one sent over HTTP. The socket keeps
+     * its copies; the room takes the second one as a duplicate.
+     */
+    private _handSocketEditsToHttp(documentId: string): number {
+        const adapter = this._adapters.get(documentId);
+        const outbox = this._httpOutboxes.get(documentId);
+        if (!adapter || !outbox) {
+            return 0;
+        }
+        const queued = new Set(
+            outbox.packets.map((packet) => packet.clientTransactionId)
+        );
+        let handedOver = 0;
+        for (const packet of adapter.unacknowledgedOutboundPackets?.() ?? []) {
+            if (!packet.update?.length) {
+                continue;
+            }
+            if (!packet.collaborationMessage) {
+                throw new MissingEnvelopeError(documentId);
+            }
+            const id = collaborationMessageKey(packet.collaborationMessage);
+            if (queued.has(id)) {
+                continue;
+            }
+            queued.add(id);
+            handedOver += 1;
+            this._trackDependentPublish(
+                this._enqueueDependentPublish(
+                    documentId,
+                    packet.update,
+                    packet.collaborationMessage
+                )
+            );
+        }
+        return handedOver;
     }
 
     private async _ensureWalLoaded(): Promise<void> {
@@ -1283,259 +1800,436 @@ export class CloudLiveSession {
         }
     }
 
+    /** This document's HTTP outbox, created on first use. */
+    private _httpOutbox(documentId: string): HttpDocumentOutbox {
+        let outbox = this._httpOutboxes.get(documentId);
+        if (!outbox) {
+            outbox = {
+                packets: [],
+                sending: false,
+                halted: null,
+                attempts: 0,
+                refreshed: false,
+                retryTimer: null
+            };
+            this._httpOutboxes.set(documentId, outbox);
+        }
+        return outbox;
+    }
+
+    /** True while this glyph still has HTTP rows to send; new ones queue behind. */
+    private _hasHttpBacklog(documentId: string): boolean {
+        return (this._httpOutboxes.get(documentId)?.packets.length ?? 0) > 0;
+    }
+
+    /**
+     * Queue one edit of a glyph without a socket. Its place in the glyph's
+     * ordered outbox is taken synchronously, before any await, so edits keep
+     * the order they were made in; the WAL row is written next, and the
+     * outbox sends only a written head. The row is written in the
+     * document's write chain (`_walWriteChains`), so it keeps call order
+     * with every other outbox write of that document. Resolves true once
+     * the row is durable on this device, false when it is kept only in the
+     * WAL's memory or another call of the same transaction writes it.
+     */
     private async _enqueueDependentPublish(
         documentId: string,
         update: Uint8Array,
-        collaborationMessage?: CollaborationMessageEnvelope | null,
-        retry?: { seq: number; clientTransactionId: string }
-    ): Promise<void> {
+        collaborationMessage?: CollaborationMessageEnvelope | null
+    ): Promise<boolean> {
         if (!update?.length) {
-            return;
+            return false;
         }
-        await this._ensureWalLoaded();
+        if (!collaborationMessage) {
+            throw new MissingEnvelopeError(documentId);
+        }
+        const packet = this._queueHttpPacket(
+            documentId,
+            update,
+            collaborationMessage,
+            null
+        );
+        if (!packet) {
+            return false;
+        }
+        const durable = await this._inWalOrder(documentId, undefined, () =>
+            this._writeHttpOutboxRow(documentId, packet)
+        );
+        this._pumpHttpPublishQueue();
+        return durable;
+    }
+
+    /** Append to the glyph's outbox; null when that transaction is queued. */
+    private _queueHttpPacket(
+        documentId: string,
+        update: Uint8Array,
+        collaborationMessage: CollaborationMessageEnvelope,
+        walRecord: CloudWalRecord | null
+    ): HttpOutboxPacket | null {
+        if (this._writeAccessLost) {
+            throw new CloudReadOnlyError(documentId);
+        }
         const clientTransactionId =
-            retry?.clientTransactionId ||
-            (collaborationMessage
-                ? collaborationMessageKey(collaborationMessage)
-                : allocateClientTransactionId('http'));
-        const seq = retry?.seq ?? ++this._httpPublishSeq;
-        let walRecord =
-            this._wal
+            collaborationMessageKey(collaborationMessage);
+        const outbox = this._httpOutbox(documentId);
+        if (
+            outbox.packets.some(
+                (packet) => packet.clientTransactionId === clientTransactionId
+            )
+        ) {
+            return null;
+        }
+        const existing =
+            walRecord ??
+            (this._wal.isLoaded
+                ? (this._wal
+                      .recordsFor(documentId)
+                      .find(
+                          (record) =>
+                              record.clientTransactionId === clientTransactionId
+                      ) ?? null)
+                : null);
+        const packet: HttpOutboxPacket = {
+            clientTransactionId,
+            update,
+            collaborationMessage,
+            seq: null,
+            partSeqs: null,
+            walRecord: existing,
+            written: !!existing
+        };
+        outbox.packets.push(packet);
+        this._httpPublishingCount += 1;
+        this._emitTransferActivity();
+        return packet;
+    }
+
+    /**
+     * Write the packet's WAL row. A row the store refused (or a WAL that
+     * could not open) stays in the WAL's memory and is written again when
+     * storage recovers, so the packet may be sent in its place; everything
+     * queued after it waits until this row exists.
+     */
+    private async _writeHttpOutboxRow(
+        documentId: string,
+        packet: HttpOutboxPacket
+    ): Promise<boolean> {
+        if (!packet.written) {
+            // Written even when the session closed meanwhile; the next
+            // session sends it.
+            await this._ensureWalLoaded();
+            const existing = this._wal
                 .recordsFor(documentId)
                 .find(
                     (record) =>
-                        record.clientTransactionId === clientTransactionId
-                ) || null;
-        if (retry && !walRecord && this._wal.isLoaded) {
-            // The row was dropped while this retry waited (for example the
-            // edits were discarded after a role change). Nothing to send.
-            return;
-        }
-        if (!walRecord && this._wal.isLoaded) {
-            walRecord = {
+                        record.clientTransactionId ===
+                        packet.clientTransactionId
+                );
+            if (existing) {
+                packet.walRecord = existing;
+                packet.written = true;
+                return this._wal.health === 'ready';
+            }
+            const record: CloudWalRecord = {
                 assetId: this._options.assetId,
                 documentId,
-                clientTransactionId,
-                updateBytes: update,
-                collaborationMessage:
-                    fitEnvelopeForWire(collaborationMessage, { documentId }) ||
-                    undefined,
+                clientTransactionId: packet.clientTransactionId,
+                updateBytes: packet.update,
+                // Oversized envelopes keep their row as they came; the
+                // publish refuses them and halts this document's outbox.
+                collaborationMessage: fitEnvelopeForWal(
+                    packet.collaborationMessage,
+                    documentId
+                ).message,
                 createdAt: Date.now(),
                 attempts: 0,
                 state: 'applied'
             };
+            let durable = true;
             try {
-                await this._wal.append(walRecord);
-                this._emitPendingSyncCount();
+                await this._wal.append(record);
             } catch (error) {
+                if (!(error instanceof CloudWalPersistError)) {
+                    throw error;
+                }
                 console.warn(
-                    'CloudLiveSession: HTTP WAL persist failed before send:',
+                    'CloudLiveSession: HTTP WAL row kept in memory until storage recovers:',
                     error
                 );
+                durable = false;
             }
+            packet.walRecord = record;
+            packet.written = true;
+            this._emitPendingSyncCount();
+            return durable;
         }
-        if (this._disconnected) {
-            return;
-        }
-        this._httpPublishingCount += 1;
-        this._emitTransferActivity();
-        this._httpPublishQueue.push(async () => {
-            const { assetId, websiteBaseUrl } = this._options;
-            let refreshed = false;
-            // Send this glyph's earlier unsent edits along: retries and a
-            // switch between socket and HTTP can reorder sends, and a room
-            // that gets an update before the one it builds on holds it back.
-            const payload = this._withEarlierUnsentUpdates(
-                documentId,
-                clientTransactionId,
-                update
-            );
-            for (let attempt = 0; attempt < 5; attempt += 1) {
-                if (this._disconnected) {
-                    return;
-                }
-                try {
-                    const durable = await publishCloudDocumentUpdate({
-                        token: this._token,
-                        roomUrl: this._roomUrl,
-                        websiteBaseUrl,
-                        assetId,
-                        documentId,
-                        update: payload,
-                        collaborationMessage,
-                        seq,
-                        clientId: `http:${assetId}`,
-                        clientTransactionId,
-                        signal: this._abortSignal
-                    });
-                    if (!durable) {
-                        const error = new Error(
-                            `Live glyph publish was not durable for ${documentId}`
-                        ) as Error & { status?: number };
-                        error.status = 503;
-                        throw error;
-                    }
-                    if (walRecord) {
-                        await this._wal.acknowledge(walRecord);
-                        this._emitPendingSyncCount();
-                    }
-                    return;
-                } catch (error) {
-                    const status = (error as { status?: number }).status;
-                    if ((status === 401 || status === 403) && !refreshed) {
-                        refreshed = await this._refreshCredentialsOnce({
-                            force: true
-                        });
-                        if (refreshed) {
-                            continue;
-                        }
-                    }
-                    if (
-                        status === 403 &&
-                        refreshed &&
-                        roleFromRoomToken(this._token) === 'viewer'
-                    ) {
-                        // A fresh token says viewer: the room will refuse
-                        // this edit every time.
-                        void this.discardUnsentEditsAfterWriteAccessLost();
-                        return;
-                    }
-                    // The room refused the content; the same bytes fail again.
-                    const refused =
-                        status === 400 || status === 413 || status === 422;
-                    if (attempt === 4 || refused) {
-                        if (
-                            refused &&
-                            Number(walRecord?.attempts || 0) >=
-                                MAX_REFUSED_HTTP_PUBLISHES - 1
-                        ) {
-                            const detail = `Cloud collaboration could not sync an edit (HTTP ${status}). Later edits are kept on this device.`;
-                            console.warn(
-                                `CloudLiveSession: ${documentId} publish refused; giving up:`,
-                                error
-                            );
-                            this._erroredDocuments.set(
-                                `http:${documentId}`,
-                                detail
-                            );
-                            this._options.onConnectionStatus?.('error', detail);
-                            return;
-                        }
-                        if (walRecord) {
-                            walRecord.attempts =
-                                Number(walRecord.attempts || 0) + 1;
-                            walRecord.lastError = String(
-                                (error as Error)?.message || error
-                            );
-                            try {
-                                await this._wal.append(walRecord);
-                            } catch {
-                                /* keep in-memory record */
-                            }
-                        }
-                        const delay = Math.min(
-                            60_000,
-                            1_000 *
-                                2 **
-                                    Math.min(
-                                        Number(walRecord?.attempts || attempt),
-                                        8
-                                    )
-                        );
-                        this._scheduleTimer(() => {
-                            void this._enqueueDependentPublish(
-                                documentId,
-                                update,
-                                collaborationMessage,
-                                { seq, clientTransactionId }
-                            );
-                        }, delay);
-                        return;
-                    }
-                    await new Promise<void>((resolve, reject) => {
-                        if (this._disconnected) {
-                            reject(new Error('session disconnected'));
-                            return;
-                        }
-                        this._scheduleTimer(() => resolve(), 50 * 2 ** attempt);
-                    }).catch(() => undefined);
-                }
-            }
-        });
-        this._pumpHttpPublishQueue();
+        // Its row came from the WAL: durable unless rows wait in memory.
+        return this._wal.health === 'ready';
     }
 
     /**
-     * This update merged with the same glyph's earlier unacknowledged edits
-     * from the write-ahead log, so the room never receives an edit without
-     * the edits it builds on. The room applies parts it already has as
-     * no-ops. Falls back to the update alone if the merge would be too big.
+     * Each glyph sends one publish at a time: always the head of its outbox,
+     * so the room gets its rows in order and never a later one first.
+     * Different glyphs publish side by side.
      */
-    private _withEarlierUnsentUpdates(
-        documentId: string,
-        clientTransactionId: string,
-        update: Uint8Array
-    ): Uint8Array {
-        if (!this._wal.isLoaded) {
-            return update;
-        }
-        const records = this._wal.recordsFor(documentId);
-        const own = records.find(
-            (record) => record.clientTransactionId === clientTransactionId
-        );
-        const createdAt = own?.createdAt ?? Number.POSITIVE_INFINITY;
-        const earlier = records
-            .filter(
-                (record) =>
-                    record.state !== 'acknowledged' &&
-                    record.clientTransactionId !== clientTransactionId &&
-                    record.createdAt <= createdAt
-            )
-            .map((record) => walUpdateBytes(record))
-            .filter((bytes) => bytes.byteLength > 0);
-        if (!earlier.length) {
-            return update;
-        }
-        try {
-            const merged = Y.mergeUpdates([...earlier, update]);
-            return merged.byteLength <= MAX_MERGED_HTTP_PUBLISH_BYTES
-                ? merged
-                : update;
-        } catch {
-            return update;
-        }
-    }
-
     private _pumpHttpPublishQueue(): void {
-        while (
-            this._httpPublishQueue.length &&
-            this._httpPublishActive < CLOUD_GLYPH_PUBLISH_CONCURRENCY
-        ) {
-            const job = this._httpPublishQueue.shift();
-            if (!job) {
+        for (const [documentId, outbox] of this._httpOutboxes) {
+            if (this._httpPublishActive >= CLOUD_GLYPH_PUBLISH_CONCURRENCY) {
                 break;
             }
+            if (
+                this._disconnected ||
+                this._writeAccessLost ||
+                this._signedOut ||
+                outbox.sending ||
+                outbox.halted ||
+                outbox.retryTimer ||
+                !outbox.packets.length ||
+                !outbox.packets[0].written
+            ) {
+                continue;
+            }
+            outbox.sending = true;
             this._httpPublishActive += 1;
             let running: Promise<void>;
-            running = job()
+            running = this._publishHttpHead(documentId, outbox)
                 .catch((error) => {
-                    console.warn(
-                        'CloudLiveSession: dependent glyph HTTP publish failed; retained for retry:',
-                        error
+                    this._haltHttpOutbox(
+                        documentId,
+                        outbox,
+                        error instanceof Error
+                            ? error
+                            : new Error(String(error))
                     );
                 })
                 .finally(() => {
+                    outbox.sending = false;
                     this._httpPublishActive -= 1;
-                    this._httpPublishingCount = Math.max(
-                        0,
-                        this._httpPublishingCount - 1
-                    );
                     this._httpPublishInFlight.delete(running);
+                    if (!outbox.packets.length && !outbox.halted) {
+                        this._httpOutboxes.delete(documentId);
+                    }
                     this._emitTransferActivity();
                     this._pumpHttpPublishQueue();
                 });
             this._httpPublishInFlight.add(running);
         }
+    }
+
+    private async _publishHttpHead(
+        documentId: string,
+        outbox: HttpDocumentOutbox
+    ): Promise<void> {
+        const head = outbox.packets[0];
+        const { assetId, websiteBaseUrl } = this._options;
+        // Throws EnvelopeTooLargeError before anything is sent; the pump
+        // halts this outbox on it, the head stays queued and in the WAL, and
+        // the document is marked broken.
+        const collaborationMessage = fitEnvelopeForWire(
+            head.collaborationMessage,
+            { documentId }
+        );
+        // Taken on the first send and kept: every resend carries the same.
+        if (head.seq === null) {
+            head.seq = ++this._httpPublishSeq;
+        }
+        const seq = head.seq;
+        try {
+            const durable = await publishCloudDocumentUpdate({
+                token: this._token,
+                roomUrl: this._roomUrl,
+                websiteBaseUrl,
+                assetId,
+                documentId,
+                update: head.update,
+                collaborationMessage,
+                seq,
+                partSeqs: (count) => this._partSeqsFor(head, seq, count),
+                clientId: this.httpWriterIdFor(documentId),
+                clientTransactionId: head.clientTransactionId,
+                signal: this._abortSignal
+            });
+            if (!durable) {
+                const error = new Error(
+                    `Live glyph publish was not durable for ${documentId}`
+                ) as Error & { status?: number };
+                error.status = 503;
+                throw error;
+            }
+            // The room has the row: it leaves the queue now. A WAL that
+            // cannot drop it keeps it, and a later session sends it again
+            // (the room answers that as a duplicate).
+            outbox.packets.shift();
+            if (head.walRecord) {
+                await this._wal.acknowledge(head.walRecord).catch((error) => {
+                    console.warn(
+                        `CloudLiveSession: ${documentId} row stays in the WAL after its ack:`,
+                        error
+                    );
+                });
+            }
+            outbox.attempts = 0;
+            outbox.refreshed = false;
+            this._httpPublishingCount = Math.max(
+                0,
+                this._httpPublishingCount - 1
+            );
+            this._emitPendingSyncCount();
+        } catch (error) {
+            if (this._disconnected) {
+                return;
+            }
+            const status = (error as { status?: number }).status;
+            if ((status === 401 || status === 403) && !outbox.refreshed) {
+                try {
+                    outbox.refreshed = await this._refreshCredentialsOnce({
+                        force: true
+                    });
+                } catch (refreshError) {
+                    // Signed out, or access removed: not a refusal of this
+                    // row. It stays at the head (and in the WAL); signing in
+                    // again resumes the queue. Never a broken document.
+                    recordCollabTrace('http-publish-paused', [], {
+                        document: documentId,
+                        seq: head.seq,
+                        signedOut: this._signedOut,
+                        reason: String(
+                            (refreshError as Error)?.message ?? refreshError
+                        )
+                    });
+                    outbox.refreshed = false;
+                    if (this._signedOut) {
+                        return;
+                    }
+                }
+                if (outbox.refreshed) {
+                    return;
+                }
+            }
+            if (
+                status === 403 &&
+                outbox.refreshed &&
+                roleFromRoomToken(this._token) === 'viewer'
+            ) {
+                // A fresh token says viewer: the room will refuse this edit
+                // every time. It stays in the write-ahead log.
+                void this.keepUnsentEditsAfterWriteAccessLost();
+                return;
+            }
+            // The room refused the content (or is missing a row it builds
+            // on): the same bytes fail again, and later rows depend on it.
+            // An answer that says “not now” (`retryable: true`, a busy or
+            // full room: `tail_full`, `spool_busy`, `incomplete_limit`,
+            // `asset_migrating`, `commit_unacknowledged`) is retried below.
+            const transientAnswer =
+                error instanceof CloudRoomHttpError &&
+                isTransientRoomHttpAnswer(error);
+            if (
+                !transientAnswer &&
+                (error instanceof CloudRefusalError ||
+                    status === 400 ||
+                    status === 413 ||
+                    status === 422)
+            ) {
+                throw error instanceof CloudRefusalError
+                    ? error
+                    : new CloudRefusalError(documentId, {
+                          code: `http_${String(status)}`,
+                          message: (error as Error)?.message,
+                          seq: head.seq
+                      });
+            }
+            // Anything else is transient: the head is sent again, later,
+            // and nothing behind it moves first.
+            outbox.attempts += 1;
+            if (head.walRecord) {
+                head.walRecord.attempts =
+                    Number(head.walRecord.attempts || 0) + 1;
+                head.walRecord.lastError = String(
+                    (error as Error)?.message || error
+                );
+            }
+            const delay = Math.min(
+                60_000,
+                250 * 2 ** Math.min(outbox.attempts, 8)
+            );
+            recordCollabTrace('http-publish-retry', [], {
+                document: documentId,
+                seq: head.seq,
+                status: status ?? null,
+                code: error instanceof CloudRoomHttpError ? error.code : null,
+                // A held row: the earlier row the room waits for. It is the
+                // head (or one of its parts), sent again with its seqs.
+                refusedSeq:
+                    error instanceof CloudRoomHttpError
+                        ? error.refusedSeq
+                        : null,
+                attempt: outbox.attempts,
+                delayMs: delay
+            });
+            outbox.retryTimer = this._scheduleTimer(() => {
+                outbox.retryTimer = null;
+                this._pumpHttpPublishQueue();
+            }, delay);
+        }
+    }
+
+    /** The writer name `documentId`'s HTTP publishes carry in this session. */
+    httpWriterIdFor(documentId: string): string {
+        let writerId = this._httpWriterIds.get(documentId);
+        if (!writerId) {
+            writerId = `${this.httpClientId}:${String(this._httpWriterIds.size + 1)}`;
+            this._httpWriterIds.set(documentId, writerId);
+        }
+        return writerId;
+    }
+
+    /**
+     * One increasing seq per part of a packet sent in parts: the first is
+     * the packet's own seq, the rest are taken now, above it. Kept on the
+     * packet, so a resend uses the same seqs. Later packets of the glyph
+     * take theirs only when they are sent, so they are always higher.
+     */
+    private _partSeqsFor(
+        packet: HttpOutboxPacket,
+        seq: number,
+        count: number
+    ): number[] {
+        if (packet.partSeqs) {
+            if (packet.partSeqs.length !== count) {
+                throw new Error(
+                    `The update ${packet.clientTransactionId} was split into ${packet.partSeqs.length} parts before and ${count} now.`
+                );
+            }
+            return packet.partSeqs;
+        }
+        const seqs = [seq];
+        for (let index = 1; index < count; index += 1) {
+            seqs.push(++this._httpPublishSeq);
+        }
+        packet.partSeqs = seqs;
+        return seqs;
+    }
+
+    /** Stop a glyph's outbox at a refused row; its rows stay in the WAL. */
+    private _haltHttpOutbox(
+        documentId: string,
+        outbox: HttpDocumentOutbox,
+        error: Error
+    ): void {
+        outbox.halted = error;
+        console.error(
+            `CloudLiveSession: ${documentId} stopped at a refused publish:`,
+            error
+        );
+        pushCollabIntegrityEvent('http-publish-refused', {
+            documentId,
+            error: error.message
+        });
+        this._options.bridge.markDocumentBroken?.(documentId, error);
+        const detail = `Cloud collaboration could not sync an edit of ${documentId}: ${error.message} Unsent edits are kept on this device.`;
+        this._erroredDocuments.set(`http:${documentId}`, detail);
+        this._options.onConnectionStatus?.('error', detail);
     }
 
     private _emitPendingSyncCount(): void {
@@ -1659,7 +2353,13 @@ export class CloudLiveSession {
                 this._emitTransferActivity();
             },
             onWriteAccessLost: () => {
-                void this.discardUnsentEditsAfterWriteAccessLost();
+                void this.keepUnsentEditsAfterWriteAccessLost();
+            },
+            isReadOnly: () => this._isReadOnly(),
+            routesOutboundElsewhere: () =>
+                this.routesOutboundOverHttp(documentId),
+            onUnsentEditsKept: () => {
+                this._reportKeptEdits(this._keptEditCount());
             },
             refreshCredentials: async () => {
                 await this._refreshCredentialsOnce();
@@ -1840,6 +2540,10 @@ export class CloudLiveSession {
 
     private async _completeSessionReadyBarrier(): Promise<void> {
         const stayConnected = this._readyOnce;
+        recordCollabTrace('session-ready-barrier', [], {
+            reconnect: stayConnected,
+            caller: new Error().stack?.split('\n').slice(2, 6) ?? []
+        });
         if (!stayConnected) {
             this._options.onConnectionStatus?.('syncing', 'Catching up');
         }
@@ -1847,8 +2551,16 @@ export class CloudLiveSession {
             await this._waitForLiveTransportSynced(
                 this._options.readyBarrierTimeoutMs ?? 30_000
             );
-            await this._catchUpLiveSubsetAndDeps();
-            await this._replayPendingHttpWal({ includeLiveAdapters: true });
+            const caughtUp = new Set<string>();
+            this._caughtUpForWalReplay = caughtUp;
+            try {
+                await this._catchUpLiveSubsetAndDeps();
+                await this._replayPendingHttpWal({ includeLiveAdapters: true });
+            } finally {
+                if (this._caughtUpForWalReplay === caughtUp) {
+                    this._caughtUpForWalReplay = null;
+                }
+            }
             await this.flushPendingHttpPublishes();
             const needsRebaseline = this.coreAdapter?.needsVisibleRebaseline;
             this._reportedConnected = true;
@@ -1883,9 +2595,13 @@ export class CloudLiveSession {
         } catch (error) {
             const detail =
                 error instanceof Error ? error.message : String(error);
-            if (!this._readyOnce || this._degradedRetries > 0) {
+            if (
+                !isTerminalDocumentError(error) &&
+                (!this._readyOnce || this._degradedRetries > 0)
+            ) {
                 // First open may stay degraded so a large hydrate is not
-                // fail-closed. After the first ready, reconnect barriers fail closed.
+                // fail-closed. After the first ready, reconnect barriers fail
+                // closed, and a gap or broken document always does.
                 console.warn(
                     `CloudLiveSession: first-open ready barrier degraded (${detail})`
                 );
@@ -1936,6 +2652,12 @@ export class CloudLiveSession {
         if (this._wal.health !== 'ready') {
             return;
         }
+        if (this._isReadOnly()) {
+            // Unsent edits stay in the write-ahead log untouched: not
+            // restored into the font, not sent.
+            this._reportKeptEdits(this._keptEditCount());
+            return;
+        }
         const includeLiveAdapters = options?.includeLiveAdapters !== false;
         const records = this._wal.replayableRecords();
         pushCollabIntegrityEvent('replay-http-wal', {
@@ -1967,19 +2689,157 @@ export class CloudLiveSession {
                 continue;
             }
             if (!record.collaborationMessage) {
-                continue;
+                throw new MissingEnvelopeError(record.documentId);
             }
             const update = walUpdateBytes(record);
             if (!update.length) {
                 continue;
             }
             this._restoreWalRecordIntoBridge(record, update, shownIds);
-            await this._enqueueDependentPublish(
+            this._queueHttpPacket(
                 record.documentId,
                 update,
-                record.collaborationMessage
+                record.collaborationMessage,
+                record
             );
         }
+        this._pumpHttpPublishQueue();
+    }
+
+    /**
+     * A glyph socket this window no longer wants, with edits it sent that
+     * the room has not acknowledged yet: keep it open until they are
+     * acknowledged (bounded by `_glyphSocketDrainMs`), then close it. Its
+     * edits go to the room over this one channel; closing it at once would
+     * hand the same rows to HTTP while the room is still applying them from
+     * the socket. Returns false when the socket can close now.
+     */
+    private _drainGlyphSocketBeforeClose(
+        documentId: string,
+        adapter: CloudAdapter
+    ): boolean {
+        if (!documentId.startsWith('glyph:')) {
+            return false;
+        }
+        if (this._glyphSocketDrains.has(documentId)) {
+            return true;
+        }
+        if (
+            this._disconnected ||
+            this._isReadOnly() ||
+            !this._wal.isLoaded ||
+            this._hasHttpBacklog(documentId) ||
+            this._wal.pendingCountFor(documentId) === 0 ||
+            adapter.isTransportSynced?.() !== true
+        ) {
+            return false;
+        }
+        const drain: {
+            adapter: CloudAdapter;
+            unsubscribe: () => void;
+            timer: ReturnType<typeof setTimeout> | null;
+        } = { adapter, unsubscribe: () => {}, timer: null };
+        let settled = false;
+        const settle = (outcome: 'acknowledged' | 'timeout'): void => {
+            if (settled || this._glyphSocketDrains.get(documentId) !== drain) {
+                return;
+            }
+            settled = true;
+            this._cancelGlyphSocketDrain(documentId);
+            this._closeDrainedGlyphSocket(documentId, adapter, outcome);
+        };
+        drain.unsubscribe = this._wal.onChange(() => {
+            if (!settled && this._wal.pendingCountFor(documentId) === 0) {
+                // Not inside the WAL change (an ack the socket is handling).
+                this._scheduleTimer(() => settle('acknowledged'), 0);
+            }
+        });
+        drain.timer = this._scheduleTimer(
+            () => settle('timeout'),
+            this._glyphSocketDrainMs
+        );
+        this._glyphSocketDrains.set(documentId, drain);
+        recordCollabTrace('glyph-socket-drain', [], {
+            document: documentId,
+            pending: this._wal.pendingCountFor(documentId)
+        });
+        return true;
+    }
+
+    private _cancelGlyphSocketDrain(documentId: string): void {
+        const drain = this._glyphSocketDrains.get(documentId);
+        if (!drain) {
+            return;
+        }
+        this._glyphSocketDrains.delete(documentId);
+        drain.unsubscribe();
+        if (drain.timer) {
+            clearTimeout(drain.timer);
+            this._timers.delete(drain.timer);
+        }
+    }
+
+    private _closeDrainedGlyphSocket(
+        documentId: string,
+        adapter: CloudAdapter,
+        outcome: 'acknowledged' | 'timeout'
+    ): void {
+        if (
+            this._disconnected ||
+            this._desiredDocumentIds.has(documentId) ||
+            this._adapters.get(documentId) !== adapter
+        ) {
+            return;
+        }
+        const pending = this._wal.pendingCountFor(documentId);
+        recordCollabTrace('glyph-socket-drained', [], {
+            document: documentId,
+            outcome,
+            pending
+        });
+        adapter.disconnect();
+        this._adapters.delete(documentId);
+        this._clearConnectRetry(documentId);
+        this._clearDocumentError(documentId);
+        if (pending > 0) {
+            // Not acknowledged in time: the rows go out over HTTP, never
+            // dropped (the room keeps one copy of a transaction).
+            this._queueWalRowsForHttp(new Set([documentId]));
+        }
+        this._emitPendingSyncCount();
+        this._emitTransferActivity();
+    }
+
+    /** Queue these glyphs' unsent WAL rows for HTTP, in WAL order. */
+    private _queueWalRowsForHttp(documentIds: Set<string>): void {
+        if (this._isReadOnly()) {
+            // Kept, not sent, while read-only.
+            return;
+        }
+        if (!this._wal.isLoaded) {
+            // Not open yet: the replay that follows the load queues them.
+            void this._replayPendingHttpWal({ documentIds });
+            return;
+        }
+        for (const record of this._wal.replayableRecords()) {
+            if (!documentIds.has(record.documentId)) {
+                continue;
+            }
+            const update = walUpdateBytes(record);
+            if (!update.length) {
+                continue;
+            }
+            if (!record.collaborationMessage) {
+                throw new MissingEnvelopeError(record.documentId);
+            }
+            this._queueHttpPacket(
+                record.documentId,
+                update,
+                record.collaborationMessage,
+                record
+            );
+        }
+        this._pumpHttpPublishQueue();
     }
 
     /**
@@ -1995,29 +2855,133 @@ export class CloudLiveSession {
         const bridge = this._options.bridge;
         if (
             this._adapters.has(record.documentId) ||
-            shownIds.has(record.clientTransactionId) ||
-            bridge.hasResidentGlyphDocument?.(record.documentId) !== true ||
-            typeof bridge.applyRemoteUpdate !== 'function'
+            typeof bridge.applyRemoteUpdate !== 'function' ||
+            !update.byteLength
         ) {
             return;
         }
+        // The glyph may lack the room's state this row builds on (this
+        // window's own acknowledged edit, say): the row waits behind any
+        // earlier waiting row of the glyph, never dropped, never a gap.
+        const waiting = this._walRowsAwaitingState.get(record.documentId) ?? [];
+        if (
+            !waiting.some(
+                (row) => row.clientTransactionId === record.clientTransactionId
+            )
+        ) {
+            waiting.push(record);
+        }
+        this._walRowsAwaitingState.set(record.documentId, waiting);
+        // Caught up from the room moments ago in this barrier: the glyph
+        // holds the room's complete state, so a row that still does not fit
+        // is a real gap (the gate marks the glyph broken). Otherwise the
+        // row waits for the glyph's next catch-up.
+        const final =
+            this._caughtUpForWalReplay?.has(record.documentId) === true;
         try {
+            this._applyWalRowsAwaitingState(record.documentId, {
+                final,
+                stage: final ? 'replay-after-catch-up' : 'replay',
+                shownIds
+            });
+        } catch (error) {
+            if (!final) {
+                throw error;
+            }
+            // The gate refused the row and marked the glyph broken; the row
+            // stays in the WAL and is still sent. The other glyphs' rows
+            // replay on.
+            console.error(
+                `CloudLiveSession: unsent edit of ${record.documentId} does not fit on the room’s state:`,
+                error
+            );
+        }
+    }
+
+    /** Unsent HTTP rows per glyph waiting for the glyph's room state. */
+    walRowsAwaitingState(): Map<string, number> {
+        return new Map(
+            [...this._walRowsAwaitingState].map(([id, rows]) => [
+                id,
+                rows.length
+            ])
+        );
+    }
+
+    /**
+     * Apply a glyph's waiting unsent rows, in WAL order, while each fits;
+     * rows it already holds are skipped. With `final` the glyph holds the
+     * room's complete state, so a row that still does not fit is a real
+     * gap: the gate refuses it, marks the glyph broken and this throws.
+     */
+    private _applyWalRowsAwaitingState(
+        documentId: string,
+        options: { final: boolean; stage: string; shownIds?: Set<string> }
+    ): void {
+        const rows = this._walRowsAwaitingState.get(documentId);
+        if (!rows?.length) {
+            return;
+        }
+        const bridge = this._options.bridge;
+        if (typeof bridge.applyRemoteUpdate !== 'function') {
+            return;
+        }
+        const inspectable = typeof bridge.getDocumentInstance === 'function';
+        if (
+            !inspectable &&
+            bridge.hasResidentGlyphDocument?.(documentId) !== true
+        ) {
+            return;
+        }
+        const shownIds = options.shownIds ?? new Set<string>();
+        if (!options.shownIds) {
+            for (const item of bridge.getCollaborationLog?.() ?? []) {
+                if (typeof item?.id === 'string') {
+                    shownIds.add(item.id);
+                }
+            }
+        }
+        const apply = (record: CloudWalRecord): void => {
             bridge.applyRemoteUpdate(
-                update,
+                walUpdateBytes(record),
                 undefined,
-                record.collaborationMessage
+                record.collaborationMessage &&
+                    !shownIds.has(record.clientTransactionId)
                     ? [record.collaborationMessage]
                     : [],
-                record.documentId,
+                documentId,
                 { captureInUndo: false }
             );
             shownIds.add(record.clientTransactionId);
-        } catch (error) {
-            console.warn(
-                'CloudLiveSession: failed to restore an unsent glyph edit:',
-                error,
-                record.clientTransactionId
-            );
+        };
+        const result = applyUnsentRowsInOrder(rows, {
+            documentId,
+            doc: () =>
+                bridge.hasResidentGlyphDocument?.(documentId) === false
+                    ? null
+                    : documentInstanceOf(bridge, documentId),
+            inspectable,
+            update: (record) => walUpdateBytes(record),
+            apply
+        });
+        if (result.waiting.length) {
+            this._walRowsAwaitingState.set(documentId, result.waiting);
+        } else {
+            this._walRowsAwaitingState.delete(documentId);
+        }
+        if (result.waiting.length || options.final) {
+            recordCollabTrace('unsent-rows-await-room-state', [], {
+                document: documentId,
+                stage: options.stage,
+                final: options.final,
+                applied: result.applied.length,
+                skipped: result.skipped.length,
+                waiting: result.waiting.length,
+                gap: result.gap?.message ?? null
+            });
+        }
+        if (options.final && result.gap && result.waiting.length) {
+            apply(result.waiting[0]);
         }
     }
 
@@ -2058,6 +3022,12 @@ export class CloudLiveSession {
                     'CloudLiveSession: catching up joined layout rooms failed:',
                     error
                 );
+                if (isTerminalDocumentError(error)) {
+                    const detail =
+                        error instanceof Error ? error.message : String(error);
+                    this._erroredDocuments.set(READY_BARRIER_ERROR_KEY, detail);
+                    this._options.onConnectionStatus?.('error', detail);
+                }
             }
         );
         this._layoutJoinCatchUp = Promise.all([
@@ -2070,15 +3040,32 @@ export class CloudLiveSession {
         documentIds: string[]
     ): Promise<void> {
         for (const documentId of documentIds) {
-            const bytes = await fetchCloudDocumentState({
+            const state = await fetchCloudDocumentStateWithLogId({
                 token: this._token,
                 roomUrl: this._roomUrl,
                 websiteBaseUrl: this._options.websiteBaseUrl,
                 assetId: this._options.assetId,
                 documentId
             });
-            if (bytes) {
-                this._options.bridge.applyDocumentCatchUp?.(documentId, bytes);
+            if (state) {
+                const applied = this._options.bridge.applyDocumentCatchUp?.(
+                    documentId,
+                    state.bytes
+                );
+                // The document holds the state through this log id. A
+                // state the bridge refused (or could not take) moves no
+                // cursor: its rows were never applied.
+                if (applied === true) {
+                    rememberLoadedDocumentLogCursor(
+                        this._options.bridge,
+                        documentId,
+                        state.logId,
+                        'joined-layout-state'
+                    );
+                }
+                this._adapters
+                    .get(documentId)
+                    ?.applyUnsentRowsAwaitingRoomState?.();
             }
         }
     }

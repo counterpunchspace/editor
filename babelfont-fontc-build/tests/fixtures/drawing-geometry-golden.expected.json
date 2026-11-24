@@ -1,0 +1,125 @@
+{
+    "created": {
+        "id": "L1",
+        "width": 500,
+        "name": "Regular",
+        "master": {
+            "type": "DefaultForMaster",
+            "master": "m1"
+        },
+        "format_specific": {
+            "com.example.drawing": "kept"
+        },
+        "geometryTopology": "{\"v\":1,\"g\":1,\"shapes\":[{\"id\":\"p1\",\"k\":\"P\",\"c\":true,\"n\":[\"n1\",\"n2\",\"n3\",\"n4\"],\"t\":[\"Line\",\"OffCurve\",\"OffCurve\",\"Curve\"],\"s\":[false,false,false,true]},{\"id\":\"p2\",\"k\":\"P\",\"c\":false,\"n\":[\"n5\",\"n6\"],\"t\":[\"Move\",\"Line\"],\"s\":[false,false]},{\"id\":\"c1\",\"k\":\"C\"}]}",
+        "nodePositionsById": {
+            "n1": "0 0",
+            "n2": "12.5 -0.25",
+            "n3": "100.125 1e-7",
+            "n4": "250 700",
+            "n5": "10 20",
+            "n6": "30 40"
+        },
+        "shapeDataById": {
+            "p1": {},
+            "p2": {
+                "format_specific": {
+                    "com.example.path": "kept"
+                }
+            },
+            "c1": {
+                "reference": "b",
+                "transform": {
+                    "translation": [
+                        10,
+                        20
+                    ],
+                    "rotation": 0,
+                    "scale": [
+                        1,
+                        1
+                    ],
+                    "skew": [
+                        0,
+                        0
+                    ],
+                    "order": "RestOfTheWorld"
+                }
+            }
+        },
+        "anchorsById": {
+            "a1": {
+                "id": "a1",
+                "name": "top",
+                "x": 250,
+                "y": 700
+            }
+        },
+        "anchorOrder": [
+            "a1"
+        ],
+        "guidesById": {},
+        "guideOrder": []
+    },
+    "rewritten": {
+        "id": "L1",
+        "width": 510,
+        "name": "Regular",
+        "master": {
+            "type": "DefaultForMaster",
+            "master": "m1"
+        },
+        "format_specific": {
+            "com.example.drawing": "kept"
+        },
+        "geometryTopology": "{\"v\":1,\"g\":2,\"shapes\":[{\"id\":\"p1\",\"k\":\"P\",\"c\":true,\"n\":[\"n1\",\"n2\",\"n3\",\"n4\",\"n7\"],\"t\":[\"Line\",\"OffCurve\",\"OffCurve\",\"Curve\",\"Line\"],\"s\":[false,false,false,true,false]},{\"id\":\"p2\",\"k\":\"P\",\"c\":true,\"n\":[\"n5\",\"n6\"],\"t\":[\"Line\",\"Line\"],\"s\":[false,false]}]}",
+        "nodePositionsById": {
+            "n1": "0 0",
+            "n2": "15 -0.25",
+            "n3": "100.125 1e-7",
+            "n4": "250 700",
+            "n5": "10 20",
+            "n6": "30 40",
+            "n7": "300 350"
+        },
+        "shapeDataById": {
+            "p1": {},
+            "p2": {
+                "format_specific": {
+                    "com.example.path": "changed"
+                }
+            },
+            "c1": {
+                "reference": "b",
+                "transform": {
+                    "translation": [
+                        10,
+                        20
+                    ],
+                    "rotation": 0,
+                    "scale": [
+                        1,
+                        1
+                    ],
+                    "skew": [
+                        0,
+                        0
+                    ],
+                    "order": "RestOfTheWorld"
+                }
+            }
+        },
+        "anchorsById": {
+            "a1": {
+                "id": "a1",
+                "name": "top",
+                "x": 255,
+                "y": 700
+            }
+        },
+        "anchorOrder": [
+            "a1"
+        ],
+        "guidesById": {},
+        "guideOrder": []
+    }
+}

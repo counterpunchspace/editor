@@ -43,6 +43,7 @@ import {
     enableAutomaticFeatures
 } from './automatic-features-takeover';
 import { beginLoadingCursor, endLoadingCursor } from './loading-cursor';
+import { reportRefusedEdit } from './glyph-canvas/edit-refusal-notice';
 import {
     addTippyBackdropSupport,
     getOrCreateBackdrop,
@@ -5659,10 +5660,9 @@ class FontInfoManager {
                                                 stationId
                                             )
                                                 .catch((err) => {
-                                                    console.error(
-                                                        'Reinterpolate all drawings error:',
-                                                        err
-                                                    );
+                                                    // The station’s drawings
+                                                    // are as they were.
+                                                    reportRefusedEdit(err);
                                                 })
                                                 .finally(() => {
                                                     endLoadingCursor();
@@ -7462,11 +7462,8 @@ class FontInfoManager {
             this.selectedStationIndices = new Set([this.selectedStationIndex]);
             this.forceRefreshVisibleStationsContent();
         } catch (err) {
-            console.error(
-                'addStationRecord: object-model addStation failed:',
-                err
-            );
-            throw err;
+            // A refused station edit changed nothing; show why.
+            reportRefusedEdit(err);
         }
     }
 
@@ -7515,10 +7512,26 @@ class FontInfoManager {
                 stations.length - indicesToRemove.size
             );
 
-            // Choose new primary selection: first remaining index
+            // New primary selection: the first remaining index, worked out
+            // before the removal changes the station list.
             const firstRemaining = [...Array(stations.length).keys()].find(
                 (i) => !indicesToRemove.has(i)
             );
+
+            if (typeof font?.removeStationsByIds !== 'function') {
+                return;
+            }
+
+            try {
+                await font.removeStationsByIds(stationIds);
+            } catch (error) {
+                // A refused removal changed nothing, so the selection stays
+                // where it was; show why.
+                reportRefusedEdit(error);
+                this.forceRefreshVisibleStationsContent();
+                return;
+            }
+
             this.selectedStationIndex =
                 firstRemaining !== undefined
                     ? firstRemaining
@@ -7527,12 +7540,6 @@ class FontInfoManager {
                 nextStationCount > 0
                     ? new Set([this.selectedStationIndex])
                     : new Set();
-
-            if (typeof font?.removeStationsByIds !== 'function') {
-                return;
-            }
-
-            await font.removeStationsByIds(stationIds);
 
             this.forceRefreshVisibleStationsContent();
         });
@@ -8035,10 +8042,16 @@ class FontInfoManager {
             plainRecords<Babelfont.Instance>(font.instances),
             () => this.createFontInfoRecordId('master')
         );
-        await font.addAxisWithStationCopies(
-            plan,
-            `Add ${result.model.name.trim()} axis with ${stationCount} station${stationCount === 1 ? '' : 's'}`
-        );
+        try {
+            await font.addAxisWithStationCopies(
+                plan,
+                `Add ${result.model.name.trim()} axis with ${stationCount} station${stationCount === 1 ? '' : 's'}`
+            );
+        } catch (error) {
+            // A refused edit added neither the axis nor the stations.
+            reportRefusedEdit(error);
+            return;
+        }
         this.selectedAxisIndex = axisCount;
         this.selectedAxisIndices = new Set([axisCount]);
         this.forceRefreshVisibleAxesContent();

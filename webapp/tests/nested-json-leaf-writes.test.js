@@ -495,7 +495,7 @@ describe('nested JSON leaf writes', () => {
             writeDrawingGeometry,
             writeNodePosition,
             readDrawingGeometry,
-            repairDrawingGeometryOrphans,
+            assertDrawingGeometryComplete,
             DRAWING_NODE_POSITIONS_KEY
         } = require('../js/drawing-geometry-ydoc');
 
@@ -563,10 +563,11 @@ describe('nested JSON leaf writes', () => {
         expect(readDrawingGeometry(docA.getMap('layer'))[0].nodes).toHaveLength(
             1
         );
-        repairDrawingGeometryOrphans(docA.getMap('layer'));
+        // The completeness check never deletes an orphan position.
+        assertDrawingGeometryComplete(docA.getMap('layer'));
         expect(
             docA.getMap('layer').get(DRAWING_NODE_POSITIONS_KEY).get('n2')
-        ).toBeUndefined();
+        ).toBe('99 99');
     });
 
     test('packed position write is much smaller than a topology replacement', () => {
@@ -1077,8 +1078,11 @@ describe('section 1 sparse Yjs packets', () => {
             writeDrawingGeometry(fatDrawing, [
                 { id: 'path-1', closed: true, nodes: reversed }
             ]);
+            // The fat baseline rewrites every position, equal or not;
+            // writeNodePosition itself skips an equal value.
+            const fatPositions = fatDrawing.get(DRAWING_NODE_POSITIONS_KEY);
             for (const node of reversed) {
-                writeNodePosition(fatDrawing, node.id, node.x, node.y);
+                fatPositions.set(node.id, `${node.x} ${node.y}`);
             }
         });
         expectSparseYjsPacket(sparse, fat);
@@ -1112,8 +1116,11 @@ describe('section 1 sparse Yjs packets', () => {
             writeDrawingGeometry(fatDrawing, [
                 { id: 'path-1', closed: true, nodes: kept }
             ]);
+            // The fat baseline rewrites every position, equal or not;
+            // writeNodePosition itself skips an equal value.
+            const fatPositions = fatDrawing.get(DRAWING_NODE_POSITIONS_KEY);
             for (const node of kept) {
-                writeNodePosition(fatDrawing, node.id, node.x, node.y);
+                fatPositions.set(node.id, `${node.x} ${node.y}`);
             }
         });
         expectSparseYjsPacket(sparse, fat);

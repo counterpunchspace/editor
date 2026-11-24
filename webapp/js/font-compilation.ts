@@ -497,6 +497,56 @@ async function shapeTextWithFontDetailed(
  * @param {string} inputString - Text to shape
  * @returns {Promise<Array<string>>} - Array of glyph names
  */
+const TERMINAL_WORKER_DOCUMENT_ERROR =
+    /(ClockGapError|BrokenDocumentError): document (\S+?)(?::\s|\s+is\s)/;
+
+function errorText(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Whether a worker error says a document lost an update (`ClockGapError`)
+ * or was already broken (`BrokenDocumentError`). Both are terminal: the
+ * document is marked broken and nothing retries or reseeds it.
+ */
+export function isTerminalWorkerDocumentError(error: unknown): boolean {
+    const text = errorText(error);
+    return (
+        text.includes('ClockGapError') || text.includes('BrokenDocumentError')
+    );
+}
+
+/**
+ * The document a terminal worker error names, or `fallbackDocumentId` when
+ * the message names none.
+ */
+export function terminalWorkerErrorDocumentId(
+    error: unknown,
+    fallbackDocumentId: string
+): string {
+    const match = TERMINAL_WORKER_DOCUMENT_ERROR.exec(errorText(error));
+    return match?.[2] || fallbackDocumentId;
+}
+
+/**
+ * Mark the document a terminal worker error names as broken in the bridge,
+ * so edits to it stop, and return the error to surface. Never retries.
+ */
+export function markTerminalWorkerDocumentError(
+    error: unknown,
+    fallbackDocumentId: string
+): Error {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    const documentId = terminalWorkerErrorDocumentId(
+        failure,
+        fallbackDocumentId
+    );
+    const bridge =
+        typeof window !== 'undefined' ? window.patchSyncEngine : null;
+    bridge?.markDocumentBroken(documentId, failure);
+    return failure;
+}
+
 async function shapeTextWithFont(
     fontBytes: Uint8Array,
     inputString: string
@@ -548,6 +598,12 @@ export class FontCompilation {
         () => Uint8Array | null | undefined
     >;
     workerDocumentReplaceFlush: Promise<unknown> | null;
+    /**
+     * Documents the worker holds whole: set by a seed, extended by a
+     * replace. A Yjs update for a glyph document outside this set is never
+     * sent; the document's whole state goes first.
+     */
+    workerLoadedDocumentIds: Set<string>;
     compileFeatureOverlay: string;
 
     constructor(options?: { connectInterpolation?: boolean }) {
@@ -568,6 +624,7 @@ export class FontCompilation {
         this.pendingWorkerDocumentReplaces = new Map();
         this.pendingWorkerDocumentReaders = new Map();
         this.workerDocumentReplaceFlush = null;
+        this.workerLoadedDocumentIds = new Set();
         this.compileFeatureOverlay = '';
     }
 
@@ -598,21 +655,77 @@ export class FontCompilation {
             return Promise.resolve();
         }
         const previous = this.pendingWorkerDocumentSync;
+        const documentId =
+            typeof message.documentId === 'string'
+                ? message.documentId
+                : undefined;
         const work = (async () => {
             await previous.catch(() => undefined);
             if (!this.hasSeededWorkerDocuments()) {
                 return;
             }
-            const result = await this.sendMessage({
-                ...message,
-                type: 'applyYjsUpdate'
-            });
+            await this.ensureWorkerHoldsDocument(documentId);
+            let result;
+            try {
+                result = await this.sendMessage({
+                    ...message,
+                    type: 'applyYjsUpdate'
+                });
+            } catch (error) {
+                if (isTerminalWorkerDocumentError(error)) {
+                    throw markTerminalWorkerDocumentError(
+                        error,
+                        documentId ?? 'font-core'
+                    );
+                }
+                throw error;
+            }
             if (result?.skipped === 'ydoc_not_initialized') {
                 this.setWorkerCacheDocumentReady(false);
+                throw new Error(
+                    `The compile worker holds no font document, so it refused the update for ${documentId ?? 'font-core'}.`
+                );
             }
         })();
         this.trackWorkerDocumentSync(work);
         return work;
+    }
+
+    /** Whether the worker holds `documentId` whole (seeded or replaced). */
+    workerHoldsDocument(documentId: string): boolean {
+        return this.workerLoadedDocumentIds.has(documentId);
+    }
+
+    /**
+     * Send a glyph document's whole state before the first Yjs update for
+     * it. The worker refuses an update for a glyph document it does not
+     * hold; the whole state comes from the bridge, which already contains
+     * the update about to be sent, so applying that update after it changes
+     * nothing. Throws when the bridge has no state for the document.
+     */
+    async ensureWorkerHoldsDocument(
+        documentId: string | undefined,
+        readWholeState: (
+            documentId: string
+        ) => Uint8Array | null | undefined = (id) =>
+            typeof window !== 'undefined'
+                ? window.patchSyncEngine?.encodeDocumentState(id)
+                : undefined
+    ): Promise<void> {
+        if (
+            !documentId ||
+            !documentId.startsWith('glyph:') ||
+            this.workerLoadedDocumentIds.has(documentId)
+        ) {
+            return;
+        }
+        const bytes = readWholeState(documentId);
+        if (!bytes?.length) {
+            throw new Error(
+                `Cannot send an update for ${documentId} to the compile worker: it does not hold that document, and the editor has no state to send it first.`
+            );
+        }
+        await this.replaceWorkerDocuments([{ documentId, bytes }]);
     }
 
     /** Return whether the worker already holds a document suitable for editing compiles. */
@@ -669,11 +782,9 @@ export class FontCompilation {
         ) {
             const flush = this.workerDocumentReplaceFlush;
             if (flush) {
-                try {
-                    await flush;
-                } catch {
-                    // Replace failures already log; compile checks readiness.
-                }
+                // A replace that failed left the worker without that
+                // document's current state; the compile must not run on it.
+                await flush;
             } else {
                 await Promise.resolve();
             }
@@ -774,12 +885,17 @@ export class FontCompilation {
     async replaceWorkerDocuments(
         documents: Array<{ documentId: string; bytes: Uint8Array }>
     ): Promise<void> {
-        const shards = documents.filter(
-            (document) => document.documentId && document.bytes?.length
-        );
-        if (!shards.length) {
+        if (!documents.length) {
             return;
         }
+        for (const document of documents) {
+            if (!document.documentId || !document.bytes?.length) {
+                throw new Error(
+                    `Cannot replace worker document “${document.documentId || '(no id)'}” without its whole state.`
+                );
+            }
+        }
+        const shards = documents;
 
         if (!this.isInitialized) {
             const initialized = await this.initialize();
@@ -806,6 +922,32 @@ export class FontCompilation {
         }
     }
 
+    /** Record which documents the worker holds after a seed or replace. */
+    private noteWorkerDocumentsLoaded(
+        messageType: string,
+        data: Record<string, unknown>
+    ): void {
+        const documents = Array.isArray(data.documents)
+            ? (data.documents as Array<{ documentId?: unknown }>)
+            : null;
+        const ids = documents
+            ? documents
+                  .map((document) => document?.documentId)
+                  .filter((id): id is string => typeof id === 'string')
+            : [];
+        if (messageType === 'seedYdoc') {
+            // A seed replaces the worker's whole document set; one without
+            // shards seeds font-core alone.
+            this.workerLoadedDocumentIds = new Set(
+                documents ? ids : ['font-core']
+            );
+            return;
+        }
+        for (const id of ids) {
+            this.workerLoadedDocumentIds.add(id);
+        }
+    }
+
     /**
      * Replace one worker document after the syncs already queued. Pass
      * `readCurrent` to read the document when the replace runs: updates
@@ -818,13 +960,19 @@ export class FontCompilation {
         state: Uint8Array | ArrayBufferLike | null | undefined,
         readCurrent?: () => Uint8Array | null | undefined
     ): void {
-        if (!documentId || !state) {
-            return;
+        if (!documentId) {
+            throw new Error('Cannot replace a worker document without its id.');
         }
         const bytes =
-            state instanceof Uint8Array ? state : new Uint8Array(state);
+            state instanceof Uint8Array
+                ? state
+                : state
+                  ? new Uint8Array(state)
+                  : new Uint8Array();
         if (!bytes.length) {
-            return;
+            throw new Error(
+                `Cannot replace worker document ${documentId} without its whole state.`
+            );
         }
         this.pendingWorkerDocumentReplaces.set(documentId, bytes);
         if (readCurrent) {
@@ -847,14 +995,20 @@ export class FontCompilation {
                     const documents = Array.from(
                         this.pendingWorkerDocumentReplaces.entries()
                     ).map(([documentId, bytes]) => {
-                        const current =
-                            this.pendingWorkerDocumentReaders.get(
-                                documentId
-                            )?.();
-                        return {
-                            documentId,
-                            bytes: current?.length ? current : bytes
-                        };
+                        const reader =
+                            this.pendingWorkerDocumentReaders.get(documentId);
+                        if (!reader) {
+                            return { documentId, bytes };
+                        }
+                        // The document as it is now: the older snapshot
+                        // would drop updates forwarded since it was taken.
+                        const current = reader();
+                        if (!current?.length) {
+                            throw new Error(
+                                `Cannot replace worker document ${documentId}: the editor no longer has its state.`
+                            );
+                        }
+                        return { documentId, bytes: current };
                     });
                     this.pendingWorkerDocumentReplaces.clear();
                     this.pendingWorkerDocumentReaders.clear();
@@ -871,15 +1025,17 @@ export class FontCompilation {
         })();
         this.workerDocumentReplaceFlush = flush;
         void flush.catch((error) => {
-            console.warn(
+            // The worker kept its old documents: compiles stop on them
+            // (awaitWorkerDocumentReadyForCompile rethrows this failure, and
+            // readiness stays off). Nothing reseeds behind the failure.
+            this.setWorkerCacheDocumentReady(false);
+            if (isTerminalWorkerDocumentError(error)) {
+                markTerminalWorkerDocumentError(error, 'font-core');
+            }
+            console.error(
                 'Failed to replace worker Yjs documents after catch-up',
                 error
             );
-            // The worker kept its old documents; rebuild them from the
-            // bridge so the next compile does not use stale outlines.
-            void window.fontManager
-                ?.reseedWorkerFromBridge?.('worker document replace failed')
-                .catch(() => undefined);
         });
     }
 
@@ -1412,6 +1568,12 @@ export class FontCompilation {
                     this.pendingStoreFontJsonPayload = null;
                 }
                 if (
+                    messageType === 'seedYdoc' ||
+                    messageType === 'replaceYdocDocuments'
+                ) {
+                    this.noteWorkerDocumentsLoaded(messageType, data);
+                }
+                if (
                     messageType === 'storeFontJson' ||
                     messageType === 'seedYdoc' ||
                     messageType === 'replaceYdocDocuments' ||
@@ -1436,6 +1598,9 @@ export class FontCompilation {
                 ) {
                     // The worker discards its documents when one of these fails.
                     this.workerDocumentsSeeded = false;
+                }
+                if (messageType === 'seedYdoc') {
+                    this.workerLoadedDocumentIds = new Set();
                 }
                 reject(reason);
             };

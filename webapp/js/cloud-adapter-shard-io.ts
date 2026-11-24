@@ -32,6 +32,7 @@ import {
 } from './filesystem-plugins/cloud-shard-pack';
 import { throwIfAborted, yieldToUi } from './yield-to-ui';
 import {
+    checkpointLogIdFromHeaders,
     normalizeCloudShardHttpUrl,
     normalizeCloudShardPackUrl
 } from './cloud-adapter-bootstrap';
@@ -45,6 +46,9 @@ import {
     abortSignalWithTimeout,
     HYDRATE_PACK_FETCH_TIMEOUT_MS,
     shouldRetryHydrateTransport,
+    readRoomErrorBody,
+    cloudRefusalFromBody,
+    CloudRoomHttpError,
     type CloudShardIoOptions,
     type CloudShardIoProgress,
     type CloudSeededShardAttestation,
@@ -909,6 +913,8 @@ export const cloudAdapterShardIoMethods = {
         const result = new Map<string, Uint8Array>();
         // Shards the room left out to stay within its subrequest budget.
         const deferred: string[] = [];
+        // Log ids named by shard receipts, by shard.
+        const receiptLogIds = new Map<string, number | null>();
         let packError: string | null = null;
         const parser = createPackParser();
         const reader = response.body.getReader();
@@ -944,6 +950,22 @@ export const cloudAdapterShardIoMethods = {
                                     }
                                 }
                             }
+                        } else if (frame.type === PACK_FRAME_TYPE.RECEIPT) {
+                            // A shard's receipt may name the log id its
+                            // state holds every row through.
+                            const receipt = frame.receipt || {};
+                            const shardId =
+                                typeof receipt.shardId === 'string'
+                                    ? receipt.shardId
+                                    : frame.shardId;
+                            if (shardId) {
+                                receiptLogIds.set(
+                                    shardId,
+                                    Number.isSafeInteger(receipt.throughLogId)
+                                        ? receipt.throughLogId
+                                        : null
+                                );
+                            }
                         } else if (
                             frame.type === PACK_FRAME_TYPE.SHARD &&
                             !frame.missing
@@ -974,6 +996,13 @@ export const cloudAdapterShardIoMethods = {
         if (!response.ok || packError) {
             throw new Error(
                 packError || `shard pack hydrate failed: ${response.status}`
+            );
+        }
+        for (const documentId of result.keys()) {
+            // Without a receipt naming it, the pack carried no log id.
+            this._noteHydratedLogId?.(
+                documentId,
+                receiptLogIds.get(documentId) ?? null
             );
         }
         if (deferred.length) {
@@ -1013,10 +1042,51 @@ export const cloudAdapterShardIoMethods = {
                     documentId
                 );
                 this._noteTransferActivity('receiving');
-                const response = await fetch(httpUrl, {
-                    headers: { Authorization: `Bearer ${token}` },
-                    signal: options?.signal
-                });
+                // A state the room is rebuilding or just replaced (503
+                // `state_unavailable`, `state_superseded`) is asked for
+                // again; `broken_journal` (500) is final.
+                let response: Response;
+                for (let attempt = 0; ; attempt += 1) {
+                    try {
+                        response = await fetch(httpUrl, {
+                            headers: { Authorization: `Bearer ${token}` },
+                            signal: options?.signal
+                        });
+                        if (response.ok || response.status === 404) {
+                            break;
+                        }
+                        const body = await readRoomErrorBody(response);
+                        const refusal = cloudRefusalFromBody(
+                            documentId,
+                            body,
+                            undefined
+                        );
+                        if (refusal) {
+                            throw refusal;
+                        }
+                        throw new CloudRoomHttpError(
+                            `shard hydrate failed (${documentId}): ${response.status}${typeof body?.code === 'string' ? ` ${body.code}` : ''}`,
+                            {
+                                status: response.status,
+                                code: body?.code,
+                                retryable: body?.retryable
+                            }
+                        );
+                    } catch (error) {
+                        if (
+                            !shouldRetryHydrateTransport(
+                                error,
+                                options?.signal?.aborted === true,
+                                attempt
+                            )
+                        ) {
+                            throw error;
+                        }
+                        await new Promise((resolve) =>
+                            setTimeout(resolve, 100 * 2 ** attempt)
+                        );
+                    }
+                }
                 if (response.status === 404) {
                     cursor.completed += 1;
                     await emitShardIoProgress(options, {
@@ -1025,12 +1095,12 @@ export const cloudAdapterShardIoMethods = {
                     });
                     return { documentId, bytes: null as Uint8Array | null };
                 }
-                if (!response.ok) {
-                    throw new Error(
-                        `shard hydrate failed (${documentId}): ${response.status}`
-                    );
-                }
                 const bytes = new Uint8Array(await response.arrayBuffer());
+                // The state holds every row through this log id.
+                this._noteHydratedLogId?.(
+                    documentId,
+                    checkpointLogIdFromHeaders(response.headers)
+                );
                 cursor.completed += 1;
                 cursor.bytesCompleted += bytes.byteLength;
                 await emitShardIoProgress(options, {

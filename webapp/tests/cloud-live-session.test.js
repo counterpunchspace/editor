@@ -88,6 +88,7 @@ jest.mock('../js/cloud-adapter', () => {
 
 const {
     CloudLiveSession,
+    catchUpBatchOutcome,
     activeEditorGlyphNames,
     liveGlyphDocumentIdsFromSubset,
     stickyLiveGlyphDocumentIds
@@ -95,6 +96,18 @@ const {
 const { CloudAdapter } = require('../js/cloud-adapter.ts');
 const { walUpdateBytes } = require('../js/cloud-durable-wal.ts');
 const { walRecordsReadyToRestore } = require('../js/cloud-adapter-outbox.ts');
+
+let testEnvelopeSeq = 0;
+/** Every edit carries an envelope; the outbox refuses one without. */
+function testEnvelope() {
+    testEnvelopeSeq += 1;
+    return {
+        source: 'test',
+        transactionId: `test-${testEnvelopeSeq}`,
+        changes: [],
+        metadata: {}
+    };
+}
 
 function durableLiveAck(init) {
     const body = JSON.parse(init.body);
@@ -237,14 +250,13 @@ describe('CloudLiveSession', () => {
         global.fetch = originalFetch;
     });
 
-    test('an HTTP publish carries the glyph’s earlier unsent edits', () => {
+    test('a glyph’s HTTP edits go out one at a time, in the order they were made', async () => {
         const Y = require('yjs');
         const doc = new Y.Doc();
         const updates = [];
         doc.on('update', (update) => updates.push(update));
         doc.getMap('layer').set('width', 500);
         doc.getMap('layer').set('width', 520);
-        const [first, second] = updates;
         const session = new CloudLiveSession({
             assetId: 'asset-1',
             websiteBaseUrl: 'https://editor.example',
@@ -253,37 +265,143 @@ describe('CloudLiveSession', () => {
             bridge: {},
             bootstrapMode: 'skip'
         });
+        const room = new Y.Doc();
+        const bodies = [];
+        let inFlight = 0;
+        let maxInFlight = 0;
+        global.fetch = jest.fn(async (_url, init) => {
+            inFlight += 1;
+            maxInFlight = Math.max(maxInFlight, inFlight);
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            const body = JSON.parse(init.body);
+            bodies.push(body.clientTransactionId);
+            // The room applies each row in arrival order; a row that
+            // builds on a missing one would stay pending.
+            Y.applyUpdate(room, Buffer.from(body.update, 'base64'));
+            expect(room.store.pendingStructs).toBeNull();
+            inFlight -= 1;
+            return durableLiveAck(init);
+        });
         session._wal = {
             isLoaded: true,
-            recordsFor: () => [
-                {
-                    clientTransactionId: 'tx-1',
-                    createdAt: 1,
-                    state: 'applied',
-                    updateBytes: first
-                },
-                {
-                    clientTransactionId: 'tx-2',
-                    createdAt: 2,
-                    state: 'applied',
-                    updateBytes: second
-                }
-            ]
+            health: 'ready',
+            pendingCount: 0,
+            append: jest.fn(async () => {}),
+            acknowledge: jest.fn(async () => {}),
+            recordsFor: () => [],
+            replayableRecords: () => []
         };
-
-        // The second edit alone builds on the first: a room holds it back.
-        const alone = new Y.Doc();
-        Y.applyUpdate(alone, second);
-        expect(alone.getMap('layer').get('width')).toBeUndefined();
-
-        const payload = session._withEarlierUnsentUpdates(
-            'glyph:a',
-            'tx-2',
-            second
-        );
-        const room = new Y.Doc();
-        Y.applyUpdate(room, payload);
+        session._walLoad = Promise.resolve();
+        const envelope = (id) => ({
+            source: 'test',
+            messageId: id,
+            transactionId: id,
+            changes: [],
+            metadata: {}
+        });
+        const {
+            collaborationMessageKey
+        } = require('../js/collaboration-message.ts');
+        const first = envelope('tx-1');
+        const second = envelope('tx-2');
+        await Promise.all([
+            session._enqueueDependentPublish('glyph:a', updates[0], first),
+            session._enqueueDependentPublish('glyph:a', updates[1], second)
+        ]);
+        await session.flushPendingHttpPublishes();
+        expect(bodies).toEqual([
+            collaborationMessageKey(first),
+            collaborationMessageKey(second)
+        ]);
+        expect(maxInFlight).toBe(1);
         expect(room.getMap('layer').get('width')).toBe(520);
+        session.disconnect();
+    });
+
+    test('a refused HTTP publish stops that glyph’s outbox and keeps its rows', async () => {
+        const markDocumentBroken = jest.fn();
+        const statuses = [];
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: { markDocumentBroken },
+            bootstrapMode: 'skip',
+            onConnectionStatus: (status, detail) =>
+                statuses.push({ status, detail })
+        });
+        global.fetch = jest.fn(async () => ({
+            ok: false,
+            status: 409,
+            json: async () => ({
+                code: 'clock_gap',
+                seq: 1,
+                client: 5,
+                need: 3,
+                have: 1
+            })
+        }));
+        session._wal = {
+            isLoaded: true,
+            health: 'ready',
+            pendingCount: 0,
+            append: jest.fn(async () => {}),
+            acknowledge: jest.fn(async () => {}),
+            recordsFor: () => [],
+            replayableRecords: () => []
+        };
+        session._walLoad = Promise.resolve();
+        const envelope = (id) => ({
+            source: 'test',
+            messageId: id,
+            transactionId: id,
+            changes: [],
+            metadata: {}
+        });
+        await session._enqueueDependentPublish(
+            'glyph:a',
+            new Uint8Array([1]),
+            envelope('tx-1')
+        );
+        await session._enqueueDependentPublish(
+            'glyph:a',
+            new Uint8Array([2]),
+            envelope('tx-2')
+        );
+        await session.flushPendingHttpPublishes();
+        // Only the head went out; the later row waits behind the refusal.
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+        expect(session._wal.acknowledge).not.toHaveBeenCalled();
+        expect(session._httpOutboxes.get('glyph:a').packets).toHaveLength(2);
+        expect(markDocumentBroken).toHaveBeenCalledWith(
+            'glyph:a',
+            expect.objectContaining({
+                name: 'CloudRefusalError',
+                code: 'clock_gap'
+            })
+        );
+        expect(statuses.at(-1).status).toBe('error');
+        session.disconnect();
+    });
+
+    test('an HTTP edit without an envelope is refused', async () => {
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: {},
+            bootstrapMode: 'skip'
+        });
+        await expect(
+            session._enqueueDependentPublish(
+                'glyph:a',
+                new Uint8Array([1]),
+                null
+            )
+        ).rejects.toThrow(/without a collaboration envelope/);
+        session.disconnect();
     });
 
     test('production-mode live session attachment uses connectWithCredentials', async () => {
@@ -420,6 +538,7 @@ describe('CloudLiveSession', () => {
             global.fetch = jest.fn(async () => ({
                 ok: true,
                 status: 200,
+                headers: new Headers({ 'X-Checkpoint-Log-Id': '12' }),
                 arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer
             }));
             // A peer upgraded the font: the catalog room joins mid-session.
@@ -519,7 +638,11 @@ describe('CloudLiveSession', () => {
 
         expect(session.activeWebSocketCount()).toBe(3);
 
-        session.sendForwardedUpdate(new Uint8Array([1]), null, 'glyph:aaa');
+        session.sendForwardedUpdate(
+            new Uint8Array([1]),
+            testEnvelope(),
+            'glyph:aaa'
+        );
         const glyphAdapter = [...session._adapters.values()].find(
             (adapter) => adapter.documentId === 'glyph:aaa'
         );
@@ -624,7 +747,17 @@ describe('CloudLiveSession', () => {
             };
         });
         for (const listener of listeners) {
-            listener(new Uint8Array([4, 5, 6]), null, [], 'glyph:bbb');
+            listener(
+                new Uint8Array([4, 5, 6]),
+                {
+                    source: 'test',
+                    transactionId: 'tx-bbb',
+                    changes: [],
+                    metadata: { changedGlyphNames: ['B'] }
+                },
+                [],
+                'glyph:bbb'
+            );
         }
         await session.flushPendingHttpPublishes();
         expect(posted).toHaveLength(1);
@@ -692,7 +825,107 @@ describe('CloudLiveSession', () => {
         }
     });
 
-    test('a relayed linked-window edit is in the WAL before its socket adapter sends it', async () => {
+    test('an edit persisted after the session closed still gets its WAL row', async () => {
+        const originalIndexedDb = global.indexedDB;
+        global.indexedDB = createIndexedDbMock();
+        const envelope = {
+            schemaVersion: 1,
+            transactionId: 'late-edit',
+            localSequence: 1,
+            roomSequence: null,
+            baseRevision: null,
+            changes: [],
+            metadata: {
+                editType: 'glyph',
+                changedGlyphNames: ['A'],
+                changedLayerIds: [],
+                workerReplayTargets: [],
+                historyItemId: 'late-edit',
+                historyAction: 'change',
+                undoScope: 'glyph'
+            },
+            source: 'test',
+            label: null,
+            summary: '',
+            windowId: 'w1',
+            timestamp: 1
+        };
+        try {
+            const session = new CloudLiveSession({
+                assetId: 'asset-late',
+                websiteBaseUrl: 'https://editor.example',
+                token: 'token',
+                roomUrl: 'wss://rooms.example/room/asset-late',
+                bridge: {},
+                bootstrapMode: 'skip'
+            });
+            // The font closes right after the edit, before its row is written.
+            session.disconnect();
+            expect(
+                await session.persistOutgoingUpdate(
+                    new Uint8Array([1, 2]),
+                    envelope,
+                    'glyph:aaa'
+                )
+            ).toBe(true);
+            expect(session._wal.transactionIdsFor('glyph:aaa').size).toBe(1);
+        } finally {
+            global.indexedDB = originalIndexedDb;
+        }
+    });
+
+    test('a relay for a document without a socket keeps its row under that document', async () => {
+        const originalIndexedDb = global.indexedDB;
+        global.indexedDB = createIndexedDbMock();
+        const session = new CloudLiveSession({
+            assetId: 'asset-deps',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-deps',
+            bridge: {},
+            bootstrapMode: 'skip'
+        });
+        try {
+            const core = { sendForwardedUpdate: jest.fn() };
+            session._adapters.set('font-core', core);
+            await session.relayForwardedUpdate(
+                new Uint8Array([5]),
+                {
+                    schemaVersion: 1,
+                    transactionId: 'deps-edit',
+                    localSequence: 1,
+                    roomSequence: null,
+                    baseRevision: null,
+                    changes: [],
+                    metadata: {
+                        editType: 'font',
+                        changedGlyphNames: [],
+                        changedLayerIds: [],
+                        workerReplayTargets: [],
+                        historyItemId: 'deps-edit',
+                        historyAction: 'change',
+                        undoScope: 'font'
+                    },
+                    source: 'test',
+                    label: null,
+                    summary: '',
+                    windowId: 'linked',
+                    timestamp: 1
+                },
+                'font-deps'
+            );
+            // Never another room's socket; the deps socket requeues it.
+            expect(core.sendForwardedUpdate).not.toHaveBeenCalled();
+            expect(session._wal.transactionIdsFor('font-deps').size).toBe(1);
+            expect(session._wal.transactionIdsFor('font-core').size).toBe(0);
+        } finally {
+            session._adapters.clear();
+            session.disconnect();
+            global.indexedDB = originalIndexedDb;
+        }
+    });
+
+    test('a relayed linked-window edit takes its queue place on arrival and its WAL row follows', async () => {
         const originalIndexedDb = global.indexedDB;
         global.indexedDB = createIndexedDbMock();
         const envelope = (transactionId, glyphName) => ({
@@ -762,23 +995,30 @@ describe('CloudLiveSession', () => {
                 )
             ]);
             expect(results).toEqual([true, true, true]);
+            // Each edit is queued the moment main receives it, so it keeps
+            // its order among main's own edits; the socket queue sends only
+            // a prefix whose WAL rows exist, so nothing goes out before its
+            // row is written.
             expect(sent).toEqual([
                 {
                     documentId: 'glyph:aaa',
                     transactionId: 'relay-glyph',
-                    inWal: true
+                    inWal: false
                 },
                 {
                     documentId: 'font-core',
                     transactionId: 'relay-core',
-                    inWal: true
+                    inWal: false
                 },
                 {
                     documentId: 'font-deps',
                     transactionId: 'relay-deps',
-                    inWal: true
+                    inWal: false
                 }
             ]);
+            for (const documentId of ['glyph:aaa', 'font-core', 'font-deps']) {
+                expect(session._wal.recordsFor(documentId)).toHaveLength(1);
+            }
             expect(session.pendingSyncCount).toBe(3);
         } finally {
             session.disconnect();
@@ -786,7 +1026,7 @@ describe('CloudLiveSession', () => {
         }
     });
 
-    test('edits a closed glyph socket had not confirmed are replayed over HTTP after a glyph switch', async () => {
+    test('edits a glyph socket left unacknowledged past its drain bound are replayed over HTTP after a glyph switch', async () => {
         const originalIndexedDb = global.indexedDB;
         global.indexedDB = createIndexedDbMock();
         const session = new CloudLiveSession({
@@ -828,8 +1068,10 @@ describe('CloudLiveSession', () => {
             );
             expect(session.pendingSyncCount).toBe(1);
             global.fetch = jest.fn(async (_url, opts) => durableLiveAck(opts));
+            session._glyphSocketDrainMs = 0;
             await session.syncLiveDocumentIds(['glyph:bbb']);
-            await new Promise((resolve) => setTimeout(resolve, 0));
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            expect(session.hasLiveDocument('glyph:aaa')).toBe(false);
             await session.flushPendingHttpPublishes();
             const posts = global.fetch.mock.calls.filter(
                 (call) => call[1]?.method === 'POST'
@@ -841,6 +1083,113 @@ describe('CloudLiveSession', () => {
             session.disconnect();
             global.indexedDB = originalIndexedDb;
         }
+    });
+
+    describe('a glyph switch right after an edit (fuzz seed 129931909)', () => {
+        const unackedEnvelope = (transactionId) => ({
+            schemaVersion: 1,
+            transactionId,
+            localSequence: 1,
+            roomSequence: null,
+            baseRevision: null,
+            changes: [],
+            metadata: {
+                editType: 'glyph',
+                changedGlyphNames: ['p'],
+                changedLayerIds: [],
+                workerReplayTargets: [],
+                historyItemId: transactionId,
+                historyAction: 'change',
+                undoScope: 'glyph'
+            },
+            source: 'test',
+            label: null,
+            summary: '',
+            windowId: 'main',
+            timestamp: 1
+        });
+        const makeSession = () =>
+            new CloudLiveSession({
+                assetId: 'asset-drain',
+                websiteBaseUrl: 'https://editor.example',
+                token: 'token',
+                roomUrl: 'wss://rooms.example/room/asset-drain',
+                bridge: {},
+                bootstrapMode: 'skip'
+            });
+
+        test('the socket stays open until the room acknowledges, then closes without an HTTP resend', async () => {
+            const originalIndexedDb = global.indexedDB;
+            global.indexedDB = createIndexedDbMock();
+            const session = makeSession();
+            try {
+                await session.syncLiveDocumentIds(['glyph:ppp']);
+                const socket = session._adapters.get('glyph:ppp');
+                await session.relayForwardedUpdate(
+                    new Uint8Array([7]),
+                    unackedEnvelope('sent-over-socket'),
+                    'glyph:ppp'
+                );
+                expect(session.pendingSyncCount).toBe(1);
+                global.fetch = jest.fn(async (_url, opts) =>
+                    durableLiveAck(opts)
+                );
+                await session.syncLiveDocumentIds(['glyph:notdef']);
+                await new Promise((resolve) => setTimeout(resolve, 5));
+                // Still open: the room has not acknowledged the edit yet.
+                expect(socket.disconnect).not.toHaveBeenCalled();
+                expect(session.hasLiveDocument('glyph:ppp')).toBe(true);
+                // The room acknowledges over the socket.
+                for (const record of session._wal.recordsFor('glyph:ppp')) {
+                    await session._wal.acknowledge(record);
+                }
+                await new Promise((resolve) => setTimeout(resolve, 5));
+                expect(socket.disconnect).toHaveBeenCalledTimes(1);
+                expect(session.hasLiveDocument('glyph:ppp')).toBe(false);
+                await session.flushPendingHttpPublishes();
+                const posts = global.fetch.mock.calls.filter(
+                    (call) => call[1]?.method === 'POST'
+                );
+                expect(posts).toHaveLength(0);
+                expect(session.pendingSyncCount).toBe(0);
+            } finally {
+                session.disconnect();
+                global.indexedDB = originalIndexedDb;
+            }
+        });
+
+        test('a glyph wanted again while its socket drains keeps that socket', async () => {
+            const originalIndexedDb = global.indexedDB;
+            global.indexedDB = createIndexedDbMock();
+            const session = makeSession();
+            try {
+                await session.syncLiveDocumentIds(['glyph:ppp']);
+                const socket = session._adapters.get('glyph:ppp');
+                await session.relayForwardedUpdate(
+                    new Uint8Array([8]),
+                    unackedEnvelope('still-unacked'),
+                    'glyph:ppp'
+                );
+                global.fetch = jest.fn(async (_url, opts) =>
+                    durableLiveAck(opts)
+                );
+                session._glyphSocketDrainMs = 20;
+                await session.syncLiveDocumentIds(['glyph:notdef']);
+                await session.syncLiveDocumentIds(['glyph:ppp']);
+                await new Promise((resolve) => setTimeout(resolve, 40));
+                expect(socket.disconnect).not.toHaveBeenCalled();
+                expect(session._adapters.get('glyph:ppp')).toBe(socket);
+                const posts = global.fetch.mock.calls.filter(
+                    (call) => call[1]?.method === 'POST'
+                );
+                expect(posts).toHaveLength(0);
+                // The edit stays with the socket, which resends it itself.
+                expect(session.pendingSyncCount).toBe(1);
+            } finally {
+                session.disconnect();
+                global.indexedDB = originalIndexedDb;
+            }
+        });
     });
 
     test('a row an edit hold staged is not resent before the hold sends it merged', async () => {
@@ -1154,7 +1503,11 @@ describe('CloudLiveSession', () => {
         });
         await session.syncLiveDocumentIds(['glyph:aaa']);
         global.fetch = jest.fn(async (_url, opts) => durableLiveAck(opts));
-        session.sendForwardedUpdate(new Uint8Array([9]), null, 'glyph:ccc');
+        session.sendForwardedUpdate(
+            new Uint8Array([9]),
+            testEnvelope(),
+            'glyph:ccc'
+        );
         await session.flushPendingHttpPublishes();
         expect(global.fetch).toHaveBeenCalledTimes(1);
         expect(String(global.fetch.mock.calls[0][0])).toContain(
@@ -1181,7 +1534,11 @@ describe('CloudLiveSession', () => {
             }
             return durableLiveAck(opts);
         });
-        session.sendForwardedUpdate(new Uint8Array([9]), null, 'glyph:ccc');
+        session.sendForwardedUpdate(
+            new Uint8Array([9]),
+            testEnvelope(),
+            'glyph:ccc'
+        );
         await session.flushPendingHttpPublishes();
         expect(global.fetch).toHaveBeenCalledTimes(2);
     }, 15000);
@@ -1204,7 +1561,11 @@ describe('CloudLiveSession', () => {
             }
             return durableLiveAck(opts);
         });
-        session.sendForwardedUpdate(new Uint8Array([9]), null, 'glyph:ccc');
+        session.sendForwardedUpdate(
+            new Uint8Array([9]),
+            testEnvelope(),
+            'glyph:ccc'
+        );
         await session.flushPendingHttpPublishes();
         expect(global.fetch).toHaveBeenCalledTimes(2);
     }, 15000);
@@ -1291,7 +1652,11 @@ describe('CloudLiveSession', () => {
                     })
             );
         });
-        session.sendForwardedUpdate(new Uint8Array([9]), null, 'glyph:ccc');
+        session.sendForwardedUpdate(
+            new Uint8Array([9]),
+            testEnvelope(),
+            'glyph:ccc'
+        );
         let done = false;
         const wait = session.waitForGlyphAndDepsDurability().then(() => {
             done = true;
@@ -1332,7 +1697,7 @@ describe('CloudLiveSession', () => {
         for (let index = 1; index <= publishCount; index += 1) {
             session.sendForwardedUpdate(
                 new Uint8Array([1]),
-                null,
+                testEnvelope(),
                 `glyph:${index}`
             );
         }
@@ -1391,6 +1756,66 @@ describe('CloudLiveSession', () => {
         expect(mockConnectDirect).toHaveBeenCalledTimes(connectCount);
         expect(session.hasLiveDocument('glyph:aaa')).toBe(true);
         expect(session.hasLiveDocument('glyph:bbb')).toBe(false);
+    });
+
+    test('a terminal catch-up failure carries every target’s outcome', async () => {
+        const { ClockGapError } = require('../js/yjs-update-integrity.ts');
+        const applyDocumentCatchUp = jest.fn((documentId) => {
+            if (documentId === 'glyph:aaa') {
+                throw new ClockGapError('glyph:aaa', 'gap', 7, 4, 2);
+            }
+            return true;
+        });
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: { applyDocumentCatchUp },
+            bootstrapMode: 'skip'
+        });
+        await session.syncLiveDocumentIds([]);
+        global.fetch = jest.fn(async (url) => {
+            if (String(url).includes('/shards/glyph/ccc/')) {
+                // Not terminal, and thrown at once (no retry wait).
+                return {
+                    ok: false,
+                    status: 401,
+                    headers: new Headers({}),
+                    json: async () => ({})
+                };
+            }
+            return {
+                ok: true,
+                status: 200,
+                headers: new Headers({ 'content-type': 'application/json' }),
+                json: async () => ({
+                    update: Buffer.from([1, 2, 3]).toString('base64')
+                })
+            };
+        });
+        let thrown = null;
+        try {
+            await session.catchUpDocuments(
+                ['glyph:aaa', 'glyph:bbb', 'glyph:ccc'],
+                { matchCoreRevision: false }
+            );
+        } catch (error) {
+            thrown = error;
+        }
+        expect(thrown).toBeInstanceOf(ClockGapError);
+        const outcome = catchUpBatchOutcome(thrown);
+        expect(outcome.succeeded).toEqual(['glyph:bbb']);
+        expect(outcome.failed.map((entry) => entry.documentId).sort()).toEqual([
+            'glyph:aaa',
+            'glyph:ccc'
+        ]);
+        expect(
+            outcome.failed.find((entry) => entry.documentId === 'glyph:aaa')
+                .error
+        ).toBe(thrown);
+        expect(catchUpBatchOutcome(new Error('other'))).toBeNull();
+        session.disconnect();
     });
 
     test('catch-up caps parallel live reads', async () => {
@@ -1647,16 +2072,20 @@ describe('CloudLiveSession', () => {
         }
     });
 
-    test('edits refused after a downgrade to viewer are discarded once, not resent forever', async () => {
-        const discarded = [];
+    test('edits refused after a downgrade to viewer are kept in the WAL, reported once and not sent', async () => {
+        const kept = [];
+        const statuses = [];
+        const markDocumentBroken = jest.fn();
         const session = new CloudLiveSession({
             assetId: 'asset-1',
             websiteBaseUrl: 'https://editor.example',
             token: 'token',
             roomUrl: 'wss://rooms.example/room/asset-1',
-            bridge: {},
+            bridge: { markDocumentBroken },
             bootstrapMode: 'skip',
-            onWriteAccessLost: (count) => discarded.push(count)
+            onWriteAccessLost: (count) => kept.push(count),
+            onConnectionStatus: (status, detail) =>
+                statuses.push({ status, detail })
         });
         await session.syncLiveDocumentIds([]);
         const rows = [
@@ -1664,25 +2093,158 @@ describe('CloudLiveSession', () => {
             { documentId: 'font-core', clientTransactionId: 'b' },
             { documentId: 'glyph:A', clientTransactionId: 'c' }
         ];
-        const dropped = [];
         session._ensureWalLoaded = async () => {};
-        session._wal.replayableRecords = () =>
-            rows.filter((row) => !dropped.includes(row.clientTransactionId));
-        session._wal.acknowledgeMany = async (assetId, documentId, ids) => {
-            expect(assetId).toBe('asset-1');
-            dropped.push(...ids);
-        };
+        session._wal.replayableRecords = () => rows;
+        const acknowledgeMany = jest.fn();
+        session._wal.acknowledgeMany = acknowledgeMany;
+        session._wal.acknowledge = acknowledgeMany;
         const core = session.coreAdapter;
-        core.discardUnsentEdits = jest.fn();
+        core.keepUnsentEditsWhileReadOnly = jest.fn(() => 2);
         const adapterOptions = CloudAdapter.mock.calls.at(-1)[0];
 
         // The core socket and an HTTP publish both report the refusal.
         adapterOptions.onWriteAccessLost();
-        await session.discardUnsentEditsAfterWriteAccessLost();
+        await session.keepUnsentEditsAfterWriteAccessLost();
 
-        expect(dropped.sort()).toEqual(['a', 'b', 'c']);
-        expect(core.discardUnsentEdits).toHaveBeenCalled();
-        expect(discarded).toEqual([3]);
+        expect(acknowledgeMany).not.toHaveBeenCalled();
+        expect(core.keepUnsentEditsWhileReadOnly).toHaveBeenCalled();
+        expect(kept).toEqual([3]);
+        // Kept edits are not corruption: the documents stay unbroken, so
+        // peer rows keep applying while the read-only flag stops sending.
+        expect(markDocumentBroken).not.toHaveBeenCalled();
+        expect(statuses.at(-1)).toEqual({
+            status: 'error',
+            detail: '3 unsent edits are kept because write access was removed.'
+        });
+        // While read-only, unsent rows are neither restored nor queued.
+        expect(() =>
+            session._queueHttpPacket(
+                'glyph:A',
+                new Uint8Array([1]),
+                { id: 'x' },
+                null
+            )
+        ).toThrow('read-only');
+        await session._replayPendingHttpWal();
+        expect(session._httpOutboxes.size).toBe(0);
+        expect(kept).toEqual([3]);
+        session.disconnect();
+    });
+
+    test('losing write access locks the font before the write-ahead log is read', async () => {
+        const events = [];
+        let session = null;
+        session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: {},
+            bootstrapMode: 'skip',
+            onReadOnly: () => events.push(['read-only', session.readOnly]),
+            onWriteAccessLost: (count) => events.push(['lost', count])
+        });
+        await session.syncLiveDocumentIds([]);
+        session._ensureWalLoaded = async () => {};
+        session._wal.replayableRecords = () => [];
+        expect(session.readOnly).toBe(false);
+
+        const handling = session.keepUnsentEditsAfterWriteAccessLost();
+        // Synchronous: no local edit can be made between the refusal and
+        // the lock.
+        expect(events).toEqual([['read-only', true]]);
+        await handling;
+        expect(events).toEqual([
+            ['read-only', true],
+            ['lost', 0]
+        ]);
+        expect(session.readOnly).toBe(true);
+        session.disconnect();
+    });
+
+    test('a linked-window edit relayed after write access was lost is kept in the WAL, not sent', async () => {
+        const originalIndexedDb = global.indexedDB;
+        global.indexedDB = createIndexedDbMock();
+        const kept = [];
+        const markDocumentBroken = jest.fn();
+        const session = new CloudLiveSession({
+            assetId: 'asset-ro-relay',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-ro-relay',
+            bridge: { markDocumentBroken },
+            bootstrapMode: 'skip',
+            onWriteAccessLost: (count) => kept.push(count)
+        });
+        try {
+            const core = {
+                sendForwardedUpdate: jest.fn(),
+                disconnect: jest.fn()
+            };
+            session._adapters.set('font-core', core);
+            await session.keepUnsentEditsAfterWriteAccessLost();
+            const queue = jest.spyOn(session, '_queueHttpPacket');
+            const envelope = (transactionId) => ({
+                schemaVersion: 1,
+                transactionId,
+                localSequence: 1,
+                roomSequence: null,
+                baseRevision: null,
+                changes: [],
+                metadata: {
+                    editType: 'glyph',
+                    changedGlyphNames: ['A'],
+                    changedLayerIds: [],
+                    workerReplayTargets: [],
+                    historyItemId: transactionId,
+                    historyAction: 'change',
+                    undoScope: 'glyph'
+                },
+                source: 'test',
+                label: null,
+                intents: []
+            });
+            await expect(
+                session.relayForwardedUpdate(
+                    new Uint8Array([7]),
+                    envelope('linked-glyph'),
+                    'glyph:A'
+                )
+            ).resolves.toBe(true);
+            await expect(
+                session.relayForwardedUpdate(
+                    new Uint8Array([8]),
+                    envelope('linked-core'),
+                    'font-core'
+                )
+            ).resolves.toBe(true);
+            // Nothing is sent or queued for sending.
+            expect(core.sendForwardedUpdate).not.toHaveBeenCalled();
+            expect(queue).not.toHaveBeenCalled();
+            // Both edits are kept on this device, under their own documents.
+            expect(session._wal.transactionIdsFor('glyph:A').size).toBe(1);
+            expect(session._wal.transactionIdsFor('font-core').size).toBe(1);
+            expect(kept.at(-1)).toBe(2);
+            expect(markDocumentBroken).not.toHaveBeenCalled();
+        } finally {
+            session.disconnect();
+            global.indexedDB = originalIndexedDb;
+        }
+    });
+
+    test('a viewer’s room token makes the session read-only', async () => {
+        const payload = Buffer.from(JSON.stringify({ role: 'viewer' }))
+            .toString('base64')
+            .replace(/=+$/, '');
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: `x.${payload}.y`,
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge: {},
+            bootstrapMode: 'skip'
+        });
+        expect(session.readOnly).toBe(true);
         session.disconnect();
     });
 

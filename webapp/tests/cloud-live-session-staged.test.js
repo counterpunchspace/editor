@@ -76,3 +76,57 @@ test('a staged row is written without a send, and replaces the earlier one', asy
     await live.dropStagedUpdate('glyph:a', stagedId);
     expect(rows.has(stagedId)).toBe(false);
 });
+
+describe('an envelope too large for the room', () => {
+    const { EnvelopeTooLargeError } = require('../js/cloud-envelope-budget');
+    const {
+        MAX_METADATA_BYTES
+    } = require('../js/generated/collab-protocol-limits');
+    // No lossless step shortens a label, so this never fits.
+    const oversized = (sequence) => ({
+        ...envelope(sequence),
+        label: 'x'.repeat(MAX_METADATA_BYTES + 16)
+    });
+
+    test('still gets its outbox row, marks the document broken and throws', async () => {
+        const { live, rows } = session();
+        const markDocumentBroken = jest.fn();
+        live._options.bridge = { markDocumentBroken };
+        const message = oversized(1);
+        await expect(
+            live.persistOutgoingUpdate(new Uint8Array([1]), message, 'glyph:a')
+        ).rejects.toBeInstanceOf(EnvelopeTooLargeError);
+        // Never dropped: the row keeps the envelope as it came.
+        expect(rows.size).toBe(1);
+        expect([...rows.values()][0].collaborationMessage).toBe(message);
+        expect(markDocumentBroken).toHaveBeenCalledWith(
+            'glyph:a',
+            expect.any(EnvelopeTooLargeError)
+        );
+    });
+
+    test('is refused before an HTTP publish, and the head stays queued', async () => {
+        const { live } = session();
+        const fetchSpy = jest.fn();
+        const previousFetch = global.fetch;
+        global.fetch = fetchSpy;
+        try {
+            const head = {
+                clientTransactionId: 'tx-1',
+                update: new Uint8Array([1]),
+                collaborationMessage: oversized(1),
+                seq: 1,
+                walRecord: null,
+                written: true
+            };
+            const outbox = { packets: [head], attempts: 0 };
+            await expect(
+                live._publishHttpHead('glyph:a', outbox)
+            ).rejects.toBeInstanceOf(EnvelopeTooLargeError);
+            expect(outbox.packets).toEqual([head]);
+            expect(fetchSpy).not.toHaveBeenCalled();
+        } finally {
+            global.fetch = previousFetch;
+        }
+    });
+});

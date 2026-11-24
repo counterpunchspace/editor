@@ -105,6 +105,7 @@ jest.mock('../js/cloud-adapter', () => ({
                 }
                 return result;
             }),
+            hydratedLogId: jest.fn(() => null),
             disconnect: jest.fn(() => {
                 mockDisconnect();
                 adapter.status = 'disconnected';
@@ -126,6 +127,19 @@ jest.mock('../js/cloud-adapter', () => ({
     normalizeCloudShardWebSocketUrl: jest.fn((roomUrl) => roomUrl)
 }));
 
+/** A complete Yjs state per shard: Save As refuses bytes with a hole. */
+function mockSeedShardBytes(tag) {
+    const Y = require('yjs');
+    const doc = new Y.Doc();
+    // A fixed client id: Yjs picks a random one, and its varint length
+    // (4 or 5 bytes) would make byte-length expectations flaky.
+    doc.clientID = 1;
+    doc.getMap('seed').set('tag', tag);
+    const bytes = Y.encodeStateAsUpdate(doc);
+    doc.destroy();
+    return bytes;
+}
+
 const mockBridgeState = new Uint8Array([1, 2, 3]);
 let mockLatestTempBridge = null;
 
@@ -134,7 +148,10 @@ jest.mock('../js/patch-sync-engine', () => ({
         let updateHandler = null;
         mockLatestTempBridge = {
             encodeDocumentSet: jest.fn(() => [
-                { documentId: 'font-core', bytes: new Uint8Array([1, 2, 3]) }
+                {
+                    documentId: 'font-core',
+                    bytes: mockSeedShardBytes('1, 2, 3')
+                }
             ]),
             getFontJsonSnapshot: jest.fn(() => mockYDocToJson()),
             yDoc: {
@@ -184,7 +201,24 @@ jest.mock('../js/patch-sync-engine', () => ({
     ChangeBridge: jest.fn().mockImplementation(() => mockLatestTempBridge)
 }));
 
+// Every drawing names the station it belongs to; the Y.Doc write gate
+// refuses one that does not.
+const TEST_STATION_ID = 'station-regular';
+const testStationLink = () => ({
+    type: 'DefaultForMaster',
+    master: TEST_STATION_ID
+});
+const testStation = () => ({
+    id: TEST_STATION_ID,
+    name: { dflt: 'Regular' },
+    location: {},
+    guides: [],
+    metrics: {},
+    kerning: {}
+});
+
 const defaultCloudFontJson = {
+    masters: [testStation()],
     glyphs: [
         {
             name: 'A',
@@ -192,11 +226,12 @@ const defaultCloudFontJson = {
                 {
                     id: 'L0',
                     width: 600,
+                    master: testStationLink(),
                     shapes: [
                         {
                             nodes: [
-                                { x: 0, y: 0, type: 'l' },
-                                { x: 100, y: 0, type: 'l' }
+                                { x: 0, y: 0, nodetype: 'Line' },
+                                { x: 100, y: 0, nodetype: 'Line' }
                             ],
                             closed: false
                         },
@@ -218,6 +253,7 @@ const defaultCloudFontJson = {
 };
 
 const wrappedCloudFontJson = {
+    masters: [testStation()],
     glyphs: [
         {
             name: 'A',
@@ -225,12 +261,13 @@ const wrappedCloudFontJson = {
                 {
                     id: 'L0',
                     width: 600,
+                    master: testStationLink(),
                     shapes: [
                         {
                             Path: {
                                 nodes: [
-                                    { x: 0, y: 0, type: 'l' },
-                                    { x: 100, y: 0, type: 'l' }
+                                    { x: 0, y: 0, nodetype: 'Line' },
+                                    { x: 100, y: 0, nodetype: 'Line' }
                                 ]
                             }
                         }
@@ -251,6 +288,10 @@ const {
     recaptureCloudSaveSeedIfBridgeChanged
 } = require('../js/filesystem-plugins/plugins/cloud-plugin');
 const { CloudAdapter } = require('../js/cloud-adapter');
+const {
+    keptSessionRowCount,
+    keptSessionRowsWritten
+} = require('../js/filesystem-plugins/plugins/cloud-plugin-session-rows');
 const {
     CloudDocumentSet,
     FONT_CORE_DOCUMENT_ID,
@@ -344,7 +385,7 @@ describe('CloudPlugin.openAsset', () => {
                         encodeDocumentSet: jest.fn(() => [
                             {
                                 documentId: 'font-core',
-                                bytes: new Uint8Array([1, 2, 3])
+                                bytes: mockSeedShardBytes('1, 2, 3')
                             }
                         ]),
                         getFontJsonSnapshot: jest.fn(() => mockYDocToJson()),
@@ -483,14 +524,16 @@ describe('CloudPlugin.openAsset', () => {
         expect(fontLoadedEvent).toBeUndefined();
     });
 
-    test('allows cloud-exported layers missing width on open (sparse delta pipeline self-heals)', async () => {
+    test('refuses cloud-exported drawings missing width on open', async () => {
         mockYDocToJson.mockReturnValue({
+            masters: [testStation()],
             glyphs: [
                 {
                     name: 'space',
                     layers: [
                         {
                             id: 'space-layer',
+                            master: testStationLink(),
                             shapes: []
                         }
                     ]
@@ -498,13 +541,16 @@ describe('CloudPlugin.openAsset', () => {
             ]
         });
 
-        // Missing width no longer rejects — the sparse delta pipeline
-        // propagates correct width on next edit.
-        await expect(plugin.openAsset('asset-1')).resolves.toBeUndefined();
-
-        expect(dispatchSpy).toHaveBeenCalledWith(
-            expect.objectContaining({ type: 'fontLoaded' })
+        // A missing width is never filled in: the open is refused before
+        // the font loads.
+        await expect(plugin.openAsset('asset-1')).rejects.toThrow(
+            'drawing has no width'
         );
+
+        const fontLoadedEvent = dispatchSpy.mock.calls
+            .map(([event]) => event)
+            .find((event) => event.type === 'fontLoaded');
+        expect(fontLoadedEvent).toBeUndefined();
     });
 
     test('skips redundant HTTP bootstrap when attaching the live room after cloud open', async () => {
@@ -517,6 +563,45 @@ describe('CloudPlugin.openAsset', () => {
         expect(mockConnectDirect.mock.calls[1][3]).toEqual({
             bootstrapMode: 'skip'
         });
+    });
+
+    test('a viewer’s newly opened font is locked before the live token fetch', async () => {
+        const previousEngine = window.patchSyncEngine;
+        const setReadOnly = jest.fn();
+        // The engine the open creates (see dispatchSpy) gets the gate.
+        let engine;
+        Object.defineProperty(window, 'patchSyncEngine', {
+            configurable: true,
+            get: () => engine,
+            set: (value) => {
+                engine = value;
+                if (value && !value.setReadOnly) {
+                    value.setReadOnly = setReadOnly;
+                }
+            }
+        });
+        window.patchSyncEngine = undefined;
+        jest.spyOn(plugin, 'getCachedAssetRole').mockReturnValue('viewer');
+        const lockedAtFetch = [];
+        plugin._fetchRoomToken = jest.fn(async () => {
+            lockedAtFetch.push(setReadOnly.mock.calls.at(-1)?.[0] ?? null);
+            return {
+                token: 'room-token',
+                roomUrl: 'ws://localhost:8787/room/asset-1'
+            };
+        });
+        try {
+            await expect(plugin.openAsset('asset-1')).resolves.toBeUndefined();
+            // The open's own token fetch comes before the font exists; the
+            // live one after fontModelReady finds the font already locked.
+            expect(lockedAtFetch.at(-1)).toBe(
+                'You no longer have write access to this font.'
+            );
+            expect(plugin._readOnlyEngine).toBe(window.patchSyncEngine);
+        } finally {
+            delete window.patchSyncEngine;
+            window.patchSyncEngine = previousEngine;
+        }
     });
 
     test('keeps cloud open attached when the live room handoff would fail on a second HTTP bootstrap', async () => {
@@ -747,7 +832,10 @@ describe('CloudPlugin.openAsset', () => {
         window.patchSyncEngine = {
             encodeBridgeState: jest.fn(() => new Uint8Array([1, 2, 3])),
             encodeDocumentSet: jest.fn(() => [
-                { documentId: 'font-core', bytes: new Uint8Array([1, 2, 3]) }
+                {
+                    documentId: 'font-core',
+                    bytes: mockSeedShardBytes('1, 2, 3')
+                }
             ]),
             onCommittedChange: jest.fn(),
             offCommittedChange: jest.fn(),
@@ -897,8 +985,14 @@ describe('CloudPlugin.openAsset', () => {
         window.patchSyncEngine = {
             encodeBridgeState: jest.fn(() => new Uint8Array([1, 2, 3])),
             encodeDocumentSet: jest.fn(() => [
-                { documentId: 'font-core', bytes: new Uint8Array([1, 2, 3]) },
-                { documentId: 'glyph:uuid-a', bytes: new Uint8Array([4, 5]) }
+                {
+                    documentId: 'font-core',
+                    bytes: mockSeedShardBytes('1, 2, 3')
+                },
+                {
+                    documentId: 'glyph:uuid-a',
+                    bytes: mockSeedShardBytes('4, 5')
+                }
             ]),
             glyphDocumentIdForName: jest.fn((name) =>
                 name === 'A' ? 'glyph:uuid-a' : null
@@ -1301,7 +1395,10 @@ describe('CloudPlugin.openAsset', () => {
             onLocalUpdate: jest.fn(),
             offLocalUpdate: jest.fn(),
             encodeDocumentSet: jest.fn(() => [
-                { documentId: 'font-core', bytes: new Uint8Array([1, 2, 3]) }
+                {
+                    documentId: 'font-core',
+                    bytes: mockSeedShardBytes('1, 2, 3')
+                }
             ]),
             getFontJsonSnapshot: jest.fn(() => defaultCloudFontJson)
         };
@@ -1413,7 +1510,10 @@ describe('CloudPlugin.openAsset', () => {
             onLocalUpdate: jest.fn(),
             offLocalUpdate: jest.fn(),
             encodeDocumentSet: jest.fn(() => [
-                { documentId: 'font-core', bytes: new Uint8Array([1, 2, 3]) }
+                {
+                    documentId: 'font-core',
+                    bytes: mockSeedShardBytes('1, 2, 3')
+                }
             ]),
             getFontJsonSnapshot: jest.fn(() => defaultCloudFontJson)
         };
@@ -1523,7 +1623,10 @@ describe('CloudPlugin.openAsset', () => {
         const originalBridge = {
             encodeBridgeState: jest.fn(() => new Uint8Array([1, 2, 3])),
             encodeDocumentSet: jest.fn(() => [
-                { documentId: 'font-core', bytes: new Uint8Array([1, 2, 3]) }
+                {
+                    documentId: 'font-core',
+                    bytes: mockSeedShardBytes('1, 2, 3')
+                }
             ]),
             onCommittedChange: jest.fn(),
             offCommittedChange: jest.fn(),
@@ -1534,7 +1637,10 @@ describe('CloudPlugin.openAsset', () => {
         const replacementBridge = {
             encodeBridgeState: jest.fn(() => new Uint8Array([1, 2, 3])),
             encodeDocumentSet: jest.fn(() => [
-                { documentId: 'font-core', bytes: new Uint8Array([1, 2, 3]) }
+                {
+                    documentId: 'font-core',
+                    bytes: mockSeedShardBytes('1, 2, 3')
+                }
             ]),
             onCommittedChange: jest.fn(),
             offCommittedChange: jest.fn(),
@@ -2514,6 +2620,267 @@ describe('CloudPlugin sharing APIs', () => {
         }
     });
 
+    describe('engine read-only gate', () => {
+        const {
+            WRITE_ACCESS_READ_ONLY_REASON
+        } = require('../js/filesystem-plugins/plugins/cloud-plugin');
+        let originalRole;
+        let originalSync;
+        let originalEngine;
+        let roles;
+
+        beforeEach(() => {
+            originalRole = window.windowRole;
+            originalSync = window.windowSync;
+            originalEngine = window.patchSyncEngine;
+            roles = new Map();
+            const adapter = plugin.getAdapter();
+            adapter.cacheAssetRole.mockImplementation((assetId, role) =>
+                role ? roles.set(assetId, role) : roles.delete(assetId)
+            );
+            adapter.getCachedAssetRole.mockImplementation(
+                (assetId) => roles.get(assetId) ?? null
+            );
+        });
+
+        afterEach(() => {
+            window.windowRole = originalRole;
+            window.windowSync = originalSync;
+            window.patchSyncEngine = originalEngine;
+            jest.restoreAllMocks();
+        });
+
+        test('the reason is the user-facing sentence', () => {
+            expect(WRITE_ACCESS_READ_ONLY_REASON).toBe(
+                'You no longer have write access to this font.'
+            );
+        });
+
+        test('main locks the font for a viewer, unlocks it for an editor and relays both', () => {
+            window.windowRole = {
+                isMainWindow: () => true,
+                isLinkedWindow: () => false
+            };
+            const broadcastCloudConnectionStatus = jest.fn();
+            window.windowSync = { broadcastCloudConnectionStatus };
+            const engine = { setReadOnly: jest.fn() };
+            plugin._activeAssetId = 'asset-1';
+            plugin._readOnlyEngine = engine;
+
+            plugin._cacheAssetRole('asset-1', 'viewer');
+            expect(engine.setReadOnly).toHaveBeenLastCalledWith(
+                WRITE_ACCESS_READ_ONLY_REASON
+            );
+            expect(broadcastCloudConnectionStatus).toHaveBeenLastCalledWith(
+                expect.objectContaining({
+                    assetId: 'asset-1',
+                    readOnlyReason: WRITE_ACCESS_READ_ONLY_REASON
+                })
+            );
+
+            plugin._cacheAssetRole('asset-1', 'editor');
+            expect(engine.setReadOnly).toHaveBeenLastCalledWith(null);
+            expect(broadcastCloudConnectionStatus).toHaveBeenLastCalledWith(
+                expect.objectContaining({
+                    assetId: 'asset-1',
+                    readOnlyReason: null
+                })
+            );
+
+            // Another font's role leaves this font alone.
+            engine.setReadOnly.mockClear();
+            plugin._cacheAssetRole('asset-2', 'viewer');
+            expect(engine.setReadOnly).not.toHaveBeenCalled();
+        });
+
+        test('a session that lost write access keeps the font locked even when a refreshed token says editor', () => {
+            window.windowRole = {
+                isMainWindow: () => true,
+                isLinkedWindow: () => false
+            };
+            const broadcastCloudConnectionStatus = jest.fn();
+            window.windowSync = { broadcastCloudConnectionStatus };
+            const engine = { setReadOnly: jest.fn() };
+            plugin._activeAssetId = 'asset-1';
+            plugin._readOnlyEngine = engine;
+            plugin._liveSession = {
+                readOnly: true,
+                walHealth: 'ready',
+                getAccessSnapshot: () => null
+            };
+
+            plugin._noteSessionReadOnly('asset-1');
+            expect(engine.setReadOnly).toHaveBeenLastCalledWith(
+                WRITE_ACCESS_READ_ONLY_REASON
+            );
+            expect(broadcastCloudConnectionStatus).toHaveBeenLastCalledWith(
+                expect.objectContaining({
+                    readOnlyReason: WRITE_ACCESS_READ_ONLY_REASON
+                })
+            );
+
+            // The session still refuses to send: the font must refuse too.
+            plugin._cacheAssetRole('asset-1', 'editor');
+            expect(engine.setReadOnly).toHaveBeenLastCalledWith(
+                WRITE_ACCESS_READ_ONLY_REASON
+            );
+        });
+
+        test('closing the font or opening another one unlocks the engine', () => {
+            window.windowRole = {
+                isMainWindow: () => true,
+                isLinkedWindow: () => false
+            };
+            window.windowSync = { broadcastCloudConnectionStatus: jest.fn() };
+            const engine = { setReadOnly: jest.fn() };
+            plugin._activeAssetId = 'asset-1';
+            plugin._readOnlyEngine = engine;
+            plugin._cacheAssetRole('asset-1', 'viewer');
+            expect(engine.setReadOnly).toHaveBeenLastCalledWith(
+                WRITE_ACCESS_READ_ONLY_REASON
+            );
+
+            plugin.disconnectFromRoom();
+            expect(engine.setReadOnly).toHaveBeenLastCalledWith(null);
+            expect(plugin._readOnlyEngine).toBeNull();
+
+            // Nothing is connected: a later role change locks nothing.
+            engine.setReadOnly.mockClear();
+            plugin._cacheAssetRole('asset-1', 'viewer');
+            expect(engine.setReadOnly).not.toHaveBeenCalled();
+        });
+
+        test('reconnecting a viewer’s font keeps it locked through the token fetch', async () => {
+            window.windowRole = {
+                isMainWindow: () => true,
+                isLinkedWindow: () => false
+            };
+            window.windowSync = { broadcastCloudConnectionStatus: jest.fn() };
+            const engine = { setReadOnly: jest.fn() };
+            window.patchSyncEngine = engine;
+            roles.set('asset-1', 'viewer');
+            plugin._fetchAssetLimits = jest.fn();
+            let resolveToken;
+            plugin._fetchRoomToken = jest.fn(
+                () =>
+                    new Promise((resolve) => {
+                        resolveToken = resolve;
+                    })
+            );
+            plugin._attachLiveSession = jest.fn().mockResolvedValue();
+
+            const connecting = plugin.connectToRoom('asset-1');
+            expect(engine.setReadOnly).toHaveBeenLastCalledWith(
+                WRITE_ACCESS_READ_ONLY_REASON
+            );
+            resolveToken({ token: 't', roomUrl: 'wss://r', generationId: '' });
+            await connecting;
+            expect(plugin._attachLiveSession).toHaveBeenCalled();
+        });
+
+        test('a session opening with the viewer role locks the font it attaches to', async () => {
+            window.windowRole = {
+                isMainWindow: () => true,
+                isLinkedWindow: () => false
+            };
+            window.windowSync = { broadcastCloudConnectionStatus: jest.fn() };
+            const sessionModule = require('../js/cloud-live-session');
+            const sessions = [];
+            jest.spyOn(sessionModule, 'CloudLiveSession').mockImplementation(
+                (options) => {
+                    const fake = {
+                        options,
+                        readOnly: false,
+                        walHealth: 'ready',
+                        getAccessSnapshot: () => null,
+                        // Superseded right away: attach stops before the
+                        // ready work.
+                        syncLiveDocumentIds: jest.fn(async () => {
+                            plugin._attachingSession = null;
+                        }),
+                        disconnect: jest.fn()
+                    };
+                    sessions.push(fake);
+                    return fake;
+                }
+            );
+            plugin._writeKeptRows = jest.fn();
+            const engine = {
+                setReadOnly: jest.fn(),
+                glyphDocumentIdForName: () => null
+            };
+            plugin._activeAssetId = 'asset-1';
+            roles.set('asset-1', 'viewer');
+
+            await plugin._attachLiveSession({
+                assetId: 'asset-1',
+                token: 't',
+                roomUrl: 'wss://r',
+                bridge: engine
+            });
+            expect(engine.setReadOnly).toHaveBeenLastCalledWith(
+                WRITE_ACCESS_READ_ONLY_REASON
+            );
+
+            // The room later refuses an edit from an editor: the session's
+            // synchronous callback locks the font.
+            roles.set('asset-1', 'editor');
+            plugin._readOnlyEngine = engine;
+            plugin._liveSession = sessions[0];
+            plugin._cacheAssetRole('asset-1', 'editor');
+            expect(engine.setReadOnly).toHaveBeenLastCalledWith(null);
+            sessions[0].readOnly = true;
+            sessions[0].options.onReadOnly();
+            expect(engine.setReadOnly).toHaveBeenLastCalledWith(
+                WRITE_ACCESS_READ_ONLY_REASON
+            );
+        });
+
+        test('a linked window’s engine follows main’s relayed verdict', () => {
+            window.windowRole = {
+                isMainWindow: () => false,
+                isLinkedWindow: () => true
+            };
+            const engine = { setReadOnly: jest.fn() };
+            window.patchSyncEngine = engine;
+
+            plugin.applyRelayedConnectionState({
+                assetId: 'asset-1',
+                status: 'connected',
+                canMutate: false,
+                readOnlyReason: WRITE_ACCESS_READ_ONLY_REASON
+            });
+            expect(engine.setReadOnly).toHaveBeenLastCalledWith(
+                WRITE_ACCESS_READ_ONLY_REASON
+            );
+
+            // A status without a verdict changes nothing.
+            engine.setReadOnly.mockClear();
+            plugin.applyRelayedConnectionState({
+                assetId: 'asset-2',
+                status: 'connected'
+            });
+            expect(engine.setReadOnly).not.toHaveBeenCalled();
+
+            plugin.applyRelayedConnectionState({
+                assetId: 'asset-1',
+                status: 'connected',
+                canMutate: true,
+                readOnlyReason: null
+            });
+            expect(engine.setReadOnly).toHaveBeenLastCalledWith(null);
+
+            // The linked window has no session: its own role cache and its
+            // disconnect leave main's verdict in place.
+            engine.setReadOnly.mockClear();
+            plugin._activeAssetId = 'asset-1';
+            plugin._readOnlyEngine = engine;
+            plugin._cacheAssetRole('asset-1', 'viewer');
+            plugin.disconnectFromRoom();
+            expect(engine.setReadOnly).not.toHaveBeenCalled();
+        });
+    });
+
     test('treats tail_full as read-only while still a member', () => {
         plugin.getAdapter().cacheAssetRole('asset-1', 'owner');
         window.fontManager.currentFont.sourcePlugin = plugin;
@@ -2905,9 +3272,9 @@ describe('cloud save seed capture', () => {
             }
         };
         const shards = [
-            { documentId: 'font-core', bytes: new Uint8Array([1, 2]) },
-            { documentId: 'font-deps', bytes: new Uint8Array([3]) },
-            { documentId: 'glyph:gA', bytes: new Uint8Array([4, 5, 6]) }
+            { documentId: 'font-core', bytes: mockSeedShardBytes('1, 2') },
+            { documentId: 'font-deps', bytes: mockSeedShardBytes('3') },
+            { documentId: 'glyph:gA', bytes: mockSeedShardBytes('4, 5, 6') }
         ];
         const bridge = {
             getFontJsonSnapshot: jest.fn(() => defaultCloudFontJson),
@@ -2920,10 +3287,14 @@ describe('cloud save seed capture', () => {
         expect(flush).toHaveBeenCalledTimes(1);
         expect(capture.bridge).toBe(bridge);
         expect(capture.glyphCount).toBe(1);
-        expect(capture.byteLength).toBe(6);
+        expect(capture.byteLength).toBe(
+            shards.reduce((sum, shard) => sum + shard.bytes.length, 0)
+        );
         expect(capture.shards).toHaveLength(3);
         expect(capture.shards[0].bytes).not.toBe(shards[0].bytes);
-        expect(Array.from(capture.shards[0].bytes)).toEqual([1, 2]);
+        expect(Array.from(capture.shards[0].bytes)).toEqual(
+            Array.from(shards[0].bytes)
+        );
         expect(capture.fontJson.glyphs[0].name).toBe('A');
         expect(bridge.encodeDocumentSet).toHaveBeenCalledTimes(1);
         expect(bridge.getFontJsonSnapshot).toHaveBeenCalled();
@@ -2935,44 +3306,52 @@ describe('cloud save seed capture', () => {
         window.patchSyncEngine = {
             getFontJsonSnapshot: jest.fn(() => defaultCloudFontJson),
             encodeDocumentSet: jest.fn(() => [
-                { documentId: 'font-core', bytes: new Uint8Array([9]) }
+                { documentId: 'font-core', bytes: mockSeedShardBytes('9') }
             ])
         };
 
         await expect(captureCloudSaveSeedState()).resolves.toMatchObject({
             glyphCount: 1,
-            byteLength: 1
+            byteLength: mockSeedShardBytes('9').length
         });
     });
 
     test('recaptures JSON and shards together when the live bridge is replaced', async () => {
         const originalJson = defaultCloudFontJson;
         const replacementJson = {
+            masters: [testStation()],
             glyphs: [
                 ...defaultCloudFontJson.glyphs,
                 {
                     name: 'B',
-                    layers: [{ id: 'L0', shapes: [] }]
+                    layers: [
+                        {
+                            id: 'L0',
+                            width: 500,
+                            master: testStationLink(),
+                            shapes: []
+                        }
+                    ]
                 }
             ]
         };
         const originalBridge = {
             getFontJsonSnapshot: jest.fn(() => originalJson),
             encodeDocumentSet: jest.fn(() => [
-                { documentId: 'font-core', bytes: new Uint8Array([1]) }
+                { documentId: 'font-core', bytes: mockSeedShardBytes('1') }
             ])
         };
         const replacementBridge = {
             getFontJsonSnapshot: jest.fn(() => replacementJson),
             encodeDocumentSet: jest.fn(() => [
-                { documentId: 'font-core', bytes: new Uint8Array([7, 8]) },
-                { documentId: 'glyph:gB', bytes: new Uint8Array([9]) }
+                { documentId: 'font-core', bytes: mockSeedShardBytes('7, 8') },
+                { documentId: 'glyph:gB', bytes: mockSeedShardBytes('9') }
             ])
         };
         window.patchSyncEngine = originalBridge;
         const originalCapture = await captureCloudSaveSeedState();
         expect(originalCapture.glyphCount).toBe(1);
-        expect(originalCapture.byteLength).toBe(1);
+        expect(originalCapture.byteLength).toBe(mockSeedShardBytes('1').length);
 
         window.patchSyncEngine = replacementBridge;
         const recapture =
@@ -2980,7 +3359,9 @@ describe('cloud save seed capture', () => {
 
         expect(recapture.bridge).toBe(replacementBridge);
         expect(recapture.glyphCount).toBe(2);
-        expect(recapture.byteLength).toBe(3);
+        expect(recapture.byteLength).toBe(
+            mockSeedShardBytes('7, 8').length + mockSeedShardBytes('9').length
+        );
         expect(recapture.shards.map((shard) => shard.documentId)).toEqual([
             'font-core',
             'glyph:gB'
@@ -2993,7 +3374,7 @@ describe('cloud save seed capture', () => {
         const bridge = {
             getFontJsonSnapshot: jest.fn(() => defaultCloudFontJson),
             encodeDocumentSet: jest.fn(() => [
-                { documentId: 'font-core', bytes: new Uint8Array([1]) }
+                { documentId: 'font-core', bytes: mockSeedShardBytes('1') }
             ])
         };
         window.patchSyncEngine = bridge;
@@ -3158,6 +3539,102 @@ describe('CloudPlugin glyph catch-up from core revision map', () => {
         } finally {
             window.glyphCanvas = originalCanvas;
         }
+    });
+
+    test('one terminal catch-up failure stops only that glyph; the rest of the batch settles', async () => {
+        const { ClockGapError } = require('../js/yjs-update-integrity');
+        const plugin = new CloudPlugin();
+        const gap = new ClockGapError('glyph:id-a', 'gap', 7, 4, 2);
+        const transient = new Error('Live glyph catch-up failed (503)');
+        const catchUpDocuments = jest.fn(async () => {
+            // A collaborator wrote glyph c again while the batch ran.
+            plugin._glyphCatchUpAgain.add('glyph:id-c');
+            throw gap;
+        });
+        // The real session attaches each target's outcome to the error.
+        const sessionModule = require('../js/cloud-live-session');
+        const outcomeSpy = jest
+            .spyOn(sessionModule, 'catchUpBatchOutcome')
+            .mockImplementation((error) =>
+                error === gap
+                    ? {
+                          succeeded: ['glyph:id-b'],
+                          failed: [
+                              { documentId: 'glyph:id-a', error: gap },
+                              { documentId: 'glyph:id-d', error: transient }
+                          ]
+                      }
+                    : null
+            );
+        plugin._liveSession = { catchUpDocuments };
+        plugin._activeAssetId = 'asset-1';
+        plugin._updateConnectionStatus = jest.fn();
+        const retry = jest
+            .spyOn(plugin, '_scheduleGlyphCatchUpRetry')
+            .mockImplementation(() => {});
+        const markDocumentBroken = jest.fn();
+        const noteGlyphRevisionFetched = jest.fn();
+        plugin._activeAssetSizeBridge = {
+            hasSparseWorkingSet: () => false,
+            listSparseWorkingGlyphIds: () => [],
+            glyphDocumentIdForName: () => null,
+            listGlyphRevisionTokens: () => [
+                { glyphId: 'id-a', revision: 'rev-a' },
+                { glyphId: 'id-b', revision: 'rev-b' },
+                { glyphId: 'id-d', revision: 'rev-d' }
+            ],
+            glyphHasCatchUpRevision: () => false,
+            hasResidentGlyphDocument: () => true,
+            markDocumentBroken,
+            noteGlyphRevisionFetched
+        };
+        const originalCanvas = window.glyphCanvas;
+        const consoleError = jest
+            .spyOn(console, 'error')
+            .mockImplementation(() => {});
+        window.glyphCanvas = { textRunEditor: { glyphNameBuffer: [] } };
+        try {
+            plugin._enqueueGlyphCatchUp(['id-a', 'id-b', 'id-d'], {
+                includeUnloaded: true
+            });
+            for (let i = 0; i < 5; i += 1) {
+                await Promise.resolve();
+            }
+            // Only the glyph with the gap is marked and surfaced.
+            expect(markDocumentBroken).toHaveBeenCalledTimes(1);
+            expect(markDocumentBroken).toHaveBeenCalledWith('glyph:id-a', gap);
+            expect(plugin._updateConnectionStatus).toHaveBeenCalledWith(
+                'asset-1',
+                'error',
+                gap.message
+            );
+            // The glyph that reached the tail is noted fetched.
+            expect(noteGlyphRevisionFetched).toHaveBeenCalledWith(
+                'id-b',
+                'rev-b'
+            );
+            expect(noteGlyphRevisionFetched).not.toHaveBeenCalledWith(
+                'id-a',
+                expect.anything()
+            );
+            // The transient failure is retried, and the again-list drains.
+            const retried = retry.mock.calls.flatMap(([ids]) => ids);
+            expect(retried).toEqual(expect.arrayContaining(['id-d', 'id-c']));
+            expect(retried).not.toContain('id-a');
+            expect(plugin._glyphCatchUpAgain.size).toBe(0);
+            expect(plugin._glyphCatchUpInFlight.size).toBe(0);
+        } finally {
+            window.glyphCanvas = originalCanvas;
+            outcomeSpy.mockRestore();
+            consoleError.mockRestore();
+        }
+    });
+
+    test('a resident-closure unload keeps glyphs whose catch-up is in flight', () => {
+        const plugin = new CloudPlugin();
+        plugin._glyphCatchUpInFlight.add('glyph:id-x');
+        plugin._glyphCatchUpInFlight.add('font-deps');
+        expect(plugin._glyphIdsWithCatchUpInFlight()).toEqual(['id-x']);
     });
 
     test('does not refetch a loaded glyph nobody edited since it was loaded', async () => {
@@ -4004,5 +4481,286 @@ describe('CloudPlugin offline edit limit', () => {
         jest.advanceTimersByTime(10 * 60_000);
         expect(plugin._reloadWindow).not.toHaveBeenCalled();
         expect(plugin.canMutateCurrentAsset()).toBe(true);
+    });
+});
+
+describe('relayPeerWindowUpdateToCloud never drops a linked-window edit', () => {
+    const previous = {
+        windowRole: window.windowRole,
+        patchSyncEngine: window.patchSyncEngine,
+        fontManager: window.fontManager
+    };
+    afterEach(() => {
+        Object.assign(window, previous);
+    });
+
+    function setUp(cloudBacked) {
+        const markDocumentBroken = jest.fn();
+        window.windowRole = { isMainWindow: () => true };
+        window.patchSyncEngine = { markDocumentBroken };
+        window.fontManager = {
+            currentFont: { isCloudBacked: () => cloudBacked }
+        };
+        const events = [];
+        const listener = (event) => events.push(event.detail);
+        window.addEventListener('cloud-persist-failed', listener);
+        return {
+            markDocumentBroken,
+            events,
+            done: () =>
+                window.removeEventListener('cloud-persist-failed', listener)
+        };
+    }
+
+    function fakePlugin(fields = {}) {
+        return Object.assign(Object.create(CloudPlugin.prototype), {
+            _liveSession: null,
+            _attachingSession: null,
+            _activeAssetId: 'asset-1',
+            _lastSessionAssetId: null,
+            ...fields
+        });
+    }
+
+    it('keeps the edit, without a broken mark, while a reconnect leaves no session', async () => {
+        const { markDocumentBroken, events, done } = setUp(true);
+        const plugin = fakePlugin();
+        expect(() =>
+            CloudPlugin.prototype.relayPeerWindowUpdateToCloud.call(
+                plugin,
+                new Uint8Array([1]),
+                { id: 'x' },
+                'glyph:A'
+            )
+        ).not.toThrow();
+        expect(markDocumentBroken).not.toHaveBeenCalled();
+        expect(events).toHaveLength(1);
+        expect(events[0].reason).toContain('kept in this window');
+        expect(keptSessionRowCount(plugin, 'asset-1')).toBe(1);
+
+        // The session is back: the kept relay goes out, once, in order.
+        const relayForwardedUpdate = jest.fn(async () => true);
+        const session = { relayForwardedUpdate };
+        plugin._liveSession = session;
+        plugin._writeKeptRows(session, 'asset-1');
+        await keptSessionRowsWritten(plugin);
+        expect(relayForwardedUpdate).toHaveBeenCalledTimes(1);
+        expect(relayForwardedUpdate).toHaveBeenCalledWith(
+            new Uint8Array([1]),
+            { id: 'x' },
+            'glyph:A',
+            undefined
+        );
+        expect(keptSessionRowCount(plugin)).toBe(0);
+        expect(markDocumentBroken).not.toHaveBeenCalled();
+        done();
+    });
+
+    it('queues a relay behind edits still kept from the reconnect', async () => {
+        const { done } = setUp(true);
+        const plugin = fakePlugin();
+        CloudPlugin.prototype.relayPeerWindowUpdateToCloud.call(
+            plugin,
+            new Uint8Array([1]),
+            { id: 'first' },
+            'glyph:A'
+        );
+        const order = [];
+        const relayForwardedUpdate = jest.fn(async (_u, envelope) => {
+            order.push(envelope.id);
+            return true;
+        });
+        // A session is there, but the kept row has not been written yet.
+        plugin._liveSession = { relayForwardedUpdate };
+        CloudPlugin.prototype.relayPeerWindowUpdateToCloud.call(
+            plugin,
+            new Uint8Array([2]),
+            { id: 'second' },
+            'glyph:A'
+        );
+        await keptSessionRowsWritten(plugin);
+        expect(order).toEqual(['first', 'second']);
+        done();
+    });
+
+    it('does nothing for a font that is not in the cloud', () => {
+        const { markDocumentBroken, done } = setUp(false);
+        const plugin = fakePlugin();
+        CloudPlugin.prototype.relayPeerWindowUpdateToCloud.call(
+            plugin,
+            new Uint8Array([1]),
+            { id: 'x' },
+            'glyph:A'
+        );
+        expect(markDocumentBroken).not.toHaveBeenCalled();
+        expect(keptSessionRowCount(plugin)).toBe(0);
+        done();
+    });
+
+    it('uses the attaching session, and a refused relay marks the document broken', async () => {
+        const { markDocumentBroken, events, done } = setUp(true);
+        const refusal = new Error('refused');
+        const relayForwardedUpdate = jest.fn(() => Promise.reject(refusal));
+        CloudPlugin.prototype.relayPeerWindowUpdateToCloud.call(
+            fakePlugin({ _attachingSession: { relayForwardedUpdate } }),
+            new Uint8Array([1]),
+            { id: 'x' },
+            'glyph:A'
+        );
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(relayForwardedUpdate).toHaveBeenCalled();
+        expect(markDocumentBroken).toHaveBeenCalledWith('glyph:A', refusal);
+        expect(events[0]).toMatchObject({ reason: 'refused' });
+        done();
+    });
+});
+
+describe('outbox rows while a reconnect leaves no session', () => {
+    const {
+        CloudSessionMissingError
+    } = require('../js/filesystem-plugins/plugins/cloud-plugin');
+    const { CloudWalPersistError } = require('../js/cloud-durable-wal');
+    const previousEngine = window.patchSyncEngine;
+    afterEach(() => {
+        window.patchSyncEngine = previousEngine;
+    });
+
+    function fakePlugin(fields = {}) {
+        return Object.assign(Object.create(CloudPlugin.prototype), {
+            _liveSession: null,
+            _attachingSession: null,
+            _activeAssetId: 'asset-1',
+            _lastSessionAssetId: null,
+            ...fields
+        });
+    }
+
+    test('a row with no session is kept, reported as storage trouble, never broken', async () => {
+        const plugin = fakePlugin();
+        const caught = await CloudPlugin.prototype.persistOutgoingCloudUpdate
+            .call(plugin, new Uint8Array([1]), { id: 'a' }, 'glyph:a')
+            .catch((error) => error);
+        expect(caught).toBeInstanceOf(CloudSessionMissingError);
+        // The engine keeps going on a CloudWalPersistError and marks
+        // nothing broken.
+        expect(caught).toBeInstanceOf(CloudWalPersistError);
+        expect(caught.message).toContain('kept in this window');
+        expect(keptSessionRowCount(plugin, 'asset-1')).toBe(1);
+    });
+
+    test('kept rows are written into the next session first, in order', async () => {
+        const plugin = fakePlugin();
+        const order = [];
+        const session = {
+            persistOutgoingUpdate: jest.fn(async (_u, envelope) => {
+                order.push(envelope.id);
+                return true;
+            }),
+            stageHeldUpdate: jest.fn(async (_u, envelope) => {
+                order.push(`staged:${envelope.id}`);
+                return true;
+            }),
+            dropStagedUpdate: jest.fn(async (_d, id) => {
+                order.push(`drop:${id}`);
+            })
+        };
+        const persist = (id) =>
+            CloudPlugin.prototype.persistOutgoingCloudUpdate
+                .call(plugin, new Uint8Array([1]), { id }, 'glyph:a')
+                .catch((error) => error);
+        await CloudPlugin.prototype.stageHeldCloudUpdate
+            .call(plugin, new Uint8Array([1]), { id: 'h' }, 'glyph:a', null)
+            .catch(() => undefined);
+        expect(await persist('a')).toBeInstanceOf(CloudSessionMissingError);
+        await CloudPlugin.prototype.dropStagedCloudUpdate.call(
+            plugin,
+            'glyph:a',
+            'h'
+        );
+        expect(await persist('b')).toBeInstanceOf(CloudSessionMissingError);
+        expect(session.persistOutgoingUpdate).not.toHaveBeenCalled();
+
+        plugin._attachingSession = session;
+        plugin._writeKeptRows(session, 'asset-1');
+        // A row made while the kept ones are written waits behind them.
+        await expect(persist('c')).resolves.toBe(true);
+        expect(order).toEqual(['staged:h', 'a', 'drop:h', 'b', 'c']);
+        expect(keptSessionRowCount(plugin)).toBe(0);
+    });
+
+    test('rows of another font stay kept', async () => {
+        const plugin = fakePlugin({ _activeAssetId: 'asset-1' });
+        await CloudPlugin.prototype.persistOutgoingCloudUpdate
+            .call(plugin, new Uint8Array([1]), { id: 'a' }, 'glyph:a')
+            .catch(() => undefined);
+        const persistOutgoingUpdate = jest.fn(async () => true);
+        const session = { persistOutgoingUpdate };
+        plugin._activeAssetId = 'asset-2';
+        plugin._liveSession = session;
+        plugin._writeKeptRows(session, 'asset-2');
+        await keptSessionRowsWritten(plugin);
+        expect(persistOutgoingUpdate).not.toHaveBeenCalled();
+        expect(keptSessionRowCount(plugin, 'asset-1')).toBe(1);
+    });
+
+    test('a kept row the next session refuses outright marks only that document', async () => {
+        const markDocumentBroken = jest.fn();
+        window.patchSyncEngine = { markDocumentBroken };
+        const plugin = fakePlugin();
+        await CloudPlugin.prototype.persistOutgoingCloudUpdate
+            .call(plugin, new Uint8Array([1]), null, 'glyph:a')
+            .catch(() => undefined);
+        const refusal = new Error('no envelope');
+        const session = {
+            persistOutgoingUpdate: jest.fn(async () => {
+                throw refusal;
+            })
+        };
+        plugin._liveSession = session;
+        plugin._writeKeptRows(session, 'asset-1');
+        await keptSessionRowsWritten(plugin);
+        expect(markDocumentBroken).toHaveBeenCalledWith('glyph:a', refusal);
+    });
+
+    test('a storage failure while writing a kept row is not a refusal', async () => {
+        const markDocumentBroken = jest.fn();
+        window.patchSyncEngine = { markDocumentBroken };
+        const plugin = fakePlugin();
+        await CloudPlugin.prototype.persistOutgoingCloudUpdate
+            .call(plugin, new Uint8Array([1]), { id: 'a' }, 'glyph:a')
+            .catch(() => undefined);
+        const session = {
+            persistOutgoingUpdate: jest.fn(async () => {
+                throw new CloudWalPersistError(new Error('idb'));
+            })
+        };
+        plugin._liveSession = session;
+        plugin._writeKeptRows(session, 'asset-1');
+        await keptSessionRowsWritten(plugin);
+        expect(markDocumentBroken).not.toHaveBeenCalled();
+        expect(keptSessionRowCount(plugin)).toBe(0);
+    });
+
+    test('writes through the attaching session while the live one is not ready', async () => {
+        const persistOutgoingUpdate = jest.fn(async () => true);
+        const plugin = fakePlugin({
+            _attachingSession: { persistOutgoingUpdate }
+        });
+        await expect(
+            CloudPlugin.prototype.persistOutgoingCloudUpdate.call(
+                plugin,
+                new Uint8Array([1]),
+                null,
+                'glyph:a',
+                ['dep']
+            )
+        ).resolves.toBe(true);
+        expect(persistOutgoingUpdate).toHaveBeenCalledWith(
+            new Uint8Array([1]),
+            null,
+            'glyph:a',
+            ['dep']
+        );
     });
 });

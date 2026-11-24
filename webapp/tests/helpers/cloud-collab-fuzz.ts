@@ -2020,8 +2020,19 @@ async function applyExtendedFuzzEdit(
                 }
                 case 'nudge': {
                     const editor = w.glyphCanvas.outlineEditor;
-                    const drawing = atStation(step.master);
-                    const before = JSON.stringify(drawing.toJSON());
+                    const before = JSON.stringify(
+                        atStation(step.master).toJSON()
+                    );
+                    // Read the drawing the model holds now, not one captured
+                    // before the key: the commit may rebuild the glyph, and a
+                    // detached object that moved must not count as a move.
+                    const current = () =>
+                        JSON.stringify(
+                            w.currentFontModel
+                                ?.findGlyph?.(step.glyph)
+                                ?.findDrawingById?.(step.master)
+                                ?.toJSON?.() ?? null
+                        );
                     editor.selectedPoints =
                         step.target === 'point'
                             ? [
@@ -2046,17 +2057,20 @@ async function applyExtendedFuzzEdit(
                     canvas.dispatchEvent(new KeyboardEvent('keydown', init));
                     canvas.dispatchEvent(new KeyboardEvent('keyup', init));
                     const deadline = Date.now() + 5000;
-                    while (
-                        JSON.stringify(drawing.toJSON()) === before &&
-                        Date.now() < deadline
-                    ) {
+                    while (current() === before && Date.now() < deadline) {
                         await new Promise((resolve) => setTimeout(resolve, 50));
                     }
                     await editor.flushPendingKeyboardPreviewCommit?.();
                     editor.selectedPoints = [];
                     editor.selectedAnchors = [];
                     editor.selectedComponents = [];
-                    if (JSON.stringify(drawing.toJSON()) === before) {
+                    const after = current();
+                    if (after === 'null') {
+                        throw new Error(
+                            `${step.glyph} has no drawing ${step.master} after the ${step.key} key`
+                        );
+                    }
+                    if (after === before) {
                         throw new Error(`the ${step.key} key moved nothing`);
                     }
                     break;

@@ -236,6 +236,13 @@ export type HeldCloudPacket = {
 export type CloudSendHoldOptions = {
     /** Receives everything held, in arrival order, once. */
     flush: (packets: HeldCloudPacket[]) => void;
+    /**
+     * Hears of each packet the hold keeps past the `submit` call, in arrival
+     * order and before any flush. A packet that is flushed within the same
+     * call (it closes a held burst's run) is not announced: it is already on
+     * its way.
+     */
+    onHeld?: (packet: HeldCloudPacket) => void;
     /** Packets closer together than this are rate limited. */
     minGapMs: number;
     /** A rate limited batch goes out this long after its first packet. */
@@ -245,6 +252,7 @@ export type CloudSendHoldOptions = {
 
 export class CloudSendHold {
     private readonly flushPackets: (packets: HeldCloudPacket[]) => void;
+    private readonly onHeld: ((packet: HeldCloudPacket) => void) | null;
     private readonly minGapMs: number;
     private readonly trailingMs: number;
     private readonly clock: EditBurstClock;
@@ -256,6 +264,7 @@ export class CloudSendHold {
 
     constructor(options: CloudSendHoldOptions) {
         this.flushPackets = options.flush;
+        this.onHeld = options.onHeld ?? null;
         this.minGapMs = options.minGapMs;
         this.trailingMs = options.trailingMs;
         this.clock = options.clock ?? realClock;
@@ -273,6 +282,7 @@ export class CloudSendHold {
         if (packet.burstKey) {
             this.packets.push(packet);
             this.burstKeys.add(packet.burstKey);
+            this.onHeld?.(packet);
             return 'held';
         }
         if (this.packets.length > 0) {
@@ -280,6 +290,8 @@ export class CloudSendHold {
             this.packets.push(packet);
             if (this.burstKeys.size > 0) {
                 this.flushAll();
+            } else {
+                this.onHeld?.(packet);
             }
             return 'held';
         }
@@ -289,6 +301,7 @@ export class CloudSendHold {
         const now = this.clock.now();
         if (now - this.lastSentAt < this.minGapMs) {
             this.packets.push(packet);
+            this.onHeld?.(packet);
             this.trailingTimer = this.clock.setTimer(() => {
                 this.trailingTimer = null;
                 // A burst that started meanwhile keeps everything until it

@@ -72,8 +72,15 @@ export const cloudAdapterLivenessMethods = {
         this._clientId = null;
         this._markVisibleRebaselineNeeded();
         this._resetBootstrapStateForReconnect();
+        // Its close event is ignored (the socket is detached first), so the
+        // unacknowledged packets go back into the queue here, in order.
+        this._abandonSocketState();
         this._setStatus('connecting', 'Cloud connection timed out');
-        ws.close(CLIENT_RECONNECT_CLOSE_CODE, 'liveness-timeout');
+        this._requestSocketClose(
+            ws,
+            CLIENT_RECONNECT_CLOSE_CODE,
+            'liveness-timeout'
+        );
         this._scheduleReconnect();
     },
 

@@ -233,10 +233,7 @@ describe('commit-time hard rejection', () => {
         }
     });
 
-    test.each([
-        ['with a broadcast baseline', false],
-        ['without a broadcast baseline', true]
-    ])('a rejected submit leaves no clock gap (%s)', (_label, dropBaseline) => {
+    test('a refused commit writes nothing, so the next packet leaves no clock gap', () => {
         const plugin = createCloudSubmitPlugin();
         const restore = installPlugin(plugin);
         const bridge = new PatchSyncEngine('submit-reject-gap');
@@ -248,10 +245,8 @@ describe('commit-time hard rejection', () => {
         bridge.onLocalUpdate((update) => {
             emitted.push(update);
         });
-        if (dropBaseline) {
-            bridge._lastBroadcastStateVectorByDoc.clear();
-        }
         try {
+            const vectorBefore = Y.encodeStateVector(bridge.yDoc);
             bridge.recordChange(
                 [],
                 'note',
@@ -259,12 +254,9 @@ describe('commit-time hard rejection', () => {
                 'p'.repeat(MAX_YJS_PACKET_BYTES)
             );
             expect(plugin.rejections).toHaveLength(1);
-            if (dropBaseline) {
-                // Glyph shards fall back to the doc's own vector at commit start.
-                bridge._lastBroadcastStateVector = Y.encodeStateVector(
-                    bridge.yDoc
-                );
-            }
+            // Permission is decided before the write: no clock moved.
+            expect(Y.encodeStateVector(bridge.yDoc)).toEqual(vectorBefore);
+            expect(bridge.hasUnsentLocalUpdates('font-core')).toBe(false);
             bridge.recordChange([], 'note', '', 'after');
             expect(plugin.rejections).toHaveLength(1);
             expect(emitted.length).toBeGreaterThan(0);
@@ -281,7 +273,7 @@ describe('commit-time hard rejection', () => {
         }
     });
 
-    test('a rejected submit rolls back by replay and keeps earlier history undoable', () => {
+    test('a rejected submit writes nothing and keeps earlier history undoable', () => {
         const plugin = createCloudSubmitPlugin();
         const restore = installPlugin(plugin);
         const bridge = new PatchSyncEngine('submit-reject-history');

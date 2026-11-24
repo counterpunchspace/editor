@@ -4,18 +4,41 @@
  * envelope is fitted right before it is persisted or put on the wire. The
  * transaction key does not depend on the change list, so fitting never
  * changes a packet's identity.
+ *
+ * Fitting is lossless (see the shared metadata-budget module): it describes
+ * the same change more coarsely and, as its last step, widens to
+ * `metadata.allGlyphsChanged`. An envelope that still does not fit is
+ * refused with EnvelopeTooLargeError; it is never cut down.
  */
 import type { CollaborationMessageEnvelope } from './collaboration-message';
 import { pushCollabIntegrityEvent } from './cloud-collab-integrity-debug';
 import { MAX_METADATA_BYTES } from './generated/collab-protocol-limits';
 import {
     METADATA_BUDGET_MARGIN_BYTES,
+    METADATA_FIT_LEVEL,
     fitCollaborationMessagesToBudget,
     mergeCollaborationMessages
 } from './generated/collab-protocol-metadata-budget';
 
 export const OUTBOUND_METADATA_BUDGET_BYTES =
     MAX_METADATA_BYTES - METADATA_BUDGET_MARGIN_BYTES;
+
+/** An envelope that no lossless step brings under the room's cap. */
+export class EnvelopeTooLargeError extends Error {
+    readonly documentId: string | null;
+    readonly bytes: number;
+    readonly level: number;
+
+    constructor(documentId: string | null, bytes: number, level: number) {
+        super(
+            `Collaboration envelope for ${documentId ?? 'an unknown document'} is ${bytes} bytes after every lossless step (level ${level}); the room accepts ${OUTBOUND_METADATA_BUDGET_BYTES}.`
+        );
+        this.name = 'EnvelopeTooLargeError';
+        this.documentId = documentId;
+        this.bytes = bytes;
+        this.level = level;
+    }
+}
 
 type FittedBody = {
     metadata: CollaborationMessageEnvelope['metadata'];
@@ -26,6 +49,8 @@ type FittedBody = {
         CollaborationMessageEnvelope,
         'changes' | 'metadata' | 'label' | 'summary'
     > | null;
+    /** Set when no lossless step fits; every packet of the body is refused. */
+    tooLarge: { bytes: number; level: number } | null;
 };
 
 /**
@@ -57,6 +82,13 @@ export function fitEnvelopeForWire(
         cached.label === message.label &&
         cached.summary === message.summary
     ) {
+        if (cached.tooLarge) {
+            throw new EnvelopeTooLargeError(
+                context.documentId ?? null,
+                cached.tooLarge.bytes,
+                cached.tooLarge.level
+            );
+        }
         return cached.fitted ? { ...message, ...cached.fitted } : message;
     }
     const fit = fitCollaborationMessagesToBudget(
@@ -64,6 +96,8 @@ export function fitEnvelopeForWire(
         OUTBOUND_METADATA_BUDGET_BYTES
     );
     const fittedMessage = fit.messages[0] as CollaborationMessageEnvelope;
+    // The generated module infers the level from its first assignment.
+    const level: number = fit.level;
     fittedBodies.set(message.changes, {
         metadata: message.metadata,
         label: message.label,
@@ -76,8 +110,16 @@ export function fitEnvelopeForWire(
                       metadata: fittedMessage.metadata,
                       label: fittedMessage.label,
                       summary: fittedMessage.summary
-                  }
+                  },
+        tooLarge: fit.fits ? null : { bytes: fit.bytesAfter, level }
     });
+    if (!fit.fits) {
+        throw new EnvelopeTooLargeError(
+            context.documentId ?? null,
+            fit.bytesAfter,
+            level
+        );
+    }
     if (fittedMessage === message) {
         return message;
     }
@@ -85,8 +127,8 @@ export function fitEnvelopeForWire(
         documentId: context.documentId ?? null,
         bytesBefore: fit.bytesBefore,
         bytesAfter: fit.bytesAfter,
-        level: fit.level,
-        fits: fit.fits
+        level,
+        allGlyphsChanged: level === METADATA_FIT_LEVEL.ALL_GLYPHS_IN_DOCUMENT
     });
     return fit.messages[0] as CollaborationMessageEnvelope;
 }

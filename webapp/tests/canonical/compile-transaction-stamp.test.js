@@ -21,6 +21,10 @@ function makeFont() {
                     {
                         id: 'layer-1',
                         width: 600,
+                        master: {
+                            type: 'DefaultForMaster',
+                            master: 'master-regular'
+                        },
                         shapes: [],
                         anchors: [],
                         guides: []
@@ -62,7 +66,7 @@ describe('beginTransaction compile stamp', () => {
             compileEditType: null
         });
         bridge.recordChange(
-            ['glyphs', 'A', 'layers', 'layer-1', 'width'],
+            ['glyphs', 'A', 'layers', 'layer-1'],
             'width',
             600,
             640

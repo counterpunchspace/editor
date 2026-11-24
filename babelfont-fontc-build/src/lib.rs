@@ -22,7 +22,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use yrs::updates::decoder::Decode;
 use yrs::{Array as _, GetString, Map as _, ReadTxn, Transact};
 
 // Font reading module (using read-fonts/skrifa)
@@ -41,6 +40,9 @@ pub use font_introspection::{
 // Interpolation module
 mod interpolation;
 
+// A drawing's outline as the Y.Doc stores it (port of drawing-geometry-ydoc.ts)
+mod drawing_geometry;
+
 // Rust-authored Yjs batch operations for master add / reinterpolation
 mod batch_yjs_ops;
 
@@ -55,6 +57,9 @@ mod glyph_outlines;
 mod path_boolean;
 
 mod cache_memory;
+
+// Quality gate for outside Yjs update bytes
+mod update_integrity;
 
 // Global storage for cached fonts
 // Use a Mutex to allow safe mutable access from multiple calls
@@ -430,24 +435,28 @@ fn patch_filtered_font_cache_for_visual_commit(
     // (`name.VAR.n`). A change to a variation layer, or to a glyph that has
     // variations, cannot be patched in place; the filters have to run again.
     let touches_variation = changed_layer_snapshots.iter().any(|(target, layer_json)| {
-        layer_json.as_ref().is_some_and(layer_json_is_feature_variation)
+        layer_json
+            .as_ref()
+            .is_some_and(layer_json_is_feature_variation)
             || !filtered_glyph_has_layer(&entry.font, &target.glyph_name, &target.layer_id)
             || glyph_has_variation_glyphs(&entry.font, &target.glyph_name)
-    }) || changed_glyph_snapshots.iter().any(|(glyph_name, glyph_json)| {
-        glyph_has_variation_glyphs(&entry.font, glyph_name)
-            || glyph_json
-                .as_ref()
-                .and_then(|glyph| glyph.get("layers"))
-                .and_then(|layers| layers.as_array())
-                .is_some_and(|layers| layers.iter().any(layer_json_is_feature_variation))
-    });
+    }) || changed_glyph_snapshots
+        .iter()
+        .any(|(glyph_name, glyph_json)| {
+            glyph_has_variation_glyphs(&entry.font, glyph_name)
+                || glyph_json
+                    .as_ref()
+                    .and_then(|glyph| glyph.get("layers"))
+                    .and_then(|layers| layers.as_array())
+                    .is_some_and(|layers| layers.iter().any(layer_json_is_feature_variation))
+        });
     if touches_variation {
         return Ok(false);
     }
 
     let mut font = (*entry.font).clone();
     for (target, layer_json) in changed_layer_snapshots {
-        replace_layer_in_font_cache(
+        replace_stored_layer_in_font_cache(
             &mut font,
             &target.glyph_name,
             &target.layer_id,
@@ -485,14 +494,19 @@ fn layer_json_is_feature_variation(layer: &serde_json::Value) -> bool {
 fn filtered_glyph_has_layer(font: &babelfont::Font, glyph_name: &str, layer_id: &str) -> bool {
     font.glyphs.iter().any(|glyph| {
         glyph.name.as_str() == glyph_name
-            && glyph.layers.iter().any(|layer| layer.id.as_deref() == Some(layer_id))
+            && glyph
+                .layers
+                .iter()
+                .any(|layer| layer.id.as_deref() == Some(layer_id))
     })
 }
 
 /// The filtered font holds a variation glyph (`name.VAR.n`) made from this glyph.
 fn glyph_has_variation_glyphs(font: &babelfont::Font, glyph_name: &str) -> bool {
     let prefix = format!("{glyph_name}.VAR.");
-    font.glyphs.iter().any(|glyph| glyph.name.starts_with(&prefix))
+    font.glyphs
+        .iter()
+        .any(|glyph| glyph.name.starts_with(&prefix))
 }
 
 fn reset_debug_font_caches_with_fingerprint(committed_font_fingerprint: Option<String>) {
@@ -683,8 +697,98 @@ fn rename_glyph_json_entries(
     true
 }
 
-fn layer_json_failed_geometry_reconstruction(layer_json: &serde_json::Value) -> bool {
-    layer_json.get("geometryError").is_some() && layer_json.get("shapes").is_none()
+/// Err unless a drawing carries its identity: a non-empty `id` equal to the
+/// key it is stored under, a finite `width`, and a valid station link in
+/// `master`. A missing `width` is a lost value: it is never filled in and
+/// never reaches deserialization. A missing `master` is Babelfont's own
+/// encoding of a FreeFloating link (it leaves the default out when it writes
+/// a drawing), so it reads as FreeFloating; a `master` that is present but
+/// malformed is refused. Whether the drawing is a background is read from
+/// its own `is_background`.
+fn validate_drawing_identity(layer_id: &str, layer_json: &serde_json::Value) -> Result<(), String> {
+    let is_background = layer_json
+        .get("is_background")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true);
+    validate_drawing_identity_as(layer_id, layer_json, is_background)
+}
+
+/// The identity check of `validate_drawing_identity`, with the background
+/// flag given. It matches `describeDrawingStationViolation` in the webapp
+/// exactly: a FreeFloating link is valid; a DefaultForMaster or
+/// AssociatedWithMaster link must name a station as a string, which may be
+/// empty only for a background drawing (Babelfont writes a background's link
+/// with an empty station id; it belongs to its foreground drawing through
+/// `background_layer_id`); any other link is refused.
+fn validate_drawing_identity_as(
+    layer_id: &str,
+    layer_json: &serde_json::Value,
+    is_background: bool,
+) -> Result<(), String> {
+    let Some(fields) = layer_json.as_object() else {
+        return Err(format!("drawing {layer_id} is not an object"));
+    };
+    match fields.get("id") {
+        Some(serde_json::Value::String(id)) if id == layer_id => {}
+        Some(serde_json::Value::String(id)) if !id.is_empty() => {
+            return Err(format!(
+                "drawing {layer_id} carries the id {id:?} of another drawing"
+            ));
+        }
+        Some(_) => return Err(format!("drawing {layer_id} has an invalid id")),
+        None => return Err(format!("drawing {layer_id} is missing its id")),
+    }
+    match fields.get("width") {
+        Some(width) if width.as_f64().is_some_and(f64::is_finite) => {}
+        Some(width) => {
+            return Err(format!(
+                "drawing {layer_id} has a width that is not a finite number: {width}"
+            ));
+        }
+        None => return Err(format!("drawing {layer_id} is missing its width")),
+    }
+    match fields.get("master") {
+        // Babelfont writes a FreeFloating link by leaving `master` out.
+        None => Ok(()),
+        Some(master) => validate_station_link(layer_id, master, is_background),
+    }
+}
+
+/// The station link a drawing stores, reading an absent `master` as the
+/// FreeFloating link Babelfont encodes that way. A `master` that is present
+/// but not an object is refused, never replaced.
+pub(crate) fn drawing_station_link(
+    layer_id: &str,
+    layer_json: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    match layer_json.get("master") {
+        None => Ok(serde_json::json!({ "type": "FreeFloating" })),
+        Some(master) if master.is_object() => Ok(master.clone()),
+        Some(_) => Err(format!("drawing {layer_id} master is not a station link")),
+    }
+}
+
+/// Err unless `master` is a valid station link, by the rule of
+/// `describeDrawingStationViolation` in the webapp (see
+/// `validate_drawing_identity_as`).
+fn validate_station_link(
+    layer_id: &str,
+    master: &serde_json::Value,
+    is_background: bool,
+) -> Result<(), String> {
+    let Some(master) = master.as_object() else {
+        return Err(format!("drawing {layer_id} master is not a station link"));
+    };
+    match master.get("type").and_then(serde_json::Value::as_str) {
+        Some("FreeFloating") => Ok(()),
+        Some("DefaultForMaster") | Some("AssociatedWithMaster") => {
+            match master.get("master").and_then(serde_json::Value::as_str) {
+                Some(station) if !station.is_empty() || is_background => Ok(()),
+                _ => Err(format!("drawing {layer_id} master names no station")),
+            }
+        }
+        _ => Err(format!("drawing {layer_id} master has no known type")),
+    }
 }
 
 fn replace_layer_json_entry(
@@ -693,23 +797,18 @@ fn replace_layer_json_entry(
     glyph_name: &str,
     layer_id: &str,
     new_layer_json: Option<serde_json::Value>,
-) -> bool {
-    if let Some(layer_json) = &new_layer_json {
-        if layer_json_failed_geometry_reconstruction(layer_json) {
-            return false;
-        }
-    }
+) -> Result<bool, String> {
     let Some(glyphs) = font_json
         .get_mut("glyphs")
         .and_then(|value| value.as_array_mut())
     else {
-        return false;
+        return Ok(false);
     };
     let Some(&glyph_position) = glyph_index.get(glyph_name) else {
-        return false;
+        return Ok(false);
     };
     let Some(glyph_json) = glyphs.get_mut(glyph_position) else {
-        return false;
+        return Ok(false);
     };
     replace_layer_in_glyph_json(glyph_json, layer_id, new_layer_json)
 }
@@ -718,12 +817,15 @@ fn replace_layer_in_glyph_json(
     glyph_json: &mut serde_json::Value,
     layer_id: &str,
     new_layer_json: Option<serde_json::Value>,
-) -> bool {
+) -> Result<bool, String> {
+    if let Some(layer_json) = &new_layer_json {
+        validate_drawing_identity(layer_id, layer_json)?;
+    }
     let Some(layers) = glyph_json
         .get_mut("layers")
         .and_then(|value| value.as_array_mut())
     else {
-        return false;
+        return Ok(false);
     };
 
     let layer_position = layers.iter().position(|layer| {
@@ -733,44 +835,25 @@ fn replace_layer_in_glyph_json(
             .is_some_and(|id| id == layer_id)
     });
 
+    // The drawing read from the Y.Doc is whole: it replaces the cached one.
+    // A key it does not have (a location a collaborator removed) is not
+    // taken back from the cache.
     match new_layer_json {
         Some(layer_json) => {
-            let next_layer_json = if let Some(index) = layer_position {
-                merge_sparse_layer_json(&layers[index], layer_json)
-            } else {
-                layer_json
-            };
             if let Some(index) = layer_position {
-                layers[index] = next_layer_json;
+                layers[index] = layer_json;
             } else {
-                layers.push(next_layer_json);
+                layers.push(layer_json);
             }
-            true
+            Ok(true)
         }
         None => {
             if let Some(index) = layer_position {
                 layers.remove(index);
-                return true;
+                return Ok(true);
             }
-            false
+            Ok(false)
         }
-    }
-}
-
-fn merge_sparse_layer_json(
-    existing_layer_json: &serde_json::Value,
-    incoming_layer_json: serde_json::Value,
-) -> serde_json::Value {
-    match (existing_layer_json, incoming_layer_json) {
-        (serde_json::Value::Object(existing), serde_json::Value::Object(mut incoming)) => {
-            for (key, value) in existing {
-                if !incoming.contains_key(key) {
-                    incoming.insert(key.clone(), value.clone());
-                }
-            }
-            serde_json::Value::Object(incoming)
-        }
-        (_, incoming) => incoming,
     }
 }
 
@@ -851,21 +934,20 @@ fn apply_packed_node_positions_to_layer_json(
     Ok(())
 }
 
-/// Fill omitted layer fields from a cached snapshot. Missing `shapes` keeps
-/// cached outlines; an explicit `shapes` array (including empty) wins.
-fn materialize_sparse_ydoc_layer_json(
+/// A drawing read from the Y.Doc, as the caches hold it. The stored drawing
+/// is whole and the only truth: nothing it lacks is filled in from a cached
+/// copy. A key it does not have is absent in Babelfont terms (no `shapes`
+/// is no outline, no `location` is none), never “unchanged”, so a key a
+/// collaborator removed is removed here too. A drawing without its identity
+/// (`id`, `width`, `master`) is refused.
+fn materialize_ydoc_layer_json(
+    layer_id: &str,
     incoming: serde_json::Value,
-    cached: Option<&serde_json::Value>,
-) -> serde_json::Value {
-    if incoming.get("geometryError").is_some() {
-        return incoming;
-    }
-    let mut materialized = match cached {
-        Some(existing) => merge_sparse_layer_json(existing, incoming),
-        None => incoming,
-    };
-    let _ = apply_packed_node_positions_to_layer_json(&mut materialized);
-    materialized
+) -> Result<serde_json::Value, String> {
+    validate_drawing_identity(layer_id, &incoming)?;
+    let mut materialized = incoming;
+    apply_packed_node_positions_to_layer_json(&mut materialized)?;
+    Ok(materialized)
 }
 
 fn materialize_ydoc_layer_json_for_native_cache(
@@ -873,18 +955,8 @@ fn materialize_ydoc_layer_json_for_native_cache(
     layer_id: &str,
     incoming: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    let cached = {
-        let guard = CANONICAL_JSON_CACHE.lock().unwrap();
-        guard.as_ref().and_then(|canonical| {
-            cached_layer_json_from_font_json(canonical, glyph_name, layer_id, None)
-        })
-    };
-    let mut materialized = match cached.as_ref() {
-        Some(existing) => merge_sparse_layer_json(existing, incoming.clone()),
-        None => incoming.clone(),
-    };
-    apply_packed_node_positions_to_layer_json(&mut materialized)?;
-    Ok(materialized)
+    materialize_ydoc_layer_json(layer_id, incoming.clone())
+        .map_err(|error| format!("{glyph_name}::{layer_id}: {error}"))
 }
 
 fn layer_field_from_json<T>(
@@ -925,6 +997,29 @@ where
     })
 }
 
+/// A partial drawing need not carry its identity, but any part of it that it
+/// carries must be valid, as for a delta in the webapp. Whether it is a
+/// background comes from its own `is_background`, else the stored drawing's.
+fn validate_partial_drawing_identity(
+    layer_id: &str,
+    fields: &serde_json::Map<String, serde_json::Value>,
+    stored_is_background: bool,
+) -> Result<(), String> {
+    if let Some(id) = fields.get("id") {
+        if id.as_str() != Some(layer_id) {
+            return Err(format!("drawing {layer_id} has an invalid id {id}"));
+        }
+    }
+    if let Some(master) = fields.get("master") {
+        let is_background = match fields.get("is_background") {
+            Some(value) => value.as_bool() == Some(true),
+            None => stored_is_background,
+        };
+        validate_station_link(layer_id, master, is_background)?;
+    }
+    Ok(())
+}
+
 fn apply_sparse_layer_json_to_cached_layer(
     layer: &mut babelfont::Layer,
     glyph_name: &str,
@@ -940,6 +1035,12 @@ fn apply_sparse_layer_json_to_cached_layer(
         })?;
         return Ok(());
     };
+
+    validate_partial_drawing_identity(layer_id, fields, layer.is_background).map_err(|error| {
+        JsValue::from_str(&format!(
+            "Layer deserialization error for {glyph_name}::{layer_id}: {error}"
+        ))
+    })?;
 
     if let Some(value) = fields.get("width") {
         layer.width = layer_field_from_json(glyph_name, layer_id, "width", value)?;
@@ -1035,7 +1136,10 @@ fn malformed_shape_reason(shapes: &serde_json::Value) -> Option<(usize, String)>
                     .and_then(|value| value.as_str())
                     .unwrap_or_default();
                 if reference.is_empty() {
-                    return Some((index, "shape has neither nodes nor a component reference".to_string()));
+                    return Some((
+                        index,
+                        "shape has neither nodes nor a component reference".to_string(),
+                    ));
                 }
             }
         }
@@ -1048,6 +1152,9 @@ fn validate_layer_json_for_native_cache(
     layer_id: &str,
     layer_json: &serde_json::Value,
 ) -> Result<(), String> {
+    validate_drawing_identity(layer_id, layer_json).map_err(|error| {
+        format!("Layer deserialization error for {glyph_name}::{layer_id}: {error}")
+    })?;
     if let Some(shapes) = layer_json.get("shapes") {
         if let Some((index, reason)) = malformed_shape_reason(shapes) {
             return Err(format!(
@@ -1091,6 +1198,16 @@ fn validate_glyph_json_for_native_cache(
         .flatten()
         .enumerate()
     {
+        let layer_id = layer
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        validate_drawing_identity(layer_id, layer).map_err(|error| {
+            format!(
+                "Glyph deserialization error for {}: {}; path layers[{}]",
+                glyph_name, error, index
+            )
+        })?;
         if let Some((shape, reason)) = layer.get("shapes").and_then(malformed_shape_reason) {
             return Err(format!(
                 "Glyph deserialization error for {}: {}; path layers[{}].shapes[{}]",
@@ -1123,7 +1240,7 @@ fn validate_active_subset_ydoc_layers_for_native_cache<T: ReadTxn>(txn: &T) -> R
         .collect();
 
     for glyph_name in active_subset_glyphs {
-        if let Some(glyph_json) = ydoc_get_glyph_json_with_txn(&glyph_name, txn) {
+        if let Some(glyph_json) = ydoc_get_glyph_json_with_txn(&glyph_name, txn)? {
             for layer_json in glyph_json
                 .get("layers")
                 .and_then(serde_json::Value::as_array)
@@ -1562,7 +1679,9 @@ fn apply_glyph_rename_transaction(
             &target.glyph_name,
             &target.layer_id,
             Some(layer_json.clone()),
-        ) {
+        )
+        .map_err(|error| JsValue::from_str(&format!("glyph rename transaction: {}", error)))?
+        {
             // Glyph absent from the candidate cache (for example a dependent
             // that was never mirrored into CANONICAL_JSON_CACHE) — skip rather
             // than fail the whole rename transaction.
@@ -1640,11 +1759,6 @@ fn replace_layer_in_font_cache(
     layer_id: &str,
     new_layer_json: Option<&serde_json::Value>,
 ) -> Result<bool, JsValue> {
-    if let Some(layer_json) = new_layer_json {
-        if layer_json_failed_geometry_reconstruction(layer_json) {
-            return Ok(false);
-        }
-    }
     let Some(glyph_index) = font
         .glyphs
         .iter()
@@ -1669,6 +1783,12 @@ fn replace_layer_in_font_cache(
                     layer_json,
                 )?;
             } else {
+                validate_drawing_identity(layer_id, layer_json).map_err(|error| {
+                    JsValue::from_str(&format!(
+                        "Layer deserialization error for {}::{}: {}",
+                        glyph_name, layer_id, error
+                    ))
+                })?;
                 let layer: babelfont::Layer =
                     serde_json::from_value(layer_json.clone()).map_err(|e| {
                         JsValue::from_str(&format!(
@@ -1687,6 +1807,87 @@ fn replace_layer_in_font_cache(
             }
             Ok(false)
         }
+    }
+}
+
+/// A whole stored drawing as a Babelfont layer. Its identity is checked.
+/// `location` and `smart_component_location` stay objects: on a whole
+/// `Layer` they deserialize from a map (Babelfont's `*_from_map` helpers).
+/// Only `layer_field_from_json`, which reads the bare `DesignLocation`
+/// field, needs them as pairs.
+fn stored_layer_from_json(
+    glyph_name: &str,
+    layer_id: &str,
+    layer_json: &serde_json::Value,
+) -> Result<babelfont::Layer, JsValue> {
+    let error = |detail: String| {
+        JsValue::from_str(&format!(
+            "Layer deserialization error for {}::{}: {}",
+            glyph_name, layer_id, detail
+        ))
+    };
+    validate_drawing_identity(layer_id, layer_json).map_err(error)?;
+    serde_json::from_value(layer_json.clone()).map_err(|e| error(e.to_string()))
+}
+
+#[cfg(test)]
+mod stored_layer_location_tests {
+    use super::*;
+
+    #[test]
+    fn a_stored_free_drawing_keeps_its_location() {
+        let stored = serde_json::json!({
+            "id": "free-1",
+            "width": 500,
+            "master": {"type": "FreeFloating"},
+            "location": {"wght": 300},
+            "shapes": []
+        });
+        let layer = stored_layer_from_json("p", "free-1", &stored)
+            .unwrap_or_else(|_| panic!("a free drawing with a location must read"));
+        let location = serde_json::to_value(&layer)
+            .expect("serialize layer")
+            .get("location")
+            .cloned();
+        assert_eq!(location, Some(serde_json::json!({"wght": 300.0})));
+    }
+}
+
+/// Put a whole drawing read from the Y.Doc into the font cache, or remove
+/// it. Unlike `replace_layer_in_font_cache`, which lays a partial preview
+/// drawing over the cached one, this replaces the cached drawing: nothing
+/// the stored drawing lacks survives from the cache.
+fn replace_stored_layer_in_font_cache(
+    font: &mut babelfont::Font,
+    glyph_name: &str,
+    layer_id: &str,
+    new_layer_json: Option<&serde_json::Value>,
+) -> Result<bool, JsValue> {
+    let Some(glyph) = font
+        .glyphs
+        .iter_mut()
+        .find(|glyph| glyph.name.as_str() == glyph_name)
+    else {
+        return Ok(false);
+    };
+    let layer_index = glyph
+        .layers
+        .iter()
+        .position(|layer| layer.id.as_deref() == Some(layer_id));
+    match (new_layer_json, layer_index) {
+        (Some(layer_json), index) => {
+            let layer = stored_layer_from_json(glyph_name, layer_id, layer_json)?;
+            match index {
+                Some(index) => glyph.layers[index] = layer,
+                None => glyph.layers.push(layer),
+            }
+            Ok(true)
+        }
+        (None, Some(index)) => {
+            glyph.layers.remove(index);
+            Ok(true)
+        }
+        (None, None) => Ok(false),
     }
 }
 
@@ -1949,6 +2150,17 @@ fn collect_fea_parse_universe_names(
     names
 }
 
+/// Marks a glyph that `inject_stub_glyphs_for_fea_parse` added only so the
+/// feature source parses against the whole glyph universe. Such a stub has no
+/// drawings and is never compiled, in the editing font or the exported one.
+/// It is told apart from a real glyph set not to export by this key alone.
+const FEA_PARSE_STUB_KEY: &str = "counterpunch.feaParseStub";
+
+#[cfg(test)]
+fn is_fea_parse_stub(glyph: &Glyph) -> bool {
+    glyph.format_specific.contains_key(FEA_PARSE_STUB_KEY)
+}
+
 fn inject_stub_glyphs_for_fea_parse(font: &mut babelfont::Font, extra_names: &[String]) {
     let existing: HashSet<SmolStr> = font.glyphs.iter().map(|glyph| glyph.name.clone()).collect();
     for name in extra_names {
@@ -1957,6 +2169,8 @@ fn inject_stub_glyphs_for_fea_parse(font: &mut babelfont::Font, extra_names: &[S
         }
         let mut stub = Glyph::new(name);
         stub.exported = false;
+        stub.format_specific
+            .insert(FEA_PARSE_STUB_KEY.to_string(), serde_json::Value::Bool(true));
         font.glyphs.push(stub);
     }
 }
@@ -2161,7 +2375,14 @@ fn apply_filter_pipeline_inner(
         }
     }
 
-    if retain_exported_glyphs {
+    // Both the export and the editing compile contain only exported glyphs:
+    // unexported glyphs and feature-parse stubs are dropped. The drop, and
+    // the feature pruning that goes with it, happens before
+    // `GlyphsBracketLayers` writes variation rules: a rule it generated for a
+    // dropped glyph would name a glyph the compiler leaves out, and the
+    // compiler's own pruning does not reach those rules. A font with nothing
+    // to drop skips the re-parse.
+    if retain_exported_glyphs || filtered.glyphs.iter().any(|glyph| !glyph.exported) {
         let exported_names: Vec<String> = filtered
             .glyphs
             .iter()
@@ -2493,13 +2714,22 @@ impl fea_rs::compile::VariationInfo for ValidationVariationInfo {
     }
 
     fn axis(&self, axis_tag: write_fonts::types::Tag) -> Option<(usize, &fontdrasil::types::Axis)> {
-        self.axes.iter().enumerate().find(|(_, axis)| axis.tag == axis_tag)
+        self.axes
+            .iter()
+            .enumerate()
+            .find(|(_, axis)| axis.tag == axis_tag)
     }
 
     fn resolve_variable_metric(
         &self,
         _: &HashMap<fontdrasil::coords::NormalizedLocation, i16>,
-    ) -> Result<(i16, Vec<(write_fonts::tables::variations::VariationRegion, i16)>), Self::Error> {
+    ) -> Result<
+        (
+            i16,
+            Vec<(write_fonts::tables::variations::VariationRegion, i16)>,
+        ),
+        Self::Error,
+    > {
         Ok((0, Vec::new()))
     }
 
@@ -3306,14 +3536,19 @@ fn yrs_any_to_json(any: &yrs::Any) -> serde_json::Value {
 
 /// Recursively convert a yrs `Value` (which may be a Y.Map / Y.Array / Y.Text /
 /// primitive) to a `serde_json::Value`.
-fn yrs_value_to_json<T: ReadTxn>(value: yrs::types::Value, txn: &T) -> serde_json::Value {
-    match value {
+/// An error when a stored feature list is damaged (see
+/// `reconstruct_features_indexed_map`): nothing is skipped or filled in.
+fn yrs_value_to_json<T: ReadTxn>(
+    value: yrs::types::Value,
+    txn: &T,
+) -> Result<serde_json::Value, String> {
+    Ok(match value {
         yrs::types::Value::Any(any) => yrs_any_to_json(&any),
-        yrs::types::Value::YMap(map_ref) => yrs_map_to_json(&map_ref, txn),
-        yrs::types::Value::YArray(arr_ref) => yrs_array_to_json(&arr_ref, txn),
+        yrs::types::Value::YMap(map_ref) => yrs_map_to_json(&map_ref, txn)?,
+        yrs::types::Value::YArray(arr_ref) => yrs_array_to_json(&arr_ref, txn)?,
         yrs::types::Value::YText(text_ref) => serde_json::Value::String(text_ref.get_string(txn)),
         _ => serde_json::Value::Null,
-    }
+    })
 }
 
 /// Convert a Y.Map to a JSON value.
@@ -3322,70 +3557,79 @@ fn yrs_value_to_json<T: ReadTxn>(value: yrs::types::Value, txn: &T) -> serde_jso
 /// as `*ById` (Y.Map keyed by stable id) + `*Order` (Y.Array of ids).
 /// The old numeric-key heuristic that converted numeric-keyed Y.Maps to
 /// JSON arrays is no longer needed and has been removed.
-fn yrs_map_to_json<T: ReadTxn>(map_ref: &yrs::MapRef, txn: &T) -> serde_json::Value {
-    let entries: Vec<(String, serde_json::Value)> = map_ref
-        .iter(txn)
-        .map(|(k, v)| (k.to_string(), yrs_value_to_json(v, txn)))
-        .collect();
-
-    let mut obj: serde_json::Map<String, serde_json::Value> = entries.into_iter().collect();
+fn yrs_map_to_json<T: ReadTxn>(
+    map_ref: &yrs::MapRef,
+    txn: &T,
+) -> Result<serde_json::Value, String> {
+    let mut obj = serde_json::Map::new();
+    for (k, v) in map_ref.iter(txn) {
+        obj.insert(k.to_string(), yrs_value_to_json(v, txn)?);
+    }
     if obj.contains_key("featuresById") || obj.contains_key("featureOrder") {
-        reconstruct_features_indexed_map(&mut obj);
+        reconstruct_features_indexed_map(&mut obj)?;
     }
     if is_babelfont_features_object(&obj) {
         let mut features = serde_json::Value::Object(obj);
         normalize_babelfont_feature_code(&mut features);
-        return features;
+        return Ok(features);
     }
-    serde_json::Value::Object(obj)
+    Ok(serde_json::Value::Object(obj))
 }
 
-fn yrs_array_to_json<T: ReadTxn>(arr_ref: &yrs::ArrayRef, txn: &T) -> serde_json::Value {
-    let arr: Vec<serde_json::Value> = arr_ref
+fn yrs_array_to_json<T: ReadTxn>(
+    arr_ref: &yrs::ArrayRef,
+    txn: &T,
+) -> Result<serde_json::Value, String> {
+    arr_ref
         .iter(txn)
         .map(|v| yrs_value_to_json(v, txn))
-        .collect();
-    serde_json::Value::Array(arr)
+        .collect::<Result<Vec<_>, _>>()
+        .map(serde_json::Value::Array)
 }
 
 fn ydoc_layer_to_json<T: ReadTxn>(
     layer_id: &str,
     layer_val: yrs::types::Value,
     txn: &T,
-) -> serde_json::Value {
-    let layer_json = yrs_value_to_json(layer_val, txn);
-    let mut layer_obj = match layer_json {
-        serde_json::Value::Object(o) => o,
-        _ => serde_json::Map::new(),
+) -> Result<serde_json::Value, String> {
+    let layer_json = yrs_value_to_json(layer_val, txn)
+        .map_err(|error| format!("drawing {layer_id}: {error}"))?;
+    let serde_json::Value::Object(mut layer_obj) = layer_json else {
+        return Err(format!("drawing {layer_id} is not stored as a map"));
     };
-    if !layer_obj.contains_key("id") {
-        layer_obj.insert(
-            "id".to_string(),
-            serde_json::Value::String(layer_id.to_string()),
-        );
-    }
 
     // Reconstruct legacy indexed-map structures back to flat arrays. Current
     // JS storage keeps shapes as the flat resting field, so prefer it over any
     // stale shapesById/shapeOrder remnants that may still exist in old docs.
-    if layer_obj.contains_key("geometryTopology") {
-        match reconstruct_normalized_layer_geometry(&mut layer_obj) {
-            Ok(()) => {}
-            Err(err) => {
-                return serde_json::json!({
-                    "id": layer_id,
-                    "geometryError": err,
-                });
+    // `geometryTopology`, `nodePositionsById` and `shapeDataById` have been
+    // written together since they were introduced. A position or shape-data
+    // map without its topology lost the topology: it is never read as a
+    // drawing without geometry, and never laid over cached outlines.
+    if !layer_obj.contains_key("geometryTopology") {
+        for key in ["nodePositionsById", "shapeDataById"] {
+            if layer_obj.contains_key(key) {
+                return Err(format!(
+                    "drawing {layer_id} geometry: {key} is stored without geometryTopology"
+                ));
             }
         }
+    }
+    if layer_obj.contains_key("geometryTopology") {
+        reconstruct_normalized_layer_geometry(&mut layer_obj)
+            .map_err(|error| format!("drawing {layer_id} geometry: {error}"))?;
     } else if !layer_obj.contains_key("shapes") {
-        reconstruct_indexed_map_array(&mut layer_obj, "shapes", "shapesById", "shapeOrder");
+        reconstruct_indexed_map_array(&mut layer_obj, "shapes", "shapesById", "shapeOrder")
+            .map_err(|error| format!("drawing {layer_id}: {error}"))?;
     } else {
         layer_obj.remove("shapesById");
         layer_obj.remove("shapeOrder");
     }
-    reconstruct_indexed_map_array(&mut layer_obj, "anchors", "anchorsById", "anchorOrder");
-    reconstruct_indexed_map_array(&mut layer_obj, "guides", "guidesById", "guideOrder");
+    require_indexed_item_ids(&layer_obj, "anchorsById")
+        .map_err(|error| format!("drawing {layer_id}: {error}"))?;
+    reconstruct_indexed_map_array(&mut layer_obj, "anchors", "anchorsById", "anchorOrder")
+        .map_err(|error| format!("drawing {layer_id}: {error}"))?;
+    reconstruct_indexed_map_array(&mut layer_obj, "guides", "guidesById", "guideOrder")
+        .map_err(|error| format!("drawing {layer_id}: {error}"))?;
 
     // For each shape, reconstruct nodes from nodesById+nodeOrder
     if let Some(serde_json::Value::Array(shapes)) = layer_obj.get_mut("shapes") {
@@ -3394,13 +3638,27 @@ fn ydoc_layer_to_json<T: ReadTxn>(
                 continue;
             };
             // Reconstruct nodes from indexed-map
-            reconstruct_indexed_map_array(obj, "nodes", "nodesById", "nodeOrder");
-            if obj.contains_key("nodes") && !obj.contains_key("closed") {
-                obj.insert("closed".to_string(), serde_json::Value::Bool(false));
+            reconstruct_indexed_map_array(obj, "nodes", "nodesById", "nodeOrder")
+                .map_err(|error| format!("drawing {layer_id}: {error}"))?;
+            // Babelfont always writes a path's `closed` flag, and every
+            // writer kept it beside the nodes. A path without it lost it: it
+            // is never read as open.
+            if obj.contains_key("nodes")
+                && !obj.get("closed").is_some_and(serde_json::Value::is_boolean)
+            {
+                let shape_id = obj
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("without an id");
+                return Err(format!(
+                    "drawing {layer_id}: path {shape_id} is stored without its closed flag"
+                ));
             }
         }
     }
-    serde_json::Value::Object(layer_obj)
+    let layer_json = serde_json::Value::Object(layer_obj);
+    validate_drawing_identity(layer_id, &layer_json)?;
+    Ok(layer_json)
 }
 
 fn reconstruct_normalized_layer_geometry(
@@ -3432,17 +3690,18 @@ fn reconstruct_normalized_layer_geometry(
         .ok_or_else(|| "geometryTopology.shapes must be an array".to_string())?;
 
     // Read the id maps in place; the layer is only changed once every shape
-    // reconstructs.
-    let empty_map = serde_json::Map::new();
+    // reconstructs. Every writer creates both maps together with the first
+    // `geometryTopology`, even for a drawing without shapes, so a topology
+    // without either map lost it: it is never read as empty.
     let positions = match layer_obj.get("nodePositionsById") {
         Some(serde_json::Value::Object(map)) => map,
         Some(_) => return Err("nodePositionsById must be an object".to_string()),
-        None => &empty_map,
+        None => return Err("geometryTopology is stored without nodePositionsById".to_string()),
     };
     let shape_data = match layer_obj.get("shapeDataById") {
         Some(serde_json::Value::Object(map)) => map,
         Some(_) => return Err("shapeDataById must be an object".to_string()),
-        None => &empty_map,
+        None => return Err("geometryTopology is stored without shapeDataById".to_string()),
     };
 
     let mut shapes = Vec::with_capacity(topology_shapes.len());
@@ -3462,11 +3721,14 @@ fn reconstruct_normalized_layer_geometry(
         let kind = shape_topo
             .get("k")
             .and_then(|value| value.as_str())
-            .unwrap_or("");
+            .ok_or_else(|| format!("geometry shape {id} is missing its kind"))?;
+        // Every writer stores a data entry for each shape, an empty one for
+        // a path without extra fields. A missing entry is lost data, never an
+        // empty shape.
         let mut shape = match shape_data.get(id) {
             Some(serde_json::Value::Object(data)) => data.clone(),
             Some(_) => return Err(format!("shapeDataById.{id} must be an object")),
-            None => serde_json::Map::new(),
+            None => return Err(format!("Missing data for shape {id}")),
         };
         shape.insert("id".to_string(), serde_json::Value::String(id.to_string()));
         if kind == "P" {
@@ -3485,14 +3747,17 @@ fn reconstruct_normalized_layer_geometry(
             if node_ids.len() != types.len() {
                 return Err(format!("Path {id} node/type length mismatch"));
             }
-            let smooth = shape_topo.get("s").and_then(|value| value_as_array(value));
-            if let Some(flags) = smooth {
-                if flags.len() != node_ids.len() {
-                    return Err(format!("Path {id} smooth-flag length mismatch"));
-                }
-                if flags.iter().any(|flag| !flag.is_boolean()) {
-                    return Err(format!("Path {id} smooth flags must be booleans"));
-                }
+            // `splitShapesForYDoc` has always written one smooth flag per
+            // node, `false` included, so a path without them lost them.
+            let smooth = shape_topo
+                .get("s")
+                .and_then(|value| value_as_array(value))
+                .ok_or_else(|| format!("Path {id} is missing smooth flags"))?;
+            if smooth.len() != node_ids.len() {
+                return Err(format!("Path {id} smooth-flag length mismatch"));
+            }
+            if smooth.iter().any(|flag| !flag.is_boolean()) {
+                return Err(format!("Path {id} smooth flags must be booleans"));
             }
             let mut nodes = Vec::with_capacity(node_ids.len());
             for (index, node_id_value) in node_ids.iter().enumerate() {
@@ -3531,9 +3796,9 @@ fn reconstruct_normalized_layer_geometry(
                     })
                     .ok_or_else(|| format!("Invalid node type for {node_id}"))?;
                 let is_smooth = smooth
-                    .and_then(|flags| flags.get(index))
+                    .get(index)
                     .and_then(|value| value.as_bool())
-                    .unwrap_or(false);
+                    .ok_or_else(|| format!("Invalid smooth flag for {node_id}"))?;
                 let mut node = serde_json::Map::new();
                 node.insert(
                     "id".to_string(),
@@ -3577,74 +3842,138 @@ fn value_as_array(value: &serde_json::Value) -> Option<&Vec<serde_json::Value>> 
 
 /// Reconstruct a flat JSON array from an indexed-map structure
 /// (*ById + *Order → array). Removes the *ById and *Order keys.
+/// Turn `by_id_key` + `order_key` into the `array_key` list, by the rule of
+/// `items_in_order`. An id that is not a string, an item the order does not
+/// list, or one half of the pair without the other is damage and an error.
 fn reconstruct_indexed_map_array(
     obj: &mut serde_json::Map<String, serde_json::Value>,
     array_key: &str,
     by_id_key: &str,
     order_key: &str,
-) {
-    // The indexed-map keys are removed regardless; items move into the array.
-    let by_id = obj.remove(by_id_key);
-    let order = obj.remove(order_key);
-    if let (
-        Some(serde_json::Value::Object(mut by_id_map)),
-        Some(serde_json::Value::Array(order_arr)),
-    ) = (by_id, order)
-    {
-        let mut arr: Vec<serde_json::Value> = Vec::with_capacity(order_arr.len());
-        // Array slot of each order entry, so a repeated id copies its first item.
-        let mut slot_of_entry: Vec<Option<usize>> = Vec::with_capacity(order_arr.len());
-        for (entry_index, id_val) in order_arr.iter().enumerate() {
-            let Some(id) = id_val.as_str() else {
-                slot_of_entry.push(None);
-                continue;
-            };
-            if let Some(item) = by_id_map.remove(id) {
-                slot_of_entry.push(Some(arr.len()));
-                arr.push(item);
-                continue;
-            }
-            let earlier_slot = order_arr[..entry_index]
-                .iter()
-                .zip(&slot_of_entry)
-                .find_map(|(earlier, slot)| (earlier.as_str() == Some(id)).then_some(*slot)?);
-            match earlier_slot {
-                Some(slot) => {
-                    slot_of_entry.push(Some(arr.len()));
-                    let repeated = arr[slot].clone();
-                    arr.push(repeated);
-                }
-                None => slot_of_entry.push(None),
-            }
+) -> Result<(), String> {
+    let (by_id, order) = match (obj.remove(by_id_key), obj.remove(order_key)) {
+        (None, None) => return Ok(()),
+        (Some(serde_json::Value::Object(by_id)), Some(serde_json::Value::Array(order))) => {
+            (by_id, order)
         }
-        obj.insert(array_key.to_string(), serde_json::Value::Array(arr));
+        (Some(_), None) => return Err(format!("{by_id_key} is stored without {order_key}")),
+        (None, Some(_)) => return Err(format!("{order_key} is stored without {by_id_key}")),
+        (Some(serde_json::Value::Object(_)), Some(_)) => {
+            return Err(format!("{order_key} must be an array"))
+        }
+        (Some(_), Some(_)) => return Err(format!("{by_id_key} must be an object")),
+    };
+    let arr = items_in_order(&by_id, &order, by_id_key, order_key)?;
+    obj.insert(array_key.to_string(), serde_json::Value::Array(arr));
+    Ok(())
+}
+
+/// The ids `order` lists, in its sequence, that are read as items of
+/// `by_id`, the same rule as `readIndexedPairIds` in the webapp.
+///
+/// A writer moves an id by deleting its order entry and inserting a new one
+/// (a longest-common-subsequence diff), and deletes an item together with
+/// its original order entry. So concurrent editing leaves two states that
+/// are not damage: an order entry whose item a collaborator deleted while
+/// another moved it (the delete wins, and the id is skipped), and an id two
+/// collaborators moved at once, listed twice (it is read once, at its first
+/// place). An id that is not a string, or an item the order does not list,
+/// no interleaving produces: writers add an item only with a fresh id and
+/// its order entry in one transaction, and edit an existing item field by
+/// field, never by a new map. Those are damage and an error.
+pub(crate) fn ids_in_order<'a>(
+    by_id: &serde_json::Map<String, serde_json::Value>,
+    order: &'a [serde_json::Value],
+    by_id_key: &str,
+    order_key: &str,
+) -> Result<Vec<&'a str>, String> {
+    let mut listed: HashSet<&str> = HashSet::with_capacity(order.len());
+    let mut ids: Vec<&str> = Vec::with_capacity(order.len());
+    for id_val in order {
+        let id = id_val
+            .as_str()
+            .ok_or_else(|| format!("{order_key} holds an id that is not a string: {id_val}"))?;
+        if !listed.insert(id) || !by_id.contains_key(id) {
+            continue;
+        }
+        ids.push(id);
     }
+    if let Some(unlisted) = by_id.keys().find(|id| !listed.contains(id.as_str())) {
+        return Err(format!("{by_id_key} holds {unlisted}, which {order_key} does not list"));
+    }
+    Ok(ids)
+}
+
+/// The items of `by_id` in the sequence `order` lists them, by the rule of
+/// `ids_in_order`.
+fn items_in_order(
+    by_id: &serde_json::Map<String, serde_json::Value>,
+    order: &[serde_json::Value],
+    by_id_key: &str,
+    order_key: &str,
+) -> Result<Vec<serde_json::Value>, String> {
+    Ok(ids_in_order(by_id, order, by_id_key, order_key)?
+        .into_iter()
+        .filter_map(|id| by_id.get(id).cloned())
+        .collect())
+}
+
+/// Every writer stores an anchor's id inside the anchor, under the key it
+/// is stored by (`applyIndexedMapArray`, `drawingToYMap`, and
+/// `write_collection_as_indexed_map` here). An anchor without its id, or with
+/// another one, is damaged: its id is never taken from the key.
+fn require_indexed_item_ids(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    by_id_key: &str,
+) -> Result<(), String> {
+    let Some(serde_json::Value::Object(by_id)) = obj.get(by_id_key) else {
+        return Ok(());
+    };
+    for (key, item) in by_id {
+        match item.get("id") {
+            Some(serde_json::Value::String(id)) if id == key => {}
+            Some(serde_json::Value::String(id)) => {
+                return Err(format!("{by_id_key}.{key} has the id {id}"))
+            }
+            _ => return Err(format!("{by_id_key}.{key} has no id")),
+        }
+    }
+    Ok(())
 }
 
 /// JS stores OpenType features as `featuresById` + `featureOrder` with
 /// `{ tag, code }` records. Babelfont JSON needs `features: [[tag, code], ...]`.
-fn reconstruct_features_indexed_map(obj: &mut serde_json::Map<String, serde_json::Value>) {
-    let by_id = obj.get("featuresById").cloned();
-    let order = obj.get("featureOrder").cloned();
-    if let (Some(serde_json::Value::Object(by_id_map)), Some(serde_json::Value::Array(order_arr))) =
-        (by_id, order)
-    {
-        let mut arr = Vec::with_capacity(order_arr.len());
-        for id_val in &order_arr {
-            let Some(id) = id_val.as_str() else {
-                continue;
-            };
-            let Some(item) = by_id_map.get(id) else {
-                continue;
-            };
-            let tag = item.get("tag").cloned().unwrap_or(serde_json::Value::Null);
-            let code = item.get("code").cloned().unwrap_or(serde_json::Value::Null);
-            arr.push(serde_json::json!([tag, code]));
+/// The order is read by the rule of `ids_in_order`. A damaged pair (one half
+/// without the other, a feature the order does not list, a feature without
+/// its tag or code) is an error: nothing damaged is skipped or filled in.
+fn reconstruct_features_indexed_map(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    let (by_id, order) = match (obj.remove("featuresById"), obj.remove("featureOrder")) {
+        (Some(serde_json::Value::Object(by_id)), Some(serde_json::Value::Array(order))) => {
+            (by_id, order)
         }
-        obj.insert("features".to_string(), serde_json::Value::Array(arr));
+        (None, None) => return Ok(()),
+        (Some(_), None) => return Err("featuresById is stored without featureOrder".into()),
+        (None, Some(_)) => return Err("featureOrder is stored without featuresById".into()),
+        (Some(serde_json::Value::Object(_)), Some(_)) => {
+            return Err("featureOrder must be an array".into())
+        }
+        (Some(_), Some(_)) => return Err("featuresById must be an object".into()),
+    };
+    let ids = ids_in_order(&by_id, &order, "featuresById", "featureOrder")?;
+    let mut arr = Vec::with_capacity(ids.len());
+    for id in ids {
+        let item = &by_id[id];
+        let field = |key: &str| {
+            item.get(key)
+                .cloned()
+                .ok_or_else(|| format!("featuresById.{} has no {}", id, key))
+        };
+        arr.push(serde_json::json!([field("tag")?, field("code")?]));
     }
-    obj.remove("featuresById");
-    obj.remove("featureOrder");
+    obj.insert("features".to_string(), serde_json::Value::Array(arr));
+    Ok(())
 }
 
 fn is_babelfont_features_object(obj: &serde_json::Map<String, serde_json::Value>) -> bool {
@@ -3744,7 +4073,7 @@ fn ydoc_glyph_to_json<T: ReadTxn>(
     glyph_name: &str,
     glyph_map: &yrs::MapRef,
     txn: &T,
-) -> serde_json::Value {
+) -> Result<serde_json::Value, String> {
     let mut glyph_obj = serde_json::Map::new();
     for (gk, gv) in glyph_map.iter(txn) {
         if gk == "sync" {
@@ -3754,14 +4083,23 @@ fn ydoc_glyph_to_json<T: ReadTxn>(
             if let yrs::types::Value::YMap(layers_map) = gv {
                 let mut layers_array: Vec<serde_json::Value> = Vec::new();
                 for (layer_id, layer_val) in layers_map.iter(txn) {
-                    layers_array.push(ydoc_layer_to_json(&layer_id, layer_val, txn));
+                    layers_array.push(
+                        ydoc_layer_to_json(&layer_id, layer_val, txn)
+                            .map_err(|error| format!("glyph {glyph_name}: {error}"))?,
+                    );
                 }
                 glyph_obj.insert("layers".to_string(), serde_json::Value::Array(layers_array));
             } else {
-                glyph_obj.insert(gk.to_string(), yrs_value_to_json(gv, txn));
+                glyph_obj.insert(
+                    gk.to_string(),
+                    yrs_value_to_json(gv, txn).map_err(|error| format!("glyph {glyph_name}: {error}"))?,
+                );
             }
         } else {
-            glyph_obj.insert(gk.to_string(), yrs_value_to_json(gv, txn));
+            glyph_obj.insert(
+                gk.to_string(),
+                yrs_value_to_json(gv, txn).map_err(|error| format!("glyph {glyph_name}: {error}"))?,
+            );
         }
     }
     if let Some(codepoints) = glyph_obj.remove("codepoints") {
@@ -3777,7 +4115,7 @@ fn ydoc_glyph_to_json<T: ReadTxn>(
             serde_json::Value::String(glyph_name.to_string()),
         );
     }
-    serde_json::Value::Object(glyph_obj)
+    Ok(serde_json::Value::Object(glyph_obj))
 }
 
 /// Convert the full Y.Doc (keyed by root map "font") to a babelfont JSON Value.
@@ -3786,9 +4124,9 @@ fn ydoc_glyph_to_json<T: ReadTxn>(
 /// - `glyphs` Y.Map<glyph_name, Y.Map> → JSON array of glyph objects
 /// - Each glyph's `layers` Y.Map<layer_id, Y.Map> → JSON array of layer objects
 /// - Everything else follows the standard Y.type → JSON mapping
-fn ydoc_to_babelfont_json_with_txn<T: ReadTxn>(txn: &T) -> serde_json::Value {
+fn ydoc_to_babelfont_json_with_txn<T: ReadTxn>(txn: &T) -> Result<serde_json::Value, String> {
     let Some(font_map) = txn.get_map("font") else {
-        return serde_json::Value::Object(serde_json::Map::new());
+        return Ok(serde_json::Value::Object(serde_json::Map::new()));
     };
     let mut result = serde_json::Map::new();
 
@@ -3798,67 +4136,72 @@ fn ydoc_to_babelfont_json_with_txn<T: ReadTxn>(txn: &T) -> serde_json::Value {
                 let mut glyphs_array: Vec<serde_json::Value> = Vec::new();
                 for (glyph_name, glyph_val) in glyphs_map.iter(txn) {
                     if let yrs::types::Value::YMap(glyph_map) = glyph_val {
-                        glyphs_array.push(ydoc_glyph_to_json(glyph_name, &glyph_map, txn));
+                        glyphs_array.push(ydoc_glyph_to_json(glyph_name, &glyph_map, txn)?);
                     }
                 }
                 result.insert("glyphs".to_string(), serde_json::Value::Array(glyphs_array));
             } else {
-                result.insert(key.to_string(), yrs_value_to_json(value, txn));
+                result.insert(key.to_string(), yrs_value_to_json(value, txn)?);
             }
         } else {
-            result.insert(key.to_string(), yrs_value_to_json(value, txn));
+            result.insert(key.to_string(), yrs_value_to_json(value, txn)?);
         }
     }
 
     reconstruct_kern_group_dicts(&mut result);
     let mut json = serde_json::Value::Object(result);
-    merge_layout_documents_into_font_json(&mut json, layout_kerning_range(txn));
-    json
+    merge_layout_documents_into_font_json(&mut json, layout_kerning_range(txn))?;
+    Ok(json)
 }
 
 /// Extract and return the JSON for a single named glyph from the Rust Y.Doc.
-/// Returns None if the glyph is not found or Y_DOC is not initialized.
+/// Returns Ok(None) if the glyph is not found, Err if one of its drawings is
+/// malformed.
 fn ydoc_get_glyph_json_with_txn<T: ReadTxn>(
     glyph_name: &str,
     txn: &T,
-) -> Option<serde_json::Value> {
-    if let Some(json) = ydoc_glyph_json_from_shards(glyph_name) {
-        return Some(json);
+) -> Result<Option<serde_json::Value>, String> {
+    if let Some(json) = ydoc_glyph_json_from_shards(glyph_name)? {
+        return Ok(Some(json));
     }
-    let font_map = txn.get_map("font")?;
-    let glyphs_val = font_map.get(txn, "glyphs")?;
-    if let yrs::types::Value::YMap(glyphs_map) = glyphs_val {
-        let glyph_val = glyphs_map.get(txn, glyph_name)?;
-        if let yrs::types::Value::YMap(glyph_map) = glyph_val {
-            return Some(ydoc_glyph_to_json(glyph_name, &glyph_map, txn));
-        }
-    }
-    None
+    let Some(font_map) = txn.get_map("font") else {
+        return Ok(None);
+    };
+    let Some(yrs::types::Value::YMap(glyphs_map)) = font_map.get(txn, "glyphs") else {
+        return Ok(None);
+    };
+    let Some(yrs::types::Value::YMap(glyph_map)) = glyphs_map.get(txn, glyph_name) else {
+        return Ok(None);
+    };
+    ydoc_glyph_to_json(glyph_name, &glyph_map, txn).map(Some)
 }
 
 fn ydoc_get_layer_json_with_txn<T: ReadTxn>(
     glyph_name: &str,
     layer_id: &str,
     txn: &T,
-) -> Option<serde_json::Value> {
-    if let Some(json) = ydoc_layer_json_from_shards(glyph_name, layer_id) {
-        return Some(json);
+) -> Result<Option<serde_json::Value>, String> {
+    if let Some(json) = ydoc_layer_json_from_shards(glyph_name, layer_id)? {
+        return Ok(Some(json));
     }
-    let font_map = txn.get_map("font")?;
-    let glyphs_val = font_map.get(txn, "glyphs")?;
-    let yrs::types::Value::YMap(glyphs_map) = glyphs_val else {
-        return None;
+    let Some(font_map) = txn.get_map("font") else {
+        return Ok(None);
     };
-    let glyph_val = glyphs_map.get(txn, glyph_name)?;
-    let yrs::types::Value::YMap(glyph_map) = glyph_val else {
-        return None;
+    let Some(yrs::types::Value::YMap(glyphs_map)) = font_map.get(txn, "glyphs") else {
+        return Ok(None);
     };
-    let layers_val = glyph_map.get(txn, "layers")?;
-    let yrs::types::Value::YMap(layers_map) = layers_val else {
-        return None;
+    let Some(yrs::types::Value::YMap(glyph_map)) = glyphs_map.get(txn, glyph_name) else {
+        return Ok(None);
     };
-    let layer_val = layers_map.get(txn, layer_id)?;
-    Some(ydoc_layer_to_json(layer_id, layer_val, txn))
+    let Some(yrs::types::Value::YMap(layers_map)) = glyph_map.get(txn, "layers") else {
+        return Ok(None);
+    };
+    let Some(layer_val) = layers_map.get(txn, layer_id) else {
+        return Ok(None);
+    };
+    ydoc_layer_to_json(layer_id, layer_val, txn)
+        .map(Some)
+        .map_err(|error| format!("glyph {glyph_name}: {error}"))
 }
 
 fn cached_layer_json_from_font_json(
@@ -3891,26 +4234,42 @@ fn cached_layer_json_from_font_json(
         .cloned()
 }
 
-fn ydoc_get_top_level_json_with_txn<T: ReadTxn>(key: &str, txn: &T) -> Option<serde_json::Value> {
+/// `Ok(None)` when the font has no `key`; an error when it is stored damaged.
+fn ydoc_get_top_level_json_with_txn<T: ReadTxn>(
+    key: &str,
+    txn: &T,
+) -> Result<Option<serde_json::Value>, String> {
     if key == "features" {
-        if let Some(features) = layout_features_json() {
-            return Some(features);
+        if let Some(features) = layout_features_json()? {
+            return Ok(Some(features));
         }
     }
-    let font_map = txn.get_map("font")?;
-    let value = font_map.get(txn, key)?;
-    let mut json = yrs_value_to_json(value, txn);
+    let Some(font_map) = txn.get_map("font") else {
+        return Ok(None);
+    };
+    let Some(value) = font_map.get(txn, key) else {
+        return Ok(None);
+    };
+    let mut json = yrs_value_to_json(value, txn).map_err(|error| format!("font {key}: {error}"))?;
     if key == "masters" {
-        if let Some(kerning) = layout_kerning_by_master(layout_kerning_range(txn)) {
+        if let Some(kerning) = layout_kerning_by_master(layout_kerning_range(txn))? {
             merge_layout_kerning_into_masters(&mut json, &kerning);
         }
     }
     // Incremental kern-group refreshes read this helper directly. Membership is
     // stored as `{ glyph: true }` maps; babelfont deserializes `Vec<SmolStr>`.
     if key == "first_kern_groups" || key == "second_kern_groups" {
-        return Some(reconstruct_kern_group_value(json));
+        return Ok(Some(reconstruct_kern_group_value(json)));
     }
-    Some(json)
+    Ok(Some(json))
+}
+
+/// `ydoc_get_top_level_json_with_txn` with its error for the wasm border.
+fn top_level_json_or_js<T: ReadTxn>(
+    key: &str,
+    txn: &T,
+) -> Result<Option<serde_json::Value>, JsValue> {
+    ydoc_get_top_level_json_with_txn(key, txn).map_err(|error| JsValue::from_str(&error))
 }
 
 fn extract_string_array(value: &serde_json::Value) -> Vec<String> {
@@ -4052,14 +4411,13 @@ fn glyph_id_from_document_id(document_id: &str) -> Option<&str> {
 fn remember_glyph_name(glyph_id: &str, doc: &yrs::Doc) {
     let current = {
         let txn = doc.transact();
-        txn.get_map("glyph").and_then(|glyph_map| {
-            match glyph_map.get(&txn, "name") {
+        txn.get_map("glyph")
+            .and_then(|glyph_map| match glyph_map.get(&txn, "name") {
                 Some(yrs::types::Value::Any(yrs::Any::String(name))) if !name.is_empty() => {
                     Some(name.to_string())
                 }
                 _ => None,
-            }
-        })
+            })
     };
     let mut ids = GLYPH_ID_BY_NAME.lock().unwrap();
     ids.retain(|name, id| id != glyph_id || current.as_deref() == Some(name.as_str()));
@@ -4072,9 +4430,7 @@ fn remember_glyph_name(glyph_id: &str, doc: &yrs::Doc) {
 fn named_glyph_map<T: yrs::ReadTxn>(txn: &T) -> Option<yrs::MapRef> {
     let glyph_map = txn.get_map("glyph")?;
     match glyph_map.get(txn, "name") {
-        Some(yrs::types::Value::Any(yrs::Any::String(name))) if !name.is_empty() => {
-            Some(glyph_map)
-        }
+        Some(yrs::types::Value::Any(yrs::Any::String(name))) if !name.is_empty() => Some(glyph_map),
         _ => None,
     }
 }
@@ -4086,6 +4442,7 @@ pub fn reset_ydoc_set() {
     *FEATURES_DOC.lock().unwrap() = None;
     KERNING_DOCS.lock().unwrap().clear();
     *Y_DOC.lock().unwrap() = None;
+    update_integrity::clear_all_broken_documents();
 }
 
 fn layout_bucket(document_id: &str, prefix: &str) -> Option<u32> {
@@ -4104,14 +4461,22 @@ fn is_catalog_document_id(document_id: &str) -> bool {
 }
 
 /// `font.features` from the features document, when the asset has one.
-fn layout_features_json() -> Option<serde_json::Value> {
+fn layout_features_json() -> Result<Option<serde_json::Value>, String> {
     let guard = FEATURES_DOC.lock().unwrap();
-    let doc = guard.as_ref()?;
+    let Some(doc) = guard.as_ref() else {
+        return Ok(None);
+    };
     let txn = doc.transact();
     // Stored as in font-core: root map `font`, key `features`.
-    let font = txn.get_map("font")?;
-    let value = font.get(&txn, "features")?;
-    Some(yrs_value_to_json(value, &txn))
+    let Some(font) = txn.get_map("font") else {
+        return Ok(None);
+    };
+    let Some(value) = font.get(&txn, "features") else {
+        return Ok(None);
+    };
+    yrs_value_to_json(value, &txn)
+        .map(Some)
+        .map_err(|error| format!("features document: {error}"))
 }
 
 type MasterKerning = (
@@ -4139,10 +4504,10 @@ fn layout_kerning_range<T: ReadTxn>(txn: &T) -> Option<std::ops::Range<u32>> {
 /// maps. None when the asset keeps kerning inside its masters (layout 1).
 fn layout_kerning_by_master(
     range: Option<std::ops::Range<u32>>,
-) -> Option<HashMap<String, MasterKerning>> {
+) -> Result<Option<HashMap<String, MasterKerning>>, String> {
     let docs = KERNING_DOCS.lock().unwrap();
     if docs.is_empty() {
-        return None;
+        return Ok(None);
     }
     let mut by_master: HashMap<String, MasterKerning> = HashMap::new();
     for (bucket, doc) in docs.iter() {
@@ -4166,7 +4531,8 @@ fn layout_kerning_by_master(
                 continue;
             }
             let entry = by_master.entry(master_id.to_string()).or_default();
-            let value = yrs_value_to_json(value, &txn);
+            let value = yrs_value_to_json(value, &txn)
+                .map_err(|error| format!("kerning document {bucket}: {error}"))?;
             match direction {
                 "l" => {
                     entry.0.insert(pair.to_string(), value);
@@ -4178,7 +4544,7 @@ fn layout_kerning_by_master(
             }
         }
     }
-    Some(by_master)
+    Ok(Some(by_master))
 }
 
 fn merge_layout_kerning_into_masters(
@@ -4210,21 +4576,21 @@ fn merge_layout_kerning_into_masters(
 fn merge_layout_documents_into_font_json(
     json: &mut serde_json::Value,
     kerning_range: Option<std::ops::Range<u32>>,
-) {
+) -> Result<(), String> {
     let Some(object) = json.as_object_mut() else {
-        return;
+        return Ok(());
     };
-    if let Some(features) = layout_features_json() {
+    if let Some(features) = layout_features_json()? {
         object.insert("features".to_string(), features);
     }
-    if let Some(kerning) = layout_kerning_by_master(kerning_range) {
+    if let Some(kerning) = layout_kerning_by_master(kerning_range)? {
         if let Some(masters) = object.get_mut("masters") {
             merge_layout_kerning_into_masters(masters, &kerning);
         }
     }
-    object.entry("features".to_string()).or_insert_with(|| {
-        serde_json::json!({ "classes": {}, "prefixes": {}, "features": [] })
-    });
+    object
+        .entry("features".to_string())
+        .or_insert_with(|| serde_json::json!({ "classes": {}, "prefixes": {}, "features": [] }));
     if let Some(masters) = object.get_mut("masters").and_then(|m| m.as_array_mut()) {
         for master in masters {
             if let Some(master) = master.as_object_mut() {
@@ -4234,17 +4600,18 @@ fn merge_layout_documents_into_font_json(
             }
         }
     }
+    Ok(())
 }
 
 #[wasm_bindgen]
 pub fn seed_ydoc_document(document_id: &str, state_update: &[u8]) -> Result<(), JsValue> {
     let _span = PerfSpan::start("seed_ydoc_document.total");
-    let update = yrs::Update::decode_v1(state_update)
-        .map_err(|e| JsValue::from_str(&format!("seed_ydoc_document: decode failed: {:?}", e)))?;
     let doc = yrs::Doc::new();
     {
         let mut txn = doc.transact_mut();
-        txn.apply_update(update);
+        update_integrity::clear_broken_document(document_id);
+        update_integrity::apply_update_with_integrity(&mut txn, state_update, document_id)
+            .map_err(|error| JsValue::from_str(&format!("seed_ydoc_document: {}", error)))?;
     }
     if let Some(glyph_id) = glyph_id_from_document_id(document_id) {
         remember_glyph_name(glyph_id, &doc);
@@ -4282,48 +4649,68 @@ pub fn rebuild_caches_from_ydoc_set() -> Result<(), JsValue> {
     store_font_from_value(json_value)
 }
 
-fn apply_update_to_glyph_doc(glyph_id: &str, update: yrs::Update) -> Result<(), JsValue> {
+/// Apply a delta to a loaded glyph document. A glyph document is only ever
+/// created from its whole state by `seed_ydoc_document`, never from a delta.
+fn apply_update_to_glyph_doc(glyph_id: &str, update: &[u8]) -> Result<(), JsValue> {
+    let document_id = format!("glyph:{}", glyph_id);
     let mut docs = GLYPH_DOCS.lock().unwrap();
-    let doc = docs
-        .entry(glyph_id.to_string())
-        .or_insert_with(yrs::Doc::new);
+    let doc = docs.get_mut(glyph_id).ok_or_else(|| {
+        JsValue::from_str(&format!(
+            "apply_yjs_update: {}: document {} is not loaded; seed it with its whole state first",
+            update_integrity::CLOCK_GAP_ERROR,
+            document_id
+        ))
+    })?;
     {
         let mut txn = doc.transact_mut();
-        txn.apply_update(update);
+        update_integrity::apply_update_with_integrity(&mut txn, update, &document_id)
+            .map_err(|error| JsValue::from_str(&format!("apply_yjs_update: {}", error)))?;
     }
     remember_glyph_name(glyph_id, doc);
     Ok(())
 }
 
-fn ydoc_glyph_json_from_shards(glyph_name: &str) -> Option<serde_json::Value> {
+fn ydoc_glyph_json_from_shards(glyph_name: &str) -> Result<Option<serde_json::Value>, String> {
     let docs = GLYPH_DOCS.lock().unwrap();
     if docs.is_empty() {
-        return None;
+        return Ok(None);
     }
     let ids = GLYPH_ID_BY_NAME.lock().unwrap();
-    let glyph_id = ids.get(glyph_name)?;
-    let doc = docs.get(glyph_id)?;
+    let Some(doc) = ids.get(glyph_name).and_then(|glyph_id| docs.get(glyph_id)) else {
+        return Ok(None);
+    };
     let txn = doc.transact();
-    let glyph_map = named_glyph_map(&txn)?;
-    Some(ydoc_glyph_to_json(glyph_name, &glyph_map, &txn))
+    let Some(glyph_map) = named_glyph_map(&txn) else {
+        return Ok(None);
+    };
+    ydoc_glyph_to_json(glyph_name, &glyph_map, &txn).map(Some)
 }
 
-fn ydoc_layer_json_from_shards(glyph_name: &str, layer_id: &str) -> Option<serde_json::Value> {
+fn ydoc_layer_json_from_shards(
+    glyph_name: &str,
+    layer_id: &str,
+) -> Result<Option<serde_json::Value>, String> {
     let docs = GLYPH_DOCS.lock().unwrap();
     if docs.is_empty() {
-        return None;
+        return Ok(None);
     }
     let ids = GLYPH_ID_BY_NAME.lock().unwrap();
-    let glyph_id = ids.get(glyph_name)?;
-    let doc = docs.get(glyph_id)?;
-    let txn = doc.transact();
-    let glyph_map = txn.get_map("glyph")?;
-    let layers_val = glyph_map.get(&txn, "layers")?;
-    let yrs::types::Value::YMap(layers_map) = layers_val else {
-        return None;
+    let Some(doc) = ids.get(glyph_name).and_then(|glyph_id| docs.get(glyph_id)) else {
+        return Ok(None);
     };
-    let layer_val = layers_map.get(&txn, layer_id)?;
-    Some(ydoc_layer_to_json(layer_id, layer_val, &txn))
+    let txn = doc.transact();
+    let Some(glyph_map) = txn.get_map("glyph") else {
+        return Ok(None);
+    };
+    let Some(yrs::types::Value::YMap(layers_map)) = glyph_map.get(&txn, "layers") else {
+        return Ok(None);
+    };
+    let Some(layer_val) = layers_map.get(&txn, layer_id) else {
+        return Ok(None);
+    };
+    ydoc_layer_to_json(layer_id, layer_val, &txn)
+        .map(Some)
+        .map_err(|error| format!("glyph {glyph_name}: {error}"))
 }
 
 fn complete_glyph_order(
@@ -4349,7 +4736,7 @@ fn assembled_babelfont_json() -> Result<serde_json::Value, JsValue> {
             return Ok(serde_json::Value::Object(serde_json::Map::new()));
         };
         let txn = core.transact();
-        ydoc_to_babelfont_json_with_txn(&txn)
+        ydoc_to_babelfont_json_with_txn(&txn).map_err(|error| JsValue::from_str(&error))?
     };
     if json.get("glyphs").is_none() {
         json["glyphs"] = serde_json::Value::Array(Vec::new());
@@ -4385,7 +4772,10 @@ fn assembled_babelfont_json() -> Result<serde_json::Value, JsValue> {
         let Some(glyph_map) = named_glyph_map(&glyph_txn) else {
             continue;
         };
-        glyphs.push(ydoc_glyph_to_json(&name, &glyph_map, &glyph_txn));
+        glyphs.push(
+            ydoc_glyph_to_json(&name, &glyph_map, &glyph_txn)
+                .map_err(|error| JsValue::from_str(&error))?,
+        );
     }
     json["glyphs"] = serde_json::Value::Array(glyphs);
     Ok(json)
@@ -4503,7 +4893,7 @@ fn replace_axes_in_font_cache(
 }
 
 fn refresh_masters_related_caches_from_ydoc<T: ReadTxn>(txn: &T) -> Result<(), JsValue> {
-    let masters_json = ydoc_get_top_level_json_with_txn("masters", txn);
+    let masters_json = top_level_json_or_js("masters", txn)?;
 
     let mut canonical_missing = false;
     {
@@ -4563,22 +4953,22 @@ fn refresh_kerning_related_caches_from_ydoc<T: ReadTxn>(
     }
 
     let masters_json = if refresh_master_kerning {
-        ydoc_get_top_level_json_with_txn("masters", txn)
+        top_level_json_or_js("masters", txn)?
     } else {
         None
     };
     let format_specific_json = if refresh_master_kerning {
-        ydoc_get_top_level_json_with_txn("format_specific", txn)
+        top_level_json_or_js("format_specific", txn)?
     } else {
         None
     };
     let first_kern_groups_json = if refresh_kern_groups {
-        ydoc_get_top_level_json_with_txn("first_kern_groups", txn)
+        top_level_json_or_js("first_kern_groups", txn)?
     } else {
         None
     };
     let second_kern_groups_json = if refresh_kern_groups {
-        ydoc_get_top_level_json_with_txn("second_kern_groups", txn)
+        top_level_json_or_js("second_kern_groups", txn)?
     } else {
         None
     };
@@ -4743,8 +5133,8 @@ fn refresh_top_level_caches_from_ydoc<T: ReadTxn>(txn: &T, keys: &[&str]) -> Res
 
     let values: Vec<(&str, Option<serde_json::Value>)> = keys
         .iter()
-        .map(|key| (*key, ydoc_get_top_level_json_with_txn(key, txn)))
-        .collect();
+        .map(|key| top_level_json_or_js(key, txn).map(|value| (*key, value)))
+        .collect::<Result<_, _>>()?;
 
     {
         let mut canonical_lock = CANONICAL_JSON_CACHE.lock().unwrap();
@@ -4788,7 +5178,7 @@ fn refresh_top_level_caches_from_ydoc<T: ReadTxn>(txn: &T, keys: &[&str]) -> Res
 }
 
 fn refresh_feature_related_caches_from_ydoc<T: ReadTxn>(txn: &T) -> Result<(), JsValue> {
-    let features_json = ydoc_get_top_level_json_with_txn("features", txn);
+    let features_json = top_level_json_or_js("features", txn)?;
 
     let mut canonical_missing = false;
     {
@@ -4963,10 +5353,14 @@ pub fn seed_ydoc(state_update: &[u8]) -> Result<(), JsValue> {
     let _span = PerfSpan::start("seed_ydoc.total");
     let doc = yrs::Doc::new();
     {
-        let update = yrs::Update::decode_v1(state_update)
-            .map_err(|e| JsValue::from_str(&format!("seed_ydoc: decode failed: {:?}", e)))?;
         let mut txn = doc.transact_mut();
-        txn.apply_update(update);
+        update_integrity::clear_broken_document(FONT_CORE_DOCUMENT_ID);
+        update_integrity::apply_update_with_integrity(
+            &mut txn,
+            state_update,
+            FONT_CORE_DOCUMENT_ID,
+        )
+        .map_err(|error| JsValue::from_str(&format!("seed_ydoc: {}", error)))?;
     }
     *Y_DOC.lock().unwrap() = Some(doc);
     clear_preview_overlay_internal();
@@ -4992,17 +5386,20 @@ pub fn init_ydoc_from_state(state_update: &[u8]) -> Result<(), JsValue> {
     let _span = PerfSpan::start("init_ydoc_from_state.total");
     GLYPH_DOCS.lock().unwrap().clear();
     GLYPH_ID_BY_NAME.lock().unwrap().clear();
+    update_integrity::clear_all_broken_documents();
 
     let doc = yrs::Doc::new();
     let json_value = {
         let _decode_span = PerfSpan::start("init_ydoc_from_state.decode_apply");
-        let update = yrs::Update::decode_v1(state_update).map_err(|e| {
-            JsValue::from_str(&format!("init_ydoc_from_state: decode failed: {:?}", e))
-        })?;
         let mut txn = doc.transact_mut();
-        txn.apply_update(update);
+        update_integrity::apply_update_with_integrity(
+            &mut txn,
+            state_update,
+            FONT_CORE_DOCUMENT_ID,
+        )
+        .map_err(|error| JsValue::from_str(&format!("init_ydoc_from_state: {}", error)))?;
         let _serialize_span = PerfSpan::start("init_ydoc_from_state.serialize_json");
-        ydoc_to_babelfont_json_with_txn(&txn)
+        ydoc_to_babelfont_json_with_txn(&txn).map_err(|error| JsValue::from_str(&error))?
     };
 
     *Y_DOC.lock().unwrap() = Some(doc);
@@ -5167,35 +5564,41 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
 
     // -- 1. Apply binary update to the addressed document -----------------
     let document_id = parse_document_id_from_metadata(update_metadata_json);
-    let yrs_update = yrs::Update::decode_v1(update)
-        .map_err(|e| JsValue::from_str(&format!("apply_yjs_update: decode failed: {:?}", e)))?;
-    let mut pending_core_update = Some(yrs_update);
+    let gated_apply = |txn: &mut yrs::TransactionMut, document_id: &str| {
+        update_integrity::apply_update_with_integrity(txn, update, document_id)
+            .map_err(|error| JsValue::from_str(&format!("apply_yjs_update: {}", error)))
+    };
+    let mut pending_core_update = Some(update);
     if let Some(glyph_id) = glyph_id_from_document_id(&document_id) {
         if let Some(update) = pending_core_update.take() {
             apply_update_to_glyph_doc(glyph_id, update)?;
         }
-    } else if document_id == FONT_DEPS_DOCUMENT_ID {
-        pending_core_update.take();
-    } else if is_catalog_document_id(&document_id) {
-        // Nothing here reads the catalog; glyph names come from glyph documents.
+    } else if document_id == FONT_DEPS_DOCUMENT_ID || is_catalog_document_id(&document_id) {
+        // The worker keeps no copy of these documents (seed_ydoc_document
+        // ignores them too): nothing here reads the catalog or the deps
+        // index, and glyph names come from glyph documents.
         let result = serde_json::json!({
             "changedGlyphs": [],
             "changedLayerIds": [],
-            "skipped": "catalog_document"
+            "skipped": if document_id == FONT_DEPS_DOCUMENT_ID {
+                "font_deps_document"
+            } else {
+                "catalog_document"
+            }
         });
         return serde_json::to_string(&result)
             .map_err(|e| JsValue::from_str(&format!("apply_yjs_update: result serialize: {}", e)));
     } else if document_id == FONT_FEATURES_DOCUMENT_ID {
-        if let Some(update) = pending_core_update.take() {
+        if pending_core_update.take().is_some() {
             let mut guard = FEATURES_DOC.lock().unwrap();
             let doc = guard.get_or_insert_with(yrs::Doc::new);
-            doc.transact_mut().apply_update(update);
+            gated_apply(&mut doc.transact_mut(), &document_id)?;
         }
     } else if let Some(bucket) = layout_bucket(&document_id, KERNING_DOCUMENT_PREFIX) {
-        if let Some(update) = pending_core_update.take() {
+        if pending_core_update.take().is_some() {
             let mut docs = KERNING_DOCS.lock().unwrap();
             let doc = docs.entry(bucket).or_insert_with(yrs::Doc::new);
-            doc.transact_mut().apply_update(update);
+            gated_apply(&mut doc.transact_mut(), &document_id)?;
         }
     }
 
@@ -5226,8 +5629,8 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
         let result = (|| -> Result<String, JsValue> {
             let _apply_span = PerfSpan::start("apply_yjs_update.decode_apply");
             let mut txn = doc.transact_mut();
-            if let Some(core_update) = pending_core_update.take() {
-                txn.apply_update(core_update);
+            if pending_core_update.take().is_some() {
+                gated_apply(&mut txn, FONT_CORE_DOCUMENT_ID)?;
             }
             let document_epoch = Y_DOC_EPOCH.fetch_add(1, Ordering::Relaxed) + 1;
 
@@ -5243,9 +5646,18 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
             // catch-up snapshot or a later delta already removed it). The Y.Doc
             // is the truth: treat both names as changed glyphs, and the missing
             // snapshots then remove them from the native caches.
+            let mut rename_target_error: Option<String> = None;
             glyph_renames.retain(|rename| {
-                if ydoc_get_glyph_json_with_txn(&rename.new_name, &txn).is_some() {
+                if rename_target_error.is_some() {
                     return true;
+                }
+                match ydoc_get_glyph_json_with_txn(&rename.new_name, &txn) {
+                    Ok(Some(_)) => return true,
+                    Ok(None) => {}
+                    Err(error) => {
+                        rename_target_error = Some(error);
+                        return true;
+                    }
                 }
                 for name in [&rename.old_name, &rename.new_name] {
                     if !changed_glyphs.contains(name) {
@@ -5254,6 +5666,9 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                 }
                 false
             });
+            if let Some(error) = rename_target_error {
+                return Err(JsValue::from_str(&format!("apply_yjs_update: {}", error)));
+            }
             let refresh_feature_caches = non_glyph_change_hints
                 .iter()
                 .any(|hint| hint == "feature-code");
@@ -5271,12 +5686,12 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                 .collect();
             let refresh_axes = top_level_keys.iter().any(|key| *key == "axes");
             let masters_json = if refresh_masters {
-                ydoc_get_top_level_json_with_txn("masters", &txn)
+                top_level_json_or_js("masters", &txn)?
             } else {
                 None
             };
             let axes_json = if refresh_axes {
-                ydoc_get_top_level_json_with_txn("axes", &txn)
+                top_level_json_or_js("axes", &txn)?
             } else {
                 None
             };
@@ -5293,9 +5708,9 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                 // by the renamed glyph snapshot and must not hard-fail the rename.
                 .filter(|target| !renamed_glyph_names.contains(&target.glyph_name))
             {
-                let raw = ydoc_get_layer_json_with_txn(&target.glyph_name, &target.layer_id, &txn);
+                let raw = ydoc_get_layer_json_with_txn(&target.glyph_name, &target.layer_id, &txn)
+                    .map_err(|error| JsValue::from_str(&format!("apply_yjs_update: {}", error)))?;
                 let layer_json = match raw {
-                    Some(json) if layer_json_failed_geometry_reconstruction(&json) => Some(json),
                     Some(json) => Some(
                         materialize_ydoc_layer_json_for_native_cache(
                             &target.glyph_name,
@@ -5310,11 +5725,14 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
             }
             let renamed_glyph_snapshots: HashMap<String, serde_json::Value> = glyph_renames
                 .iter()
-                .filter_map(|rename| {
-                    ydoc_get_glyph_json_with_txn(&rename.new_name, &txn)
-                        .map(|glyph_json| (rename.new_name.clone(), glyph_json))
+                .map(|rename| {
+                    ydoc_get_glyph_json_with_txn(&rename.new_name, &txn).map(|glyph_json| {
+                        glyph_json.map(|glyph_json| (rename.new_name.clone(), glyph_json))
+                    })
                 })
-                .collect();
+                .filter_map(Result::transpose)
+                .collect::<Result<_, String>>()
+                .map_err(|error| JsValue::from_str(&format!("apply_yjs_update: {}", error)))?;
             if glyph_renames
                 .iter()
                 .any(|rename| !renamed_glyph_snapshots.contains_key(&rename.new_name))
@@ -5345,18 +5763,14 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                             || !known_glyph_names.contains(*glyph_name))
                 })
                 .map(|glyph_name| {
-                    (
-                        glyph_name.clone(),
-                        ydoc_get_glyph_json_with_txn(glyph_name, &txn),
-                    )
+                    ydoc_get_glyph_json_with_txn(glyph_name, &txn)
+                        .map(|glyph_json| (glyph_name.clone(), glyph_json))
                 })
-                .collect();
+                .collect::<Result<_, String>>()
+                .map_err(|error| JsValue::from_str(&format!("apply_yjs_update: {}", error)))?;
 
             for (target, layer_json) in &changed_layer_snapshots {
                 if let Some(layer_json) = layer_json {
-                    if layer_json_failed_geometry_reconstruction(layer_json) {
-                        continue;
-                    }
                     validate_layer_json_for_native_cache(
                         &target.glyph_name,
                         &target.layer_id,
@@ -5406,11 +5820,19 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                     let _patch_span = PerfSpan::start("apply_yjs_update.top_level_refresh");
                     refresh_top_level_caches_from_ydoc(&txn, &top_level_keys)?;
                 }
+                // A packet of keys no compile cache reads (revision stamps,
+                // font dependencies) says so explicitly; it is applied above so
+                // the worker's copy has no gap. Anything else without metadata
+                // is a sender that failed to describe its change.
+                let cache_neutral = non_glyph_change_hints
+                    .iter()
+                    .any(|hint| hint == "cache-neutral");
                 if !refresh_feature_caches
                     && !refresh_masters
                     && !refresh_master_kerning
                     && !refresh_kern_groups
                     && top_level_keys.is_empty()
+                    && !cache_neutral
                 {
                     return Err(JsValue::from_str(
                         "apply_yjs_update: missing cache metadata for non-glyph update",
@@ -5422,7 +5844,7 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                 // glyphs that are not represented by a layer target.
                 if !glyph_renames.is_empty() {
                     let features_json = if refresh_feature_caches {
-                        ydoc_get_top_level_json_with_txn("features", &txn)
+                        top_level_json_or_js("features", &txn)?
                     } else {
                         None
                     };
@@ -5478,7 +5900,10 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                                     &target.glyph_name,
                                     &target.layer_id,
                                     layer_json.clone(),
-                                );
+                                )
+                                .map_err(|error| {
+                                    JsValue::from_str(&format!("apply_yjs_update: {}", error))
+                                })?;
                             }
 
                             for (glyph_name, glyph_json) in &changed_glyph_snapshots {
@@ -5606,7 +6031,10 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                                         &target.glyph_name,
                                         &target.layer_id,
                                         layer_json.clone(),
-                                    );
+                                    )
+                                    .map_err(|error| {
+                                        JsValue::from_str(&format!("apply_yjs_update: {}", error))
+                                    })?;
                                     // Always mark touched-subset layers for cache refresh,
                                     // even when the layer JSON is byte-equal.  Composite-
                                     // dependent glyphs (adieresis referencing a) are included
@@ -5682,7 +6110,7 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                                 )?;
                             }
                             for (target, layer_json) in &changed_layer_snapshots {
-                                replace_layer_in_font_cache(
+                                replace_stored_layer_in_font_cache(
                                     font_cache,
                                     &target.glyph_name,
                                     &target.layer_id,
@@ -5727,7 +6155,7 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                                         )?;
                                     }
                                     for (target, layer_json) in &changed_layer_snapshots {
-                                        replace_layer_in_font_cache(
+                                        replace_stored_layer_in_font_cache(
                                             subset_font,
                                             &target.glyph_name,
                                             &target.layer_id,
@@ -5806,7 +6234,8 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                         }
                     } else {
                         // No canonical cache yet — fall back to full rebuild
-                        let json_value = ydoc_to_babelfont_json_with_txn(&txn);
+                        let json_value = ydoc_to_babelfont_json_with_txn(&txn)
+                            .map_err(|error| JsValue::from_str(&error))?;
                         *canonical_lock = Some(json_value.clone());
                         *CANONICAL_GLYPH_INDEX_CACHE.lock().unwrap() =
                             Some(build_glyph_index(&json_value));
@@ -6277,14 +6706,20 @@ pub fn dump_layer_state_json(layer_targets_json: &str) -> Result<String, JsValue
                         subset_index,
                     )
                 });
-                let ydoc_layer = ydoc_txn
-                    .as_ref()
-                    .and_then(|txn| {
-                        ydoc_get_layer_json_with_txn(&target.glyph_name, &target.layer_id, txn)
-                    })
-                    .map(|incoming| {
-                        materialize_sparse_ydoc_layer_json(incoming, canonical_layer.as_ref())
-                    });
+                // A malformed drawing is reported in the dump, never filled in.
+                let ydoc_layer = ydoc_txn.as_ref().and_then(|txn| {
+                    match ydoc_get_layer_json_with_txn(&target.glyph_name, &target.layer_id, txn)
+                        .and_then(|incoming| {
+                            incoming
+                                .map(|incoming| {
+                                    materialize_ydoc_layer_json(&target.layer_id, incoming)
+                                })
+                                .transpose()
+                        }) {
+                        Ok(layer) => layer,
+                        Err(error) => Some(serde_json::json!({ "ydocError": error })),
+                    }
+                });
                 let font_cache_layer = font_cache
                     .and_then(|font| {
                         font.glyphs
@@ -6382,12 +6817,14 @@ pub fn dump_worker_cache_state_json() -> Result<String, JsValue> {
             .map_err(|_| dump_lock_error("LAYOUT_CLOSURE_CACHE"))?;
 
         let ydoc_txn = ydoc_lock.as_ref().map(|doc| doc.transact());
-        let ydoc_glyphs = ydoc_txn
-            .as_ref()
-            .and_then(|txn| ydoc_get_top_level_json_with_txn("glyphs", txn));
-        let ydoc_features = ydoc_txn
-            .as_ref()
-            .and_then(|txn| ydoc_get_top_level_json_with_txn("features", txn));
+        let ydoc_glyphs = match ydoc_txn.as_ref() {
+            Some(txn) => top_level_json_or_js("glyphs", txn)?,
+            None => None,
+        };
+        let ydoc_features = match ydoc_txn.as_ref() {
+            Some(txn) => top_level_json_or_js("features", txn)?,
+            None => None,
+        };
         let canonical_json = canonical_lock.as_ref();
         let subset_entry = subset_lock.as_ref();
         let subset_json = subset_entry.map(|(_, _, json)| json);
@@ -7785,7 +8222,94 @@ mod tests {
     use serde_json::json;
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::wasm_bindgen_test;
+    use yrs::updates::decoder::Decode;
     use yrs::{Any, ArrayPrelim, Doc, Map, MapPrelim, StateVector, Transact, WriteTxn};
+
+    fn identity_drawing(
+        master: serde_json::Value,
+        is_background: Option<bool>,
+    ) -> serde_json::Value {
+        let mut drawing = json!({ "id": "L0", "width": 500, "master": master });
+        if let Some(flag) = is_background {
+            drawing["is_background"] = json!(flag);
+        }
+        drawing
+    }
+
+    #[test]
+    fn drawing_identity_matches_describe_drawing_station_violation() {
+        let ok = |master: serde_json::Value, bg: Option<bool>| {
+            validate_drawing_identity("L0", &identity_drawing(master, bg)).is_ok()
+        };
+        // FreeFloating is valid with or without a station.
+        assert!(ok(json!({ "type": "FreeFloating" }), None));
+        assert!(ok(json!({ "type": "FreeFloating", "master": "" }), None));
+        for kind in ["DefaultForMaster", "AssociatedWithMaster"] {
+            assert!(ok(json!({ "type": kind, "master": "M0" }), None));
+            // An empty station is valid only for a background drawing.
+            assert!(ok(json!({ "type": kind, "master": "" }), Some(true)));
+            assert!(!ok(json!({ "type": kind, "master": "" }), None));
+            assert!(!ok(json!({ "type": kind, "master": "" }), Some(false)));
+            // The station must be a string, even for a background.
+            assert!(!ok(json!({ "type": kind }), Some(true)));
+            assert!(!ok(json!({ "type": kind, "master": null }), Some(true)));
+            assert!(!ok(json!({ "type": kind, "master": 3 }), Some(true)));
+        }
+        // Only `true` makes a drawing a background.
+        let mut truthy =
+            identity_drawing(json!({ "type": "DefaultForMaster", "master": "" }), None);
+        truthy["is_background"] = json!(1);
+        assert!(validate_drawing_identity("L0", &truthy).is_err());
+        // Unknown or missing types and non-object links are refused.
+        assert!(!ok(json!({ "type": "Other", "master": "M0" }), None));
+        assert!(!ok(json!({ "master": "M0" }), None));
+        assert!(!ok(json!("M0"), None));
+    }
+
+    #[test]
+    fn a_stored_drawing_carries_its_own_background_flag() {
+        // The flag is read from the stored drawing alone, never from a
+        // cached copy: a background link without it is refused.
+        let background = identity_drawing(
+            json!({ "type": "DefaultForMaster", "master": "" }),
+            Some(true),
+        );
+        assert!(materialize_ydoc_layer_json("L0", background).is_ok());
+        let without_flag =
+            identity_drawing(json!({ "type": "DefaultForMaster", "master": "" }), None);
+        assert!(materialize_ydoc_layer_json("L0", without_flag.clone()).is_err());
+        let mut demoted = without_flag;
+        demoted["is_background"] = json!(false);
+        assert!(materialize_ydoc_layer_json("L0", demoted).is_err());
+    }
+
+    #[test]
+    fn partial_drawing_refuses_an_invalid_station_link_or_id() {
+        let check = |delta: serde_json::Value, stored_is_background: bool| {
+            validate_partial_drawing_identity(
+                "L0",
+                delta.as_object().unwrap(),
+                stored_is_background,
+            )
+        };
+        let empty_station = json!({ "master": { "type": "DefaultForMaster", "master": "" } });
+        assert!(check(json!({ "shapes": [] }), false).is_ok());
+        assert!(check(empty_station.clone(), false).is_err());
+        assert!(check(empty_station.clone(), true).is_ok());
+        assert!(check(json!({ "id": null }), false).is_err());
+        assert!(check(json!({ "id": "L1" }), false).is_err());
+        assert!(check(json!({ "id": "L0" }), false).is_ok());
+        let promote = json!({
+            "is_background": true,
+            "master": { "type": "AssociatedWithMaster", "master": "" }
+        });
+        assert!(check(promote, false).is_ok());
+        let demote = json!({
+            "is_background": false,
+            "master": { "type": "DefaultForMaster", "master": "" }
+        });
+        assert!(check(demote, true).is_err());
+    }
 
     #[test]
     fn close_layout_from_fea_closes_seed_lookups_only() {
@@ -7822,6 +8346,42 @@ mod tests {
         let closed: Vec<String> = serde_json::from_str(&json).expect("name array");
         assert!(closed.iter().any(|name| name == "a.alt"));
         assert!(!closed.iter().any(|name| name == "z.alt"));
+    }
+
+    /// Give every drawing of a fixture Y.Doc (recorded before drawings had to
+    /// name their station) the station link every drawing must carry.
+    fn link_test_drawings_to_station(doc: &Doc) {
+        let font_map = doc.get_or_insert_map("font");
+        let mut txn = doc.transact_mut();
+        let Some(yrs::types::Value::YMap(glyphs)) = font_map.get(&txn, "glyphs") else {
+            return;
+        };
+        let mut layers = Vec::new();
+        for (_, glyph) in glyphs.iter(&txn) {
+            let yrs::types::Value::YMap(glyph) = glyph else {
+                continue;
+            };
+            let Some(yrs::types::Value::YMap(glyph_layers)) = glyph.get(&txn, "layers") else {
+                continue;
+            };
+            for (_, layer) in glyph_layers.iter(&txn) {
+                if let yrs::types::Value::YMap(layer) = layer {
+                    if !layer.contains_key(&txn, "master") {
+                        layers.push(layer);
+                    }
+                }
+            }
+        }
+        for layer in layers {
+            insert_test_station_link(&mut txn, &layer);
+        }
+    }
+
+    /// Test drawings carry their station link, as every drawing in the Y.Doc must.
+    fn insert_test_station_link(txn: &mut yrs::TransactionMut, layer: &yrs::MapRef) {
+        let master: yrs::MapRef = layer.insert(txn, "master", MapPrelim::<Any>::new());
+        master.insert(txn, "type", "DefaultForMaster");
+        master.insert(txn, "master", "master-regular");
     }
 
     const TEST_FONT_JSON: &str = r#"{
@@ -7888,7 +8448,10 @@ mod tests {
     #[test]
     fn layout_bucket_ids_match_collab() {
         assert_eq!(layout_bucket("kerning:0", KERNING_DOCUMENT_PREFIX), Some(0));
-        assert_eq!(layout_bucket("kerning:1023", KERNING_DOCUMENT_PREFIX), Some(1023));
+        assert_eq!(
+            layout_bucket("kerning:1023", KERNING_DOCUMENT_PREFIX),
+            Some(1023)
+        );
         assert_eq!(layout_bucket("kerning:1024", KERNING_DOCUMENT_PREFIX), None);
         assert_eq!(layout_bucket("kerning:01", KERNING_DOCUMENT_PREFIX), None);
         assert_eq!(layout_bucket("kerning:", KERNING_DOCUMENT_PREFIX), None);
@@ -7907,15 +8470,17 @@ mod tests {
                 let mut txn = doc.transact_mut();
                 map.insert(&mut txn, format!("m|l|{}", pair), Any::Number(value));
             }
-            let bytes = doc.transact().encode_state_as_update_v1(&StateVector::default());
+            let bytes = doc
+                .transact()
+                .encode_state_as_update_v1(&StateVector::default());
             bytes
         };
         // Bucket 0 is from before a rebase; the layout now names bucket 4.
         seed_ydoc_document("kerning:0", &bucket("A:V", -10.0)).unwrap();
         seed_ydoc_document("kerning:4", &bucket("A:V", -50.0)).unwrap();
-        let current = layout_kerning_by_master(Some(4..5)).unwrap();
+        let current = layout_kerning_by_master(Some(4..5)).unwrap().unwrap();
         assert_eq!(current["m"].0["A:V"], json!(-50));
-        let both = layout_kerning_by_master(None).unwrap();
+        let both = layout_kerning_by_master(None).unwrap().unwrap();
         assert_eq!(both["m"].0.len(), 1);
         reset_ydoc_set();
     }
@@ -7951,18 +8516,24 @@ mod tests {
         seed_ydoc_document("catalog:0", &encode(&Doc::new())).unwrap();
 
         let mut font: serde_json::Value = serde_json::from_str(TEST_FONT_JSON).unwrap();
-        font["masters"][0].as_object_mut().unwrap().remove("kerning");
+        font["masters"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("kerning");
         font.as_object_mut().unwrap().remove("features");
-        merge_layout_documents_into_font_json(&mut font, None);
+        merge_layout_documents_into_font_json(&mut font, None).unwrap();
 
         assert_eq!(font["features"]["classes"]["upper"]["code"], json!("A B"));
         assert_eq!(font["masters"][0]["kerning"], json!({ "A:V": -50 }));
-        assert_eq!(font["masters"][0]["kerning_rtl"], json!({ "@alef:beh": 20 }));
+        assert_eq!(
+            font["masters"][0]["kerning_rtl"],
+            json!({ "@alef:beh": 20 })
+        );
 
         reset_ydoc_set();
         let mut layout_one: serde_json::Value = serde_json::from_str(TEST_FONT_JSON).unwrap();
         let before = layout_one.clone();
-        merge_layout_documents_into_font_json(&mut layout_one, None);
+        merge_layout_documents_into_font_json(&mut layout_one, None).unwrap();
         assert_eq!(layout_one, before, "layout 1 fonts are left alone");
     }
 
@@ -8559,8 +9130,9 @@ mod tests {
             &glyph_index,
             "alef",
             "regular",
-            Some(json!({ "id": "regular", "width": 410, "anchors": [] })),
-        ));
+            Some(json!({ "id": "regular", "width": 410, "master": { "type": "DefaultForMaster", "master": "m" }, "anchors": [] })),
+        )
+        .unwrap());
 
         let layers = font_json["glyphs"][0]["layers"].as_array().unwrap();
         assert_eq!(layers.len(), 2);
@@ -8569,7 +9141,7 @@ mod tests {
     }
 
     #[test]
-    fn replace_layer_json_entry_preserves_missing_fields_for_sparse_layer_patch() {
+    fn replace_layer_json_entry_replaces_the_cached_drawing_whole() {
         let mut font_json = json!({
             "glyphs": [
                 {
@@ -8599,14 +9171,17 @@ mod tests {
             Some(json!({
                 "id": "regular",
                 "width": 410,
+                "master": { "type": "DefaultForMaster", "master": "m" },
                 "shapes": []
             })),
-        ));
+        )
+        .unwrap());
 
         let layer = &font_json["glyphs"][0]["layers"][0];
         assert_eq!(layer["width"], json!(410));
         assert_eq!(layer["shapes"], json!([]));
-        assert_eq!(layer["anchors"][0]["name"], json!("bottom"));
+        // The stored drawing has no anchors, so the cached ones are gone.
+        assert!(layer.get("anchors").is_none());
     }
 
     #[test]
@@ -8634,10 +9209,61 @@ mod tests {
             &glyph_index,
             "alef",
             "regular",
-            Some(json!({ "id": "regular", "anchors": [] })),
-        ));
+            Some(json!({ "id": "regular", "width": 400, "master": { "type": "DefaultForMaster", "master": "m" }, "anchors": [] })),
+        )
+        .unwrap());
 
         assert_eq!(font_json["glyphs"][0]["layers"][0]["anchors"], json!([]));
+    }
+
+    #[test]
+    fn replace_layer_json_entry_refuses_a_drawing_without_its_identity() {
+        let mut font_json = json!({
+            "glyphs": [{
+                "name": "alef",
+                "layers": [{ "id": "regular", "width": 400, "master": { "type": "DefaultForMaster", "master": "m" } }]
+            }]
+        });
+        let glyph_index = build_glyph_index(&font_json);
+        for (incoming, reason) in [
+            (
+                json!({ "id": "regular", "master": { "type": "DefaultForMaster", "master": "m" } }),
+                "missing its width",
+            ),
+            (
+                json!({ "id": "regular", "width": 410, "master": "m" }),
+                "master is not a station link",
+            ),
+            (
+                json!({ "width": 410, "master": { "type": "DefaultForMaster", "master": "m" } }),
+                "missing its id",
+            ),
+            (
+                json!({ "id": "regular", "width": "wide", "master": { "type": "DefaultForMaster", "master": "m" } }),
+                "not a finite number",
+            ),
+        ] {
+            let error = replace_layer_json_entry(
+                &mut font_json,
+                &glyph_index,
+                "alef",
+                "regular",
+                Some(incoming),
+            )
+            .unwrap_err();
+            assert!(error.contains(reason), "{error}");
+        }
+        assert_eq!(font_json["glyphs"][0]["layers"][0]["width"], json!(400));
+        // A drawing without `master` is FreeFloating, Babelfont's encoding.
+        assert!(replace_layer_json_entry(
+            &mut font_json,
+            &glyph_index,
+            "alef",
+            "regular",
+            Some(json!({ "id": "regular", "width": 410 })),
+        )
+        .unwrap());
+        assert_eq!(font_json["glyphs"][0]["layers"][0]["width"], json!(410));
     }
 
     #[test]
@@ -8712,51 +9338,171 @@ mod tests {
     }
 
     #[test]
-    fn reconstruct_indexed_map_array_repeats_items_for_repeated_order_ids() {
+    fn reconstruct_indexed_map_array_reads_a_repeated_order_id_once_at_its_first_place() {
+        // Two collaborators moving the same id at once each insert it anew.
         let mut layer = serde_json::Map::new();
         layer.insert(
             "anchorsById".to_string(),
             json!({ "a": { "id": "a", "x": 1 }, "b": { "id": "b", "x": 2 } }),
         );
-        layer.insert(
-            "anchorOrder".to_string(),
-            json!(["b", "a", "b", "missing", "a"]),
-        );
+        layer.insert("anchorOrder".to_string(), json!(["b", "a", "b", "a"]));
 
-        reconstruct_indexed_map_array(&mut layer, "anchors", "anchorsById", "anchorOrder");
+        reconstruct_indexed_map_array(&mut layer, "anchors", "anchorsById", "anchorOrder").unwrap();
 
         assert_eq!(
             layer.get("anchors"),
-            Some(&json!([
-                { "id": "b", "x": 2 },
-                { "id": "a", "x": 1 },
-                { "id": "b", "x": 2 },
-                { "id": "a", "x": 1 }
-            ]))
+            Some(&json!([{ "id": "b", "x": 2 }, { "id": "a", "x": 1 }]))
         );
         assert!(!layer.contains_key("anchorsById"));
         assert!(!layer.contains_key("anchorOrder"));
     }
 
     #[test]
-    fn reconstruct_indexed_map_array_skips_stale_order_entries() {
+    fn reconstruct_indexed_map_array_skips_an_order_entry_whose_item_was_deleted() {
+        // A collaborator deleted the item while another moved it.
         let mut layer = serde_json::Map::new();
         layer.insert(
             "shapesById".to_string(),
-            json!({
-                "shape-a": { "id": "shape-a" }
-            }),
+            json!({ "shape-a": { "id": "shape-a" } }),
         );
-        layer.insert(
-            "shapeOrder".to_string(),
-            json!(["shape-a", "missing-shape", 42]),
-        );
-
-        reconstruct_indexed_map_array(&mut layer, "shapes", "shapesById", "shapeOrder");
-
+        layer.insert("shapeOrder".to_string(), json!(["deleted-shape", "shape-a"]));
+        reconstruct_indexed_map_array(&mut layer, "shapes", "shapesById", "shapeOrder").unwrap();
         assert_eq!(layer.get("shapes"), Some(&json!([{ "id": "shape-a" }])));
-        assert!(!layer.contains_key("shapesById"));
-        assert!(!layer.contains_key("shapeOrder"));
+    }
+
+    #[test]
+    fn reconstruct_indexed_map_array_refuses_an_order_id_that_is_not_a_string() {
+        let mut layer = serde_json::Map::new();
+        layer.insert(
+            "shapesById".to_string(),
+            json!({ "shape-a": { "id": "shape-a" } }),
+        );
+        layer.insert("shapeOrder".to_string(), json!(["shape-a", 42]));
+        let error =
+            reconstruct_indexed_map_array(&mut layer, "shapes", "shapesById", "shapeOrder")
+                .unwrap_err();
+        assert!(error.contains("not a string"), "{error}");
+    }
+
+    #[test]
+    fn reconstruct_indexed_map_array_refuses_one_half_of_the_pair() {
+        let mut layer = serde_json::Map::new();
+        layer.insert("anchorsById".to_string(), json!({ "a": { "id": "a" } }));
+        assert!(
+            reconstruct_indexed_map_array(&mut layer, "anchors", "anchorsById", "anchorOrder")
+                .is_err()
+        );
+        let mut layer = serde_json::Map::new();
+        layer.insert("guideOrder".to_string(), json!([]));
+        assert!(
+            reconstruct_indexed_map_array(&mut layer, "guides", "guidesById", "guideOrder")
+                .is_err()
+        );
+        let mut layer = serde_json::Map::new();
+        reconstruct_indexed_map_array(&mut layer, "guides", "guidesById", "guideOrder").unwrap();
+        assert!(
+            layer.is_empty(),
+            "a drawing without the pair is left as it is"
+        );
+    }
+
+    #[test]
+    fn reconstruct_indexed_map_array_refuses_an_item_its_order_does_not_list() {
+        let mut layer = serde_json::Map::new();
+        layer.insert(
+            "anchorsById".to_string(),
+            json!({ "a": { "id": "a" }, "b": { "id": "b" } }),
+        );
+        layer.insert("anchorOrder".to_string(), json!(["a"]));
+        let error =
+            reconstruct_indexed_map_array(&mut layer, "anchors", "anchorsById", "anchorOrder")
+                .unwrap_err();
+        assert!(error.contains("anchorsById holds b"), "{error}");
+    }
+
+    #[test]
+    fn stored_features_are_read_in_order_and_refused_when_damaged() {
+        let features = |by_id: serde_json::Value, order: serde_json::Value| {
+            let mut object = serde_json::Map::new();
+            object.insert("featuresById".to_string(), by_id);
+            object.insert("featureOrder".to_string(), order);
+            object
+        };
+        let mut whole = features(
+            json!({
+                "f1": { "tag": "liga", "code": "sub f i by fi;" },
+                "f2": { "tag": "kern", "code": "" }
+            }),
+            json!(["f2", "f1"]),
+        );
+        reconstruct_features_indexed_map(&mut whole).unwrap();
+        assert_eq!(
+            whole["features"],
+            json!([["kern", ""], ["liga", "sub f i by fi;"]])
+        );
+        assert!(whole.get("featuresById").is_none());
+
+        let refused = |mut object: serde_json::Map<String, serde_json::Value>, expected: &str| {
+            let error = reconstruct_features_indexed_map(&mut object).unwrap_err();
+            assert!(error.contains(expected), "{error}");
+        };
+        refused(
+            features(json!({ "f1": { "code": "" } }), json!(["f1"])),
+            "featuresById.f1 has no tag",
+        );
+        refused(
+            features(json!({ "f1": { "tag": "liga" } }), json!(["f1"])),
+            "featuresById.f1 has no code",
+        );
+        // A feature deleted while a collaborator moved it is skipped, and a
+        // feature two collaborators moved at once is read once.
+        let mut concurrent = features(
+            json!({
+                "f1": { "tag": "liga", "code": "sub f i by fi;" },
+                "f2": { "tag": "kern", "code": "" }
+            }),
+            json!(["f9", "f2", "f1", "f2", "f9"]),
+        );
+        reconstruct_features_indexed_map(&mut concurrent).unwrap();
+        assert_eq!(
+            concurrent["features"],
+            json!([["kern", ""], ["liga", "sub f i by fi;"]])
+        );
+        refused(
+            features(json!({ "f1": { "tag": "liga", "code": "" } }), json!(["f1", 7])),
+            "featureOrder holds an id that is not a string",
+        );
+        refused(
+            features(
+                json!({ "f1": { "tag": "liga", "code": "" }, "f2": { "tag": "kern", "code": "" } }),
+                json!(["f1"]),
+            ),
+            "featuresById holds f2",
+        );
+        let mut half = serde_json::Map::new();
+        half.insert("featureOrder".to_string(), json!([]));
+        refused(half, "featureOrder is stored without featuresById");
+    }
+
+    #[test]
+    fn a_damaged_feature_list_in_the_ydoc_is_refused_by_every_reader() {
+        let doc = Doc::new();
+        {
+            let font_map = doc.get_or_insert_map("font");
+            let mut txn = doc.transact_mut();
+            let features: yrs::MapRef =
+                font_map.insert(&mut txn, "features", MapPrelim::<Any>::new());
+            features.insert(&mut txn, "classes", MapPrelim::<Any>::new());
+            let by_id: yrs::MapRef =
+                features.insert(&mut txn, "featuresById", MapPrelim::<Any>::new());
+            let liga: yrs::MapRef = by_id.insert(&mut txn, "f1", MapPrelim::<Any>::new());
+            liga.insert(&mut txn, "code", "sub f i by fi;");
+            features.insert(&mut txn, "featureOrder", ArrayPrelim::from(vec![Any::from("f1")]));
+        }
+        let txn = doc.transact();
+        let error = ydoc_get_top_level_json_with_txn("features", &txn).unwrap_err();
+        assert!(error.contains("has no tag"), "{error}");
+        assert!(ydoc_to_babelfont_json_with_txn(&txn).is_err());
     }
 
     #[test]
@@ -8834,8 +9580,14 @@ mod tests {
             .has_errors()
         };
         let variation = "conditionset heavy {\n wght 500 650;\n} heavy;\nvariation rvrn heavy {\n sub a by a.VAR.1;\n} rvrn;\n";
-        assert!(!validate(variation), "a variation on the font's axis validates");
-        assert!(validate(&variation.replace("wght 500", "wdth 500")), "an unknown axis does not");
+        assert!(
+            !validate(variation),
+            "a variation on the font's axis validates"
+        );
+        assert!(
+            validate(&variation.replace("wght 500", "wdth 500")),
+            "an unknown axis does not"
+        );
     }
 
     #[test]
@@ -8872,9 +9624,13 @@ mod tests {
         let source = Doc::new();
         let glyph_map = source.get_or_insert_map("glyph");
         let id = "name-index-test-glyph";
+        GLYPH_DOCS
+            .lock()
+            .unwrap()
+            .insert(id.to_string(), Doc::new());
         let send = |before: &yrs::StateVector| {
             let update = source.transact().encode_state_as_update_v1(before);
-            apply_update_to_glyph_doc(id, yrs::Update::decode_v1(&update).unwrap()).unwrap();
+            apply_update_to_glyph_doc(id, &update).unwrap();
         };
         let names = || {
             let mut out: Vec<String> = GLYPH_ID_BY_NAME
@@ -8911,7 +9667,9 @@ mod tests {
         }
         send(&before);
         assert!(names().is_empty());
-        assert!(ydoc_glyph_json_from_shards("name-index.renamed").is_none());
+        assert!(ydoc_glyph_json_from_shards("name-index.renamed")
+            .unwrap()
+            .is_none());
         GLYPH_DOCS.lock().unwrap().remove(id);
     }
 
@@ -8938,7 +9696,7 @@ mod tests {
             );
         }
 
-        let json = ydoc_to_babelfont_json_with_txn(&doc.transact());
+        let json = ydoc_to_babelfont_json_with_txn(&doc.transact()).unwrap();
         assert_eq!(
             json["features"]["features"],
             json!([["liga", { "code": "sub f i by fi;" }]])
@@ -8960,7 +9718,7 @@ mod tests {
             a.insert(&mut txn, "A", true);
         }
 
-        let json = ydoc_to_babelfont_json_with_txn(&doc.transact());
+        let json = ydoc_to_babelfont_json_with_txn(&doc.transact()).unwrap();
         assert_eq!(json["first_kern_groups"]["A"], json!(["A", "B"]));
     }
 
@@ -8977,7 +9735,9 @@ mod tests {
             group.insert(&mut txn, "a-lat", true);
         }
 
-        let json = ydoc_get_top_level_json_with_txn("first_kern_groups", &doc.transact()).unwrap();
+        let json = ydoc_get_top_level_json_with_txn("first_kern_groups", &doc.transact())
+            .unwrap()
+            .unwrap();
         assert_eq!(json["a-lat"], json!(["a-lat", "aDiaeresis-lat"]));
     }
 
@@ -9016,66 +9776,113 @@ mod tests {
     }
 
     #[test]
-    fn sparse_packed_positions_merge_keeps_cached_width_and_shapes() {
-        let existing = json!({
-            "id": "L0",
-            "width": 500.0,
-            "shapes": [{
-                "id": "p1",
-                "closed": true,
-                "nodes": [{
-                    "id": "n1",
-                    "x": 0.0,
-                    "y": 0.0,
-                    "nodetype": "Line"
-                }]
-            }]
-        });
-        let incoming = json!({
-            "id": "L0",
-            "nodePositionsById": { "n1": "10 20" }
-        });
-        let mut merged = merge_sparse_layer_json(&existing, incoming);
-        apply_packed_node_positions_to_layer_json(&mut merged).unwrap();
-        assert_eq!(merged["width"], json!(500.0));
-        assert_eq!(merged["shapes"][0]["nodes"][0]["x"], json!(10.0));
-        assert_eq!(merged["shapes"][0]["nodes"][0]["y"], json!(20.0));
-        assert!(merged.get("nodePositionsById").is_none());
-        assert!(merged.get("shapes").is_some());
+    fn reconstruct_normalized_layer_geometry_refuses_a_shape_without_its_data() {
+        let topology = json!({
+            "v": 1,
+            "g": 0,
+            "shapes": [{ "id": "path-1", "k": "P", "c": true, "n": ["n1"], "t": ["Line"], "s": [false] }]
+        })
+        .to_string();
+        for (shape_data, expected) in [
+            (Some(json!({})), "Missing data for shape path-1"),
+            // Without the whole map the drawing lost it: never read as empty.
+            (None, "geometryTopology is stored without shapeDataById"),
+        ] {
+            let mut layer = serde_json::Map::new();
+            layer.insert("geometryTopology".to_string(), json!(topology));
+            layer.insert("nodePositionsById".to_string(), json!({ "n1": "10 20" }));
+            if let Some(shape_data) = shape_data {
+                layer.insert("shapeDataById".to_string(), shape_data);
+            }
+            let error = reconstruct_normalized_layer_geometry(&mut layer).unwrap_err();
+            assert!(error.contains(expected), "{error}");
+            assert!(
+                layer.contains_key("geometryTopology"),
+                "a refused drawing is left unchanged"
+            );
+        }
     }
 
     #[test]
-    fn sparse_identity_ydoc_layer_keeps_cached_outlines() {
-        let existing = json!({
+    fn a_stored_drawing_is_read_whole_and_never_completed_from_the_cache() {
+        let stored = |extra: serde_json::Value| {
+            let mut layer = json!({
+                "id": "L0",
+                "width": 530.0,
+                "master": { "type": "DefaultForMaster", "master": "M0" }
+            });
+            layer
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            layer
+        };
+        // A drawing stored without outlines has none.
+        let identity_only = materialize_ydoc_layer_json("L0", stored(json!({}))).unwrap();
+        assert!(identity_only.get("shapes").is_none());
+        assert!(identity_only.get("location").is_none());
+
+        // Packed positions are applied to the stored outline itself.
+        let positioned = materialize_ydoc_layer_json(
+            "L0",
+            stored(json!({
+                "shapes": [{
+                    "closed": true,
+                    "nodes": [{ "id": "n1", "x": 0.0, "y": 0.0, "nodetype": "Line" }]
+                }],
+                "nodePositionsById": { "n1": "10 20" }
+            })),
+        )
+        .unwrap();
+        assert_eq!(positioned["shapes"][0]["nodes"][0]["x"], json!(10.0));
+        assert_eq!(positioned["shapes"][0]["nodes"][0]["y"], json!(20.0));
+        assert!(positioned.get("nodePositionsById").is_none());
+
+        // The identity is required.
+        let error =
+            materialize_ydoc_layer_json("L0", json!({ "id": "L0", "anchors": [] })).unwrap_err();
+        assert!(error.contains("missing its width"), "{error}");
+    }
+
+    #[test]
+    fn a_location_removed_in_the_ydoc_leaves_every_cache() {
+        let cached = json!({
             "id": "L0",
-            "width": 520.0,
-            "master": { "type": "DefaultForMaster", "master": "M0" },
-            "guides": [],
+            "width": 500.0,
+            "master": { "type": "FreeFloating" },
+            "location": { "wght": 700.0 },
             "shapes": [{
-                "id": "p1",
                 "closed": true,
-                "nodes": [{
-                    "id": "n1",
-                    "x": 90.0,
-                    "y": 0.0,
-                    "nodetype": "Line"
-                }]
+                "nodes": [{ "x": 90.0, "y": 0.0, "nodetype": "Line" }]
             }]
         });
-        let incoming = json!({
-            "anchors": [],
-            "id": "L0"
+        let stored = json!({
+            "id": "L0",
+            "width": 510.0,
+            "master": { "type": "DefaultForMaster", "master": "M0" }
         });
-        let materialized = materialize_sparse_ydoc_layer_json(incoming, Some(&existing));
-        assert_eq!(materialized["width"], json!(520.0));
-        assert_eq!(materialized["shapes"][0]["nodes"][0]["x"], json!(90.0));
-        assert_eq!(materialized["anchors"], json!([]));
 
-        let cleared = materialize_sparse_ydoc_layer_json(
-            json!({ "id": "L0", "shapes": [] }),
-            Some(&existing),
+        let mut font_json = json!({ "glyphs": [{ "name": "A", "layers": [cached.clone()] }] });
+        let index = HashMap::from([("A".to_string(), 0usize)]);
+        assert!(
+            replace_layer_json_entry(&mut font_json, &index, "A", "L0", Some(stored.clone()))
+                .unwrap()
         );
-        assert_eq!(cleared["shapes"], json!([]));
+        let layer = &font_json["glyphs"][0]["layers"][0];
+        assert_eq!(layer, &stored);
+
+        let mut test_font: serde_json::Value = serde_json::from_str(TEST_FONT_JSON).unwrap();
+        test_font["glyphs"][0]["layers"] = json!([cached]);
+        let mut font: babelfont::Font = serde_json::from_value(test_font).unwrap();
+        let glyph_name = font.glyphs[0].name.to_string();
+        assert!(
+            replace_stored_layer_in_font_cache(&mut font, &glyph_name, "L0", Some(&stored)).unwrap()
+        );
+        let layer = &font.glyphs[0].layers[0];
+        assert!(layer.location.is_none());
+        assert!(layer.shapes.is_empty());
+        assert_eq!(layer.width, 510.0);
+        assert!(matches!(&layer.master, babelfont::LayerType::DefaultForMaster(id) if id == "M0"));
     }
 
     #[test]
@@ -9094,7 +9901,7 @@ mod tests {
             "nodePositionsById".to_string(),
             json!({ "node-golden": golden["packedXY"] }),
         );
-        layer.insert("shapeDataById".to_string(), json!({}));
+        layer.insert("shapeDataById".to_string(), json!({ "shape-golden": {} }));
 
         reconstruct_normalized_layer_geometry(&mut layer).unwrap();
         let node = layer
@@ -9117,6 +9924,7 @@ mod tests {
                 serde_json::Value::String(topology.to_string()),
             ),
             ("nodePositionsById".to_string(), json!({ "n1": "NaN 1" })),
+            ("shapeDataById".to_string(), json!({ "path-1": {} })),
         ]);
         assert!(reconstruct_normalized_layer_geometry(&mut non_finite)
             .unwrap_err()
@@ -9131,6 +9939,7 @@ mod tests {
                 ),
             ),
             ("nodePositionsById".to_string(), json!({ "n1": "1 2" })),
+            ("shapeDataById".to_string(), json!({ "path-1": {} })),
         ]);
         assert!(
             reconstruct_normalized_layer_geometry(&mut wrong_smooth_length)
@@ -9138,12 +9947,16 @@ mod tests {
                 .contains("smooth-flag length mismatch")
         );
 
-        let mut missing_closed = serde_json::Map::from_iter([(
-            "geometryTopology".to_string(),
-            serde_json::Value::String(
-                r#"{"v":1,"g":0,"shapes":[{"id":"path-1","k":"P","n":[],"t":[]}]}"#.to_string(),
+        let mut missing_closed = serde_json::Map::from_iter([
+            (
+                "geometryTopology".to_string(),
+                serde_json::Value::String(
+                    r#"{"v":1,"g":0,"shapes":[{"id":"path-1","k":"P","n":[],"t":[]}]}"#.to_string(),
+                ),
             ),
-        )]);
+            ("nodePositionsById".to_string(), json!({})),
+            ("shapeDataById".to_string(), json!({ "path-1": {} })),
+        ]);
         assert!(reconstruct_normalized_layer_geometry(&mut missing_closed)
             .unwrap_err()
             .contains("closed flag"));
@@ -9158,12 +9971,16 @@ mod tests {
                 .contains("generation")
         );
 
-        let mut invalid_component = serde_json::Map::from_iter([(
-            "geometryTopology".to_string(),
-            serde_json::Value::String(
-                r#"{"v":1,"g":0,"shapes":[{"id":"component","k":"C"}]}"#.to_string(),
+        let mut invalid_component = serde_json::Map::from_iter([
+            (
+                "geometryTopology".to_string(),
+                serde_json::Value::String(
+                    r#"{"v":1,"g":0,"shapes":[{"id":"component","k":"C"}]}"#.to_string(),
+                ),
             ),
-        )]);
+            ("nodePositionsById".to_string(), json!({})),
+            ("shapeDataById".to_string(), json!({ "component": {} })),
+        ]);
         assert!(
             reconstruct_normalized_layer_geometry(&mut invalid_component)
                 .unwrap_err()
@@ -9174,10 +9991,11 @@ mod tests {
             (
                 "geometryTopology".to_string(),
                 serde_json::Value::String(
-                    r#"{"v":1,"g":0,"shapes":[{"id":"path-1","k":"P","c":true,"n":["n1"],"t":["Bogus"]}]}"#.to_string(),
+                    r#"{"v":1,"g":0,"shapes":[{"id":"path-1","k":"P","c":true,"n":["n1"],"t":["Bogus"],"s":[false]}]}"#.to_string(),
                 ),
             ),
             ("nodePositionsById".to_string(), json!({ "n1": "1 2" })),
+            ("shapeDataById".to_string(), json!({ "path-1": {} })),
         ]);
         assert!(
             reconstruct_normalized_layer_geometry(&mut invalid_node_type)
@@ -9187,7 +10005,7 @@ mod tests {
     }
 
     #[test]
-    fn ydoc_layer_to_json_reports_geometry_error_without_shapes() {
+    fn ydoc_layer_to_json_refuses_a_failed_geometry_reconstruction() {
         let doc = yrs::Doc::new();
         let mut txn = doc.transact_mut();
         let root = txn.get_or_insert_map("root");
@@ -9203,17 +10021,203 @@ mod tests {
                     "k": "P",
                     "c": true,
                     "n": ["missing"],
-                    "t": ["Line"]
+                    "t": ["Line"],
+                    "s": [false]
                 }]
             })
             .to_string(),
         );
         layer.insert(&mut txn, "nodePositionsById", MapPrelim::<Any>::new());
+        let shape_data: yrs::MapRef =
+            layer.insert(&mut txn, "shapeDataById", MapPrelim::<Any>::new());
+        shape_data.insert(&mut txn, "path-1", MapPrelim::<Any>::new());
         let layer_value = root.get(&txn, "layer").unwrap();
-        let layer_json = ydoc_layer_to_json("layer-1", layer_value, &txn);
-        assert!(layer_json.get("geometryError").is_some());
-        assert!(layer_json.get("shapes").is_none());
-        assert!(layer_json_failed_geometry_reconstruction(&layer_json));
+        let error = ydoc_layer_to_json("layer-1", layer_value, &txn).unwrap_err();
+        assert!(error.contains("Missing position"), "{error}");
+    }
+
+    #[test]
+    fn ydoc_layer_to_json_refuses_a_drawing_without_its_identity() {
+        let doc = yrs::Doc::new();
+        let mut txn = doc.transact_mut();
+        let root = txn.get_or_insert_map("root");
+        let layer: yrs::MapRef = root.insert(&mut txn, "layer-1", MapPrelim::<Any>::new());
+        layer.insert(&mut txn, "id", "layer-1");
+        let master: yrs::MapRef = layer.insert(&mut txn, "master", MapPrelim::<Any>::new());
+        master.insert(&mut txn, "type", "DefaultForMaster");
+        master.insert(&mut txn, "master", "m");
+        let missing_width =
+            ydoc_layer_to_json("layer-1", root.get(&txn, "layer-1").unwrap(), &txn).unwrap_err();
+        assert!(
+            missing_width.contains("missing its width"),
+            "{missing_width}"
+        );
+
+        layer.insert(&mut txn, "width", 500.0);
+        layer.remove(&mut txn, "id");
+        // The id is never filled in from the map key.
+        let missing_id =
+            ydoc_layer_to_json("layer-1", root.get(&txn, "layer-1").unwrap(), &txn).unwrap_err();
+        assert!(missing_id.contains("missing its id"), "{missing_id}");
+
+        layer.insert(&mut txn, "id", "layer-1");
+        layer.remove(&mut txn, "master");
+        // An absent master is Babelfont's encoding of FreeFloating (drawings
+        // stored before every writer named it), so the drawing reads.
+        let free =
+            ydoc_layer_to_json("layer-1", root.get(&txn, "layer-1").unwrap(), &txn).unwrap();
+        assert!(free.get("master").is_none(), "{free}");
+        let layer_from_json: babelfont::Layer = serde_json::from_value(free).unwrap();
+        assert!(matches!(layer_from_json.master, babelfont::LayerType::FreeFloating));
+
+        // A master that is present but malformed is refused.
+        layer.insert(&mut txn, "master", "m");
+        let malformed =
+            ydoc_layer_to_json("layer-1", root.get(&txn, "layer-1").unwrap(), &txn).unwrap_err();
+        assert!(malformed.contains("not a station link"), "{malformed}");
+    }
+
+    fn path_topology(shape: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+        serde_json::Map::from_iter([
+            (
+                "geometryTopology".to_string(),
+                serde_json::Value::String(json!({ "v": 1, "g": 0, "shapes": [shape] }).to_string()),
+            ),
+            ("nodePositionsById".to_string(), json!({ "n1": "1 2", "n2": "3 4" })),
+            ("shapeDataById".to_string(), json!({ "path-1": {} })),
+        ])
+    }
+
+    #[test]
+    fn reconstruct_normalized_layer_geometry_refuses_a_topology_without_its_position_map() {
+        let mut layer = path_topology(
+            json!({ "id": "path-1", "k": "P", "c": true, "n": ["n1"], "t": ["Line"], "s": [false] }),
+        );
+        layer.remove("nodePositionsById");
+        let error = reconstruct_normalized_layer_geometry(&mut layer).unwrap_err();
+        assert!(error.contains("without nodePositionsById"), "{error}");
+        // A drawing without shapes still has both maps; without them it is
+        // refused as well, never read as empty.
+        let mut empty = serde_json::Map::from_iter([(
+            "geometryTopology".to_string(),
+            serde_json::Value::String(r#"{"v":1,"g":0,"shapes":[]}"#.to_string()),
+        )]);
+        let error = reconstruct_normalized_layer_geometry(&mut empty).unwrap_err();
+        assert!(error.contains("without nodePositionsById"), "{error}");
+        empty.insert("nodePositionsById".to_string(), json!({}));
+        empty.insert("shapeDataById".to_string(), json!({}));
+        reconstruct_normalized_layer_geometry(&mut empty).unwrap();
+        assert_eq!(empty["shapes"], json!([]));
+    }
+
+    #[test]
+    fn reconstruct_normalized_layer_geometry_refuses_a_path_without_smooth_flags() {
+        let mut layer = path_topology(
+            json!({ "id": "path-1", "k": "P", "c": true, "n": ["n1"], "t": ["Line"] }),
+        );
+        let error = reconstruct_normalized_layer_geometry(&mut layer).unwrap_err();
+        assert!(error.contains("missing smooth flags"), "{error}");
+        assert!(layer.contains_key("geometryTopology"), "a refused drawing is left unchanged");
+    }
+
+    #[test]
+    fn reconstruct_normalized_layer_geometry_reads_each_stored_smooth_flag() {
+        let mut layer = path_topology(json!({
+            "id": "path-1", "k": "P", "c": false,
+            "n": ["n1", "n2"], "t": ["Curve", "Line"], "s": [true, false]
+        }));
+        reconstruct_normalized_layer_geometry(&mut layer).unwrap();
+        let nodes = layer["shapes"][0]["nodes"].as_array().unwrap();
+        assert_eq!(nodes[0]["smooth"], json!(true));
+        assert_eq!(nodes[1]["smooth"], json!(false));
+        assert_eq!(layer["shapes"][0]["closed"], json!(false));
+    }
+
+    #[test]
+    fn reconstruct_normalized_layer_geometry_refuses_a_shape_without_its_kind() {
+        let mut layer = path_topology(json!({ "id": "path-1", "c": true, "n": [], "t": [], "s": [] }));
+        let error = reconstruct_normalized_layer_geometry(&mut layer).unwrap_err();
+        assert!(error.contains("missing its kind"), "{error}");
+    }
+
+    #[test]
+    fn ydoc_layer_to_json_refuses_an_anchor_whose_id_is_not_its_key() {
+        let doc = yrs::Doc::new();
+        let mut txn = doc.transact_mut();
+        let root = txn.get_or_insert_map("root");
+        let layer: yrs::MapRef = root.insert(&mut txn, "layer-1", MapPrelim::<Any>::new());
+        layer.insert(&mut txn, "id", "layer-1");
+        layer.insert(&mut txn, "width", 500.0);
+        let master: yrs::MapRef = layer.insert(&mut txn, "master", MapPrelim::<Any>::new());
+        master.insert(&mut txn, "type", "DefaultForMaster");
+        master.insert(&mut txn, "master", "m");
+        let by_id: yrs::MapRef = layer.insert(&mut txn, "anchorsById", MapPrelim::<Any>::new());
+        let order: yrs::ArrayRef =
+            layer.insert(&mut txn, "anchorOrder", ArrayPrelim::from(vec![Any::from("a-top")]));
+        let _ = order;
+        let anchor: yrs::MapRef = by_id.insert(&mut txn, "a-top", MapPrelim::<Any>::new());
+        anchor.insert(&mut txn, "name", "top");
+        anchor.insert(&mut txn, "x", 10.0);
+        anchor.insert(&mut txn, "y", 700.0);
+        let read = |txn: &yrs::TransactionMut| {
+            ydoc_layer_to_json("layer-1", root.get(txn, "layer-1").unwrap(), txn)
+        };
+        let error = read(&txn).unwrap_err();
+        assert!(error.contains("anchorsById.a-top has no id"), "{error}");
+        anchor.insert(&mut txn, "id", "a-other");
+        let error = read(&txn).unwrap_err();
+        assert!(error.contains("anchorsById.a-top has the id a-other"), "{error}");
+        anchor.insert(&mut txn, "id", "a-top");
+        let drawing = read(&txn).unwrap();
+        assert_eq!(drawing["anchors"][0]["id"], json!("a-top"));
+        assert_eq!(drawing["anchors"][0]["name"], json!("top"));
+    }
+
+    fn identity_only_ydoc_drawing(
+        txn: &mut yrs::TransactionMut,
+        root: &yrs::MapRef,
+    ) -> yrs::MapRef {
+        let layer: yrs::MapRef = root.insert(txn, "layer-1", MapPrelim::<Any>::new());
+        layer.insert(txn, "id", "layer-1");
+        layer.insert(txn, "width", 500.0);
+        let master: yrs::MapRef = layer.insert(txn, "master", MapPrelim::<Any>::new());
+        master.insert(txn, "type", "DefaultForMaster");
+        master.insert(txn, "master", "m");
+        layer
+    }
+
+    #[test]
+    fn ydoc_layer_to_json_refuses_geometry_maps_without_their_topology() {
+        for key in ["nodePositionsById", "shapeDataById"] {
+            let doc = yrs::Doc::new();
+            let mut txn = doc.transact_mut();
+            let root = txn.get_or_insert_map("root");
+            let layer = identity_only_ydoc_drawing(&mut txn, &root);
+            let _map: yrs::MapRef = layer.insert(&mut txn, key, MapPrelim::<Any>::new());
+            let error = ydoc_layer_to_json("layer-1", root.get(&txn, "layer-1").unwrap(), &txn)
+                .unwrap_err();
+            assert!(error.contains(&format!("{key} is stored without geometryTopology")), "{error}");
+        }
+    }
+
+    #[test]
+    fn ydoc_layer_to_json_refuses_a_path_without_its_closed_flag() {
+        let doc = yrs::Doc::new();
+        let mut txn = doc.transact_mut();
+        let root = txn.get_or_insert_map("root");
+        let layer = identity_only_ydoc_drawing(&mut txn, &root);
+        let shapes: yrs::ArrayRef = layer.insert(&mut txn, "shapes", ArrayPrelim::default());
+        let path: yrs::MapRef = shapes.push_back(&mut txn, MapPrelim::<Any>::new());
+        path.insert(&mut txn, "id", "p1");
+        let _nodes: yrs::ArrayRef = path.insert(&mut txn, "nodes", ArrayPrelim::default());
+        let read = |txn: &yrs::TransactionMut| {
+            ydoc_layer_to_json("layer-1", root.get(txn, "layer-1").unwrap(), txn)
+        };
+        let error = read(&txn).unwrap_err();
+        assert!(error.contains("path p1 is stored without its closed flag"), "{error}");
+        path.insert(&mut txn, "closed", true);
+        let drawing = read(&txn).unwrap();
+        assert_eq!(drawing["shapes"][0]["closed"], json!(true));
     }
 
     #[test]
@@ -9230,13 +10234,15 @@ mod tests {
                         "k": "P",
                         "c": true,
                         "n": ["missing"],
-                        "t": ["Line"]
+                        "t": ["Line"],
+                        "s": [false]
                     }]
                 })
                 .to_string(),
             ),
         );
         layer.insert("nodePositionsById".to_string(), json!({}));
+        layer.insert("shapeDataById".to_string(), json!({ "path-1": {} }));
         let err = reconstruct_normalized_layer_geometry(&mut layer).unwrap_err();
         assert!(err.contains("Missing position"));
     }
@@ -9247,6 +10253,10 @@ mod tests {
         let mut txn = doc.transact_mut();
         let root = txn.get_or_insert_map("root");
         let layer: yrs::MapRef = root.insert(&mut txn, "layer", MapPrelim::<Any>::new());
+        layer.insert(&mut txn, "id", "layer-1");
+        layer.insert(&mut txn, "width", 500.0);
+        let master: yrs::MapRef = layer.insert(&mut txn, "master", MapPrelim::<Any>::new());
+        master.insert(&mut txn, "type", "FreeFloating");
         let shapes = layer.insert(&mut txn, "shapes", ArrayPrelim::from(Vec::<Any>::new()));
         let current_shape: yrs::MapRef = shapes.push_back(&mut txn, MapPrelim::<Any>::new());
         current_shape.insert(&mut txn, "id", "current");
@@ -9262,7 +10272,7 @@ mod tests {
         shape_order.push_back(&mut txn, "stale");
 
         let layer_value = root.get(&txn, "layer").unwrap();
-        let layer_json = ydoc_layer_to_json("layer-1", layer_value, &txn);
+        let layer_json = ydoc_layer_to_json("layer-1", layer_value, &txn).unwrap();
 
         assert_eq!(
             layer_json.get("shapes"),
@@ -9620,6 +10630,7 @@ mod tests {
             let mut txn = worker_doc.transact_mut();
             txn.apply_update(update);
         }
+        link_test_drawings_to_station(&worker_doc);
         *Y_DOC.lock().unwrap() = Some(worker_doc);
 
         apply_yjs_update(
@@ -9701,6 +10712,7 @@ mod tests {
             let mut txn = worker_doc.transact_mut();
             txn.apply_update(update);
         }
+        link_test_drawings_to_station(&worker_doc);
         *Y_DOC.lock().unwrap() = Some(worker_doc);
 
         apply_yjs_update(
@@ -9854,6 +10866,7 @@ mod tests {
             let mut txn = worker_doc.transact_mut();
             txn.apply_update(update);
         }
+        link_test_drawings_to_station(&worker_doc);
         *Y_DOC.lock().unwrap() = Some(worker_doc);
 
         let result = apply_yjs_update(
@@ -9973,6 +10986,7 @@ mod tests {
             let mut txn = worker_doc.transact_mut();
             txn.apply_update(update);
         }
+        link_test_drawings_to_station(&worker_doc);
         *Y_DOC.lock().unwrap() = Some(worker_doc);
 
         // Dependent composite path is present in metadata but absent from the
@@ -10039,6 +11053,7 @@ mod tests {
                 glyph_map.insert(&mut txn, "layers", MapPrelim::<Any>::new());
             layer_map = layers_map.insert(&mut txn, "layer-1", MapPrelim::<Any>::new());
             layer_map.insert(&mut txn, "id", "layer-1");
+            insert_test_station_link(&mut txn, &layer_map);
             layer_map.insert(&mut txn, "width", Any::Number(600.0));
             layer_map.insert(&mut txn, "shapes", ArrayPrelim::from(Vec::<Any>::new()));
             layer_map.insert(&mut txn, "anchors", ArrayPrelim::from(Vec::<Any>::new()));
@@ -10060,6 +11075,7 @@ mod tests {
             let mut txn = worker_doc.transact_mut();
             txn.apply_update(update);
         }
+        link_test_drawings_to_station(&worker_doc);
         *Y_DOC.lock().unwrap() = Some(worker_doc);
 
         let filter_epoch_before = FILTER_EPOCH.load(Ordering::Relaxed);
@@ -10147,6 +11163,7 @@ mod tests {
             let layers_a: yrs::MapRef = glyph_a.insert(&mut txn, "layers", MapPrelim::<Any>::new());
             layer_a = layers_a.insert(&mut txn, "layer-1", MapPrelim::<Any>::new());
             layer_a.insert(&mut txn, "id", "layer-1");
+            insert_test_station_link(&mut txn, &layer_a);
             layer_a.insert(&mut txn, "width", Any::Number(600.0));
             layer_a.insert(&mut txn, "shapes", ArrayPrelim::from(Vec::<Any>::new()));
             layer_a.insert(&mut txn, "anchors", ArrayPrelim::from(Vec::<Any>::new()));
@@ -10157,6 +11174,7 @@ mod tests {
                 glyph_b_map.insert(&mut txn, "layers", MapPrelim::<Any>::new());
             layer_b = layers_b.insert(&mut txn, "layer-1", MapPrelim::<Any>::new());
             layer_b.insert(&mut txn, "id", "layer-1");
+            insert_test_station_link(&mut txn, &layer_b);
             layer_b.insert(&mut txn, "width", Any::Number(620.0));
             layer_b.insert(&mut txn, "shapes", ArrayPrelim::from(Vec::<Any>::new()));
             layer_b.insert(&mut txn, "anchors", ArrayPrelim::from(Vec::<Any>::new()));
@@ -10179,6 +11197,7 @@ mod tests {
             let mut txn = worker_doc.transact_mut();
             txn.apply_update(update);
         }
+        link_test_drawings_to_station(&worker_doc);
         *Y_DOC.lock().unwrap() = Some(worker_doc);
 
         apply_yjs_update(
@@ -10204,6 +11223,7 @@ mod tests {
             let ydoc = Y_DOC.lock().unwrap();
             let txn = ydoc.as_ref().unwrap().transact();
             let ydoc_b = ydoc_get_layer_json_with_txn("B", "layer-1", &txn)
+                .unwrap()
                 .expect("Y.Doc should contain the unlisted B layer after apply");
             assert_eq!(
                 ydoc_b["width"].as_f64().unwrap(),
@@ -10282,6 +11302,7 @@ mod tests {
                 glyph_map.insert(&mut txn, "layers", MapPrelim::<Any>::new());
             layer_map = layers_map.insert(&mut txn, "layer-1", MapPrelim::<Any>::new());
             layer_map.insert(&mut txn, "id", "layer-1");
+            insert_test_station_link(&mut txn, &layer_map);
             layer_map.insert(&mut txn, "width", Any::Number(600.0));
             layer_map.insert(&mut txn, "shapes", ArrayPrelim::from(Vec::<Any>::new()));
             layer_map.insert(&mut txn, "anchors", ArrayPrelim::from(Vec::<Any>::new()));
@@ -10303,6 +11324,7 @@ mod tests {
             let mut txn = worker_doc.transact_mut();
             txn.apply_update(update);
         }
+        link_test_drawings_to_station(&worker_doc);
         *Y_DOC.lock().unwrap() = Some(worker_doc);
 
         #[cfg(target_arch = "wasm32")]
@@ -10331,18 +11353,15 @@ mod tests {
                 let update = yrs::Update::decode_v1(incremental_update.as_slice()).unwrap();
                 doc.transact_mut().apply_update(update);
             }
-            let layer_json = {
+            // The read of the malformed drawing is refused, so neither the
+            // strict nor the tolerant cache path ever sees it.
+            let read = {
                 let ydoc = Y_DOC.lock().unwrap();
                 let txn = ydoc.as_ref().unwrap().transact();
                 ydoc_get_layer_json_with_txn("A", "layer-1", &txn)
-                    .expect("packet-affected layer snapshot must exist")
             };
-            let validation = validate_layer_json_for_native_cache("A", "layer-1", &layer_json);
-            assert!(
-                validation.is_err(),
-                "packet-affected invalid layer JSON must fail native-cache validation: {:?}",
-                validation
-            );
+            let error = read.expect_err("a drawing with a non-number width must be refused");
+            assert!(error.contains("not a finite number"), "{error}");
             *Y_DOC.lock().unwrap() = None;
             clear_font_cache();
         }
@@ -10391,6 +11410,7 @@ mod tests {
                 glyph_map.insert(&mut txn, "layers", MapPrelim::<Any>::new());
             layer_map = layers_map.insert(&mut txn, "layer-1", MapPrelim::<Any>::new());
             layer_map.insert(&mut txn, "id", "layer-1");
+            insert_test_station_link(&mut txn, &layer_map);
             layer_map.insert(&mut txn, "width", Any::Number(600.0));
             layer_map.insert(&mut txn, "shapes", ArrayPrelim::from(Vec::<Any>::new()));
             layer_map.insert(&mut txn, "anchors", ArrayPrelim::from(Vec::<Any>::new()));
@@ -10417,6 +11437,7 @@ mod tests {
             let mut txn = worker_doc.transact_mut();
             txn.apply_update(update);
         }
+        link_test_drawings_to_station(&worker_doc);
         *Y_DOC.lock().unwrap() = Some(worker_doc);
 
         apply_yjs_update(
@@ -10501,6 +11522,7 @@ mod tests {
             let update = yrs::Update::decode_v1(initial_update.as_slice()).unwrap();
             worker_doc.transact_mut().apply_update(update);
         }
+        link_test_drawings_to_station(&worker_doc);
         *Y_DOC.lock().unwrap() = Some(worker_doc);
 
         apply_yjs_update(
@@ -10529,7 +11551,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_yjs_update_preserves_subset_cache_on_geometry_error() {
+    fn apply_yjs_update_refuses_a_drawing_whose_geometry_fails_to_reconstruct() {
         clear_font_cache();
 
         let font_json: serde_json::Value = serde_json::from_str(TEST_FONT_JSON).unwrap();
@@ -10551,6 +11573,7 @@ mod tests {
             let layers: yrs::MapRef = glyph.insert(&mut txn, "layers", MapPrelim::<Any>::new());
             let layer: yrs::MapRef = layers.insert(&mut txn, "layer-1", MapPrelim::<Any>::new());
             layer.insert(&mut txn, "id", "layer-1");
+            insert_test_station_link(&mut txn, &layer);
             layer.insert(&mut txn, "width", 600.0);
             layer.insert(
                 &mut txn,
@@ -10563,13 +11586,16 @@ mod tests {
                         "k": "P",
                         "c": true,
                         "n": ["missing"],
-                        "t": ["Line"]
+                        "t": ["Line"],
+                        "s": [false]
                     }]
                 })
                 .to_string(),
             );
             layer.insert(&mut txn, "nodePositionsById", MapPrelim::<Any>::new());
-            layer.insert(&mut txn, "shapeDataById", MapPrelim::<Any>::new());
+            let shape_data: yrs::MapRef =
+                layer.insert(&mut txn, "shapeDataById", MapPrelim::<Any>::new());
+            shape_data.insert(&mut txn, "path-1", MapPrelim::<Any>::new());
         }
         let update = author_doc
             .transact()
@@ -10580,35 +11606,34 @@ mod tests {
             let decoded = yrs::Update::decode_v1(update.as_slice()).unwrap();
             worker_doc.transact_mut().apply_update(decoded);
         }
+        link_test_drawings_to_station(&worker_doc);
         *Y_DOC.lock().unwrap() = Some(worker_doc);
 
-        apply_yjs_update(
-            update.as_slice(),
-            r#"{
-                "changedGlyphs": ["A"],
-                "layerTargets": [{ "glyphName": "A", "layerId": "layer-1" }]
-            }"#,
-        )
-        .expect("geometry reconstruction failure must not fail the Yjs apply");
-
+        // The drawing is refused, never passed on as a geometry error that a
+        // cache would quietly skip.
+        let error = {
+            let ydoc = Y_DOC.lock().unwrap();
+            let txn = ydoc.as_ref().unwrap().transact();
+            ydoc_get_layer_json_with_txn("A", "layer-1", &txn)
+                .expect_err("a failed geometry reconstruction must be refused")
+        };
+        assert!(error.contains("Missing position"), "{error}");
         {
             let subset = SUBSET_JSON_CACHE.lock().unwrap();
             let cached_shapes = subset.as_ref().unwrap().2["glyphs"][0]["layers"][0]["shapes"]
                 .as_array()
-                .expect("last-good shapes must remain");
+                .expect("cached shapes are untouched");
             assert_eq!(cached_shapes.len(), original_shape_count);
-            assert!(subset.as_ref().unwrap().2["glyphs"][0]["layers"][0]
-                .get("geometryError")
-                .is_none());
         }
 
+        *Y_DOC.lock().unwrap() = None;
         clear_font_cache();
     }
 
     #[cfg(target_arch = "wasm32")]
     #[wasm_bindgen_test]
-    fn wasm_apply_yjs_update_preserves_subset_cache_on_geometry_error() {
-        apply_yjs_update_preserves_subset_cache_on_geometry_error();
+    fn wasm_apply_yjs_update_refuses_a_drawing_whose_geometry_fails_to_reconstruct() {
+        apply_yjs_update_refuses_a_drawing_whose_geometry_fails_to_reconstruct();
     }
 
     #[test]
@@ -10642,6 +11667,7 @@ mod tests {
             let layers: yrs::MapRef = glyph.insert(&mut txn, "layers", MapPrelim::<Any>::new());
             let layer: yrs::MapRef = layers.insert(&mut txn, "layer-1", MapPrelim::<Any>::new());
             layer.insert(&mut txn, "id", "layer-1");
+            insert_test_station_link(&mut txn, &layer);
             layer.insert(&mut txn, "width", 600.0);
             layer.insert(
                 &mut txn,
@@ -10662,7 +11688,9 @@ mod tests {
             );
             positions = layer.insert(&mut txn, "nodePositionsById", MapPrelim::<Any>::new());
             positions.insert(&mut txn, "n1", "0 0");
-            layer.insert(&mut txn, "shapeDataById", MapPrelim::<Any>::new());
+            let shape_data: yrs::MapRef =
+                layer.insert(&mut txn, "shapeDataById", MapPrelim::<Any>::new());
+            shape_data.insert(&mut txn, "path-1", MapPrelim::<Any>::new());
         }
 
         let initial_update = author_doc
@@ -10686,6 +11714,7 @@ mod tests {
             let decoded = yrs::Update::decode_v1(initial_update.as_slice()).unwrap();
             worker_doc.transact_mut().apply_update(decoded);
         }
+        link_test_drawings_to_station(&worker_doc);
         *Y_DOC.lock().unwrap() = Some(worker_doc);
 
         let metadata = r#"{
@@ -10767,6 +11796,7 @@ mod tests {
             let mut txn = worker_doc.transact_mut();
             txn.apply_update(update);
         }
+        link_test_drawings_to_station(&worker_doc);
         *Y_DOC.lock().unwrap() = Some(worker_doc);
 
         apply_yjs_update(
@@ -10875,6 +11905,7 @@ mod tests {
             let mut txn = worker_doc.transact_mut();
             txn.apply_update(update);
         }
+        link_test_drawings_to_station(&worker_doc);
         *Y_DOC.lock().unwrap() = Some(worker_doc);
 
         apply_yjs_update(
@@ -10974,6 +12005,7 @@ mod tests {
             let mut txn = worker_doc.transact_mut();
             txn.apply_update(update);
         }
+        link_test_drawings_to_station(&worker_doc);
         *Y_DOC.lock().unwrap() = Some(worker_doc);
 
         apply_yjs_update(
@@ -10988,7 +12020,9 @@ mod tests {
         let ydoc_layer = {
             let ydoc = Y_DOC.lock().unwrap();
             let txn = ydoc.as_ref().unwrap().transact();
-            ydoc_get_layer_json_with_txn("A", "layer-1", &txn).unwrap()
+            ydoc_get_layer_json_with_txn("A", "layer-1", &txn)
+                .unwrap()
+                .unwrap()
         };
         assert_eq!(ydoc_layer["anchors"][0]["y"], json!(611));
         assert_eq!(
@@ -11050,6 +12084,7 @@ mod tests {
             let layers: yrs::MapRef = glyph.insert(&mut txn, "layers", MapPrelim::<Any>::new());
             let layer: yrs::MapRef = layers.insert(&mut txn, "layer-1", MapPrelim::<Any>::new());
             layer.insert(&mut txn, "id", "layer-1");
+            insert_test_station_link(&mut txn, &layer);
             layer.insert(&mut txn, "width", Any::Number(600.0));
             shapes = layer.insert(&mut txn, "shapes", ArrayPrelim::from(Vec::<Any>::new()));
             layer.insert(&mut txn, "anchors", ArrayPrelim::from(Vec::<Any>::new()));
@@ -11074,6 +12109,7 @@ mod tests {
             let mut txn = worker_doc.transact_mut();
             txn.apply_update(update);
         }
+        link_test_drawings_to_station(&worker_doc);
         *Y_DOC.lock().unwrap() = Some(worker_doc);
 
         apply_yjs_update(
@@ -11201,6 +12237,314 @@ mod tests {
     }
 
     #[test]
+    fn an_unexported_glyph_with_a_variation_compiles_through_the_cached_editing_path() {
+        // Fuzz seed 129931909: `p` has a variation and is set to not export.
+        // GlyphsBracketLayers wrote `sub p by p.VAR.1;` for it, and the
+        // compiler then dropped `p` without pruning that rule.
+        clear_font_cache();
+        let mut font_json: serde_json::Value = serde_json::from_str(TEST_FONT_JSON).unwrap();
+        font_json["masters"].as_array_mut().unwrap().push(json!({
+            "name": { "dflt": "Bold" },
+            "id": "master-bold",
+            "location": { "wght": 900 },
+            "guides": [],
+            "metrics": {},
+            "kerning": {},
+            "custom_ot_values": {},
+            "format_specific": {}
+        }));
+        font_json["glyphs"][0]["layers"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "id": "A-bold",
+                "master": { "type": "DefaultForMaster", "master": "master-bold" },
+                "width": 700
+            }));
+        let rules = json!({ "axisRules": [{ "min": 500 }] });
+        let square = |x: i32| {
+            json!([{
+                "nodes": [
+                    { "x": 0, "y": 0, "nodetype": "Line" },
+                    { "x": x, "y": 0, "nodetype": "Line" },
+                    { "x": x, "y": 500, "nodetype": "Line" }
+                ],
+                "closed": true
+            }])
+        };
+        font_json["glyphs"].as_array_mut().unwrap().push(json!({
+            "name": "p",
+            "codepoints": [112],
+            "category": "Base",
+            "exported": false,
+            "layers": [
+                { "id": "p-regular", "width": 500, "shapes": square(400),
+                  "master": { "type": "DefaultForMaster", "master": "master-regular" } },
+                { "id": "p-bold", "width": 600, "shapes": square(500),
+                  "master": { "type": "DefaultForMaster", "master": "master-bold" } },
+                { "id": "p-var-regular", "width": 520, "shapes": square(420),
+                  "master": { "type": "AssociatedWithMaster", "master": "master-regular" },
+                  "format_specific": { (babelfont::FEATURE_VARIATION_ATTRIBUTES_KEY): rules } },
+                { "id": "p-var-bold", "width": 620, "shapes": square(520),
+                  "master": { "type": "AssociatedWithMaster", "master": "master-bold" },
+                  "format_specific": { (babelfont::FEATURE_VARIATION_ATTRIBUTES_KEY): rules } }
+            ],
+            "format_specific": {}
+        }));
+        store_font_from_value(font_json).unwrap();
+
+        prime_layout_closure_cache("unexported-variation", r#"["A","p"]"#).unwrap();
+        let closure_key = LAST_LAYOUT_CLOSURE_CACHE_KEY
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap();
+        let closure = LAYOUT_CLOSURE_CACHE
+            .lock()
+            .unwrap()
+            .get(&closure_key)
+            .cloned()
+            .unwrap();
+        assert!(closure.iter().any(|name| name == "p"));
+        let subset_font = build_subset_font_from_closure_subset(&closure).unwrap();
+        let compilation_options = CompilationOptions {
+            skip_kerning: false,
+            skip_features: false,
+            skip_metrics: false,
+            skip_outlines: false,
+            dont_use_production_names: false,
+            drop_incompatible_paths: false,
+            produce_varc_table: false,
+            debug_feature_file: None,
+        };
+        let filtered = apply_filter_pipeline_to_subset(&subset_font, &compilation_options).unwrap();
+        assert!(
+            !filtered.glyphs.iter().any(|glyph| glyph.name == "p"),
+            "the editing font contains only exported glyphs"
+        );
+        let fea = filtered.features.to_fea();
+        assert!(
+            !fea.contains("p.VAR"),
+            "no variation rule is written for a dropped glyph: {fea}"
+        );
+        let compiled =
+            compile_with_feature_debug_context(filtered, &compilation_options, "test").expect(
+                "an unexported glyph never breaks the editing compile's feature parsing",
+            );
+        assert!(
+            !compiled_font_maps(&compiled, 'p'),
+            "the editing compile leaves out the unexported glyph"
+        );
+        assert!(compiled_font_maps(&compiled, 'A'));
+        clear_font_cache();
+    }
+
+    fn compiled_font_maps(bytes: &[u8], character: char) -> bool {
+        use skrifa::MetadataProvider;
+        skrifa::FontRef::new(bytes)
+            .expect("compiled font parses")
+            .charmap()
+            .map(character)
+            .is_some_and(|glyph_id| glyph_id.to_u32() != 0)
+    }
+
+    fn compiled_font_glyph_count(bytes: &[u8]) -> u16 {
+        use skrifa::raw::TableProvider;
+        skrifa::FontRef::new(bytes)
+            .expect("compiled font parses")
+            .maxp()
+            .expect("compiled font has maxp")
+            .num_glyphs()
+    }
+
+    /// `A` exports; `p` does not, and a feature names it.
+    fn font_with_unexported_glyph_in_features() -> serde_json::Value {
+        let mut font_json: serde_json::Value = serde_json::from_str(TEST_FONT_JSON).unwrap();
+        font_json["glyphs"].as_array_mut().unwrap().push(json!({
+            "name": "p",
+            "codepoints": [112],
+            "category": "Base",
+            "exported": false,
+            "layers": [{
+                "id": "p-regular",
+                "width": 500,
+                "shapes": [{
+                    "nodes": [
+                        { "x": 0, "y": 0, "nodetype": "Line" },
+                        { "x": 400, "y": 0, "nodetype": "Line" },
+                        { "x": 400, "y": 500, "nodetype": "Line" }
+                    ],
+                    "closed": true
+                }],
+                "master": { "type": "DefaultForMaster", "master": "master-regular" }
+            }],
+            "format_specific": {}
+        }));
+        font_json["features"] = json!({
+            "classes": {},
+            "prefixes": {},
+            "features": [["liga", { "code": "sub A by p;" }]]
+        });
+        font_json
+    }
+
+    fn full_compilation_options() -> CompilationOptions {
+        CompilationOptions {
+            skip_kerning: false,
+            skip_features: false,
+            skip_metrics: false,
+            skip_outlines: false,
+            dont_use_production_names: true,
+            drop_incompatible_paths: false,
+            produce_varc_table: false,
+            debug_feature_file: None,
+        }
+    }
+
+    #[test]
+    fn the_editing_compile_drops_an_unexported_glyph_and_prunes_its_feature_rules() {
+        let font: babelfont::Font =
+            serde_json::from_value(font_with_unexported_glyph_in_features()).unwrap();
+        let options = full_compilation_options();
+        let filtered = apply_filter_pipeline_owned(font, &options, false)
+            .expect("feature code naming an unexported glyph parses in the editing font");
+        assert!(!filtered.glyphs.iter().any(|glyph| glyph.name == "p"));
+        let fea = filtered.features.to_fea();
+        assert!(
+            !fea.contains("sub A by p"),
+            "rules naming an unexported glyph are pruned: {fea}"
+        );
+        let compiled = compile_with_feature_debug_context(filtered, &options, "test")
+            .expect("the editing compile succeeds without the unexported glyph");
+        assert!(!compiled_font_maps(&compiled, 'p'));
+        assert!(compiled_font_maps(&compiled, 'A'));
+    }
+
+    #[test]
+    fn the_export_compile_drops_an_unexported_glyph_and_prunes_its_feature_rules() {
+        let font: babelfont::Font =
+            serde_json::from_value(font_with_unexported_glyph_in_features()).unwrap();
+        let options = full_compilation_options();
+        let filtered = apply_filter_pipeline_owned(font, &options, true).unwrap();
+        assert!(!filtered.glyphs.iter().any(|glyph| glyph.name == "p"));
+        let fea = filtered.features.to_fea();
+        assert!(
+            !fea.contains("sub A by p"),
+            "rules naming an unexported glyph are pruned: {fea}"
+        );
+        let compiled = compile_with_feature_debug_context(filtered, &options, "test")
+            .expect("the export compile succeeds without the unexported glyph");
+        assert!(!compiled_font_maps(&compiled, 'p'));
+        assert!(compiled_font_maps(&compiled, 'A'));
+    }
+
+    #[test]
+    fn a_glyph_snapshot_patched_into_the_filtered_cache_keeps_its_export_flag() {
+        clear_font_cache();
+        let font: babelfont::Font =
+            serde_json::from_value(font_with_unexported_glyph_in_features()).unwrap();
+        let options = full_compilation_options();
+        let filtered = apply_filter_pipeline_owned(font, &options, false).unwrap();
+        *FILTERED_FONT_CACHE.lock().unwrap() = Some(FilteredFontCacheEntry {
+            subset_key: "patch-export".to_string(),
+            filter_epoch: 0,
+            cache_epoch: 0,
+            options_fingerprint: options_filter_fingerprint(&options),
+            font: Arc::new(filtered),
+        });
+        let p_json = font_with_unexported_glyph_in_features()["glyphs"][1].clone();
+        assert_eq!(p_json["exported"], json!(false));
+        let patched = patch_filtered_font_cache_for_visual_commit(
+            "patch-export",
+            &[],
+            &[("p".to_string(), Some(p_json))],
+            &HashSet::new(),
+        )
+        .unwrap();
+        assert!(patched);
+        let cached = FILTERED_FONT_CACHE
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .font
+            .clone();
+        assert!(
+            !cached.glyphs.get("p").unwrap().exported,
+            "the patched snapshot keeps its stored export flag, so the compile drops it"
+        );
+        clear_font_cache();
+    }
+
+    #[test]
+    fn the_editing_compile_drops_feature_parse_stubs_and_unexported_glyphs() {
+        let mut font_json = font_with_unexported_glyph_in_features();
+        font_json["glyphOrder"] = json!(["A", "p", "hamza-ar"]);
+        font_json["glyphCatalog"] = json!({
+            "gA": { "name": "A" },
+            "gP": { "name": "p" },
+            "gHamza": { "name": "hamza-ar" }
+        });
+        font_json["features"] = json!({
+            "classes": { "AR": { "code": "A p hamza-ar" } },
+            "prefixes": {},
+            "features": [["liga", { "code": "sub A by p;\nsub hamza-ar by A;" }]]
+        });
+        let mut font: babelfont::Font = serde_json::from_value(font_json.clone()).unwrap();
+        prepare_font_for_layout_subset(&mut font, Some(&font_json));
+        let stub = font
+            .glyphs
+            .iter()
+            .find(|glyph| glyph.name == "hamza-ar")
+            .expect("the unloaded catalog glyph is stubbed for parsing");
+        assert!(is_fea_parse_stub(stub) && !stub.exported);
+        let p = font.glyphs.iter().find(|glyph| glyph.name == "p").unwrap();
+        assert!(!is_fea_parse_stub(p), "a real unexported glyph is not a stub");
+
+        let options = full_compilation_options();
+        let filtered = apply_filter_pipeline_owned(font.clone(), &options, false).unwrap();
+        let names: Vec<&str> = filtered.glyphs.iter().map(|glyph| glyph.name.as_str()).collect();
+        assert_eq!(names, vec!["A"], "stubs and unexported glyphs are dropped");
+        let fea = filtered.features.to_fea();
+        assert!(!fea.contains("sub A by p"), "rules naming p are pruned: {fea}");
+        assert!(!fea.contains("hamza-ar"), "stub names are pruned: {fea}");
+        let compiled = compile_with_feature_debug_context(filtered, &options, "test").unwrap();
+        assert!(!compiled_font_maps(&compiled, 'p'));
+        assert!(compiled_font_maps(&compiled, 'A'));
+        assert_eq!(compiled_font_glyph_count(&compiled), 2, ".notdef and A");
+
+        let exported = apply_filter_pipeline_owned(font, &options, true).unwrap();
+        let names: Vec<&str> = exported.glyphs.iter().map(|glyph| glyph.name.as_str()).collect();
+        assert_eq!(names, vec!["A"], "the export drops stubs and unexported glyphs");
+        let compiled = compile_with_feature_debug_context(exported, &options, "test").unwrap();
+        assert_eq!(compiled_font_glyph_count(&compiled), 2, ".notdef and A");
+    }
+
+    /// `compile_cached_font` (binary export) does not run the filter
+    /// pipeline: it stubs the catalog and hands the font straight to the
+    /// compiler, whose own retain pass drops unexported glyphs and stubs and
+    /// prunes the rules that name them.
+    #[test]
+    fn the_binary_export_compile_drops_unexported_glyphs_and_stubs() {
+        let mut font_json = font_with_unexported_glyph_in_features();
+        font_json["glyphOrder"] = json!(["A", "p", "hamza-ar"]);
+        font_json["features"] = json!({
+            "classes": { "AR": { "code": "A p hamza-ar" } },
+            "prefixes": {},
+            "features": [["liga", { "code": "sub A by p;\nsub hamza-ar by A;" }]]
+        });
+        let mut font: babelfont::Font = serde_json::from_value(font_json.clone()).unwrap();
+        remove_background_layers_for_generation(&mut font);
+        prepare_font_for_layout_subset(&mut font, Some(&font_json));
+        let options = full_compilation_options();
+        let compiled = compile_with_feature_debug_context(font, &options, "compile_cached_font")
+            .expect("the export compile prunes rules naming dropped glyphs");
+        assert!(!compiled_font_maps(&compiled, 'p'));
+        assert!(compiled_font_maps(&compiled, 'A'));
+        assert_eq!(compiled_font_glyph_count(&compiled), 2, ".notdef and A");
+    }
+
+    #[test]
     fn apply_yjs_update_string_node_patch_refreshes_active_subset_caches() {
         clear_font_cache();
 
@@ -11238,6 +12582,7 @@ mod tests {
             let layer_map: yrs::MapRef =
                 layers_map.insert(&mut txn, "layer-1", MapPrelim::<Any>::new());
             layer_map.insert(&mut txn, "id", "layer-1");
+            insert_test_station_link(&mut txn, &layer_map);
             layer_map.insert(&mut txn, "width", Any::Number(600.0));
             let shapes = layer_map.insert(&mut txn, "shapes", ArrayPrelim::from(Vec::<Any>::new()));
             let shape_map = yrs::MapPrelim::<Any>::from([
@@ -11324,6 +12669,7 @@ mod tests {
             let mut txn = worker_doc.transact_mut();
             txn.apply_update(update);
         }
+        link_test_drawings_to_station(&worker_doc);
         *Y_DOC.lock().unwrap() = Some(worker_doc);
 
         let filter_epoch_before = FILTER_EPOCH.load(Ordering::Relaxed);
@@ -11371,7 +12717,9 @@ mod tests {
         let ydoc_layer = {
             let ydoc = Y_DOC.lock().unwrap();
             let txn = ydoc.as_ref().unwrap().transact();
-            ydoc_get_layer_json_with_txn("A", "layer-1", &txn).unwrap()
+            ydoc_get_layer_json_with_txn("A", "layer-1", &txn)
+                .unwrap()
+                .unwrap()
         };
         assert_eq!(ydoc_layer["shapes"].as_array().unwrap().len(), 1);
         assert_eq!(ydoc_layer["shapes"][0]["nodes"], json!("40 20 l 30 20 l"));
@@ -11513,6 +12861,7 @@ mod tests {
                 glyph_map.insert(&mut txn, "layers", MapPrelim::<Any>::new());
             layer_map = layers_map.insert(&mut txn, "layer-1", MapPrelim::<Any>::new());
             layer_map.insert(&mut txn, "id", "layer-1");
+            insert_test_station_link(&mut txn, &layer_map);
             layer_map.insert(&mut txn, "width", Any::Number(620.0));
             layer_map.insert(&mut txn, "shapes", ArrayPrelim::from(Vec::<Any>::new()));
             layer_map.insert(&mut txn, "anchors", ArrayPrelim::from(Vec::<Any>::new()));
@@ -11534,6 +12883,7 @@ mod tests {
             let mut txn = worker_doc.transact_mut();
             txn.apply_update(update);
         }
+        link_test_drawings_to_station(&worker_doc);
         *Y_DOC.lock().unwrap() = Some(worker_doc);
 
         let filter_epoch_before = FILTER_EPOCH.load(Ordering::Relaxed);
@@ -11598,6 +12948,7 @@ mod tests {
             let layer_map: yrs::MapRef =
                 layers_map.insert(&mut txn, "layer-1", MapPrelim::<Any>::new());
             layer_map.insert(&mut txn, "id", "layer-1");
+            insert_test_station_link(&mut txn, &layer_map);
             layer_map.insert(&mut txn, "width", Any::Number(620.0));
             layer_map.insert(&mut txn, "shapes", ArrayPrelim::from(Vec::<Any>::new()));
             layer_map.insert(&mut txn, "anchors", ArrayPrelim::from(Vec::<Any>::new()));
@@ -11619,6 +12970,7 @@ mod tests {
             let mut txn = worker_doc.transact_mut();
             txn.apply_update(update);
         }
+        link_test_drawings_to_station(&worker_doc);
         *Y_DOC.lock().unwrap() = Some(worker_doc);
 
         let filter_epoch_before = FILTER_EPOCH.load(Ordering::Relaxed);
@@ -11984,6 +13336,7 @@ mod tests {
                 layers_map.insert(&mut txn, "regular", MapPrelim::<Any>::new());
             layer_map.insert(&mut txn, "width", Any::Number(410.0));
             layer_map.insert(&mut txn, "id", "regular");
+            insert_test_station_link(&mut txn, &layer_map);
             layer_map.insert(&mut txn, "anchors", ArrayPrelim::from(Vec::<Any>::new()));
             layer_map.insert(&mut txn, "shapes", ArrayPrelim::from(Vec::<Any>::new()));
         }

@@ -65,6 +65,47 @@ describe('Python post-execution synthetic commit alignment', () => {
         delete window.__counterpunchPythonPostExecutionHookInstalled;
     });
 
+    test('a glyph named like a number is addressed by its name, not as an index', () => {
+        const { commitPythonExecutionSyntheticChanges } = loadModule();
+        const glyphs = (oneWidth) => [
+            { name: 'zero', layers: [{ id: 'm', width: 100 }] },
+            { name: 'one', layers: [{ id: 'm', width: 200 }] },
+            { name: '1', layers: [{ id: 'm', width: oneWidth }] }
+        ];
+        const currentFont = {
+            babelfontJson: '',
+            syncJsonFromModel: jest.fn(function () {
+                this.babelfontJson = JSON.stringify({ glyphs: glyphs(310) });
+            })
+        };
+        const bridge = {
+            setRecordingSuppressed: jest.fn(),
+            applySyntheticChangeSet: jest.fn(),
+            endTransaction: jest.fn()
+        };
+
+        commitPythonExecutionSyntheticChanges(
+            currentFont,
+            {
+                transactionStarted: true,
+                beforeFontDataJson: JSON.stringify({ glyphs: glyphs(300) }),
+                label: 'Python script'
+            },
+            bridge
+        );
+
+        const operations = bridge.applySyntheticChangeSet.mock.calls[0][1];
+        expect(operations).toEqual([
+            expect.objectContaining({
+                op: 'set',
+                path: ['glyphs', '1', 'layers', 'm', 'width'],
+                oldValue: 300,
+                newValue: 310,
+                workerReplayTargets: [{ glyphName: '1', layerId: 'm' }]
+            })
+        ]);
+    });
+
     test('derives Python synthetic changes from the refreshed canonical serialized snapshot', () => {
         const { commitPythonExecutionSyntheticChanges } = loadModule();
         const currentFont = {
@@ -166,6 +207,7 @@ describe('Python post-execution synthetic commit alignment', () => {
         const { commitPythonExecutionSyntheticChanges } = loadModule();
         const { PatchSyncEngine } = require('../js/patch-sync-engine');
         const beforeSnapshot = {
+            masters: [{ id: 'm1', name: { dflt: 'Regular' }, location: {} }],
             glyphs: [
                 {
                     name: 'a',
@@ -173,6 +215,7 @@ describe('Python post-execution synthetic commit alignment', () => {
                         {
                             id: 'default',
                             width: 500,
+                            master: { type: 'DefaultForMaster', master: 'm1' },
                             shapes: [
                                 {
                                     type: 'path',
@@ -824,12 +867,18 @@ describe('Python post-execution synthetic commit alignment', () => {
         const Y = require('yjs');
         const beforeSnapshot = {
             names: { familyName: 'Before' },
+            masters: [{ id: 'm1', name: { dflt: 'Regular' }, location: {} }],
             glyphs: {
                 A: {
                     name: 'A',
                     note: 'before',
                     layers: {
-                        master: { width: 500, shapes: [] }
+                        master: {
+                            id: 'master',
+                            width: 500,
+                            master: { type: 'DefaultForMaster', master: 'm1' },
+                            shapes: []
+                        }
                     }
                 }
             }
@@ -889,7 +938,7 @@ describe('Python post-execution synthetic commit alignment', () => {
                 ['glyphs', 'A', 'layers', 'master'],
                 'shapes',
                 [],
-                [{ id: 'shape-1', type: 'path', nodes: [] }]
+                [{ id: 'shape-1', type: 'path', nodes: [], closed: true }]
             );
         });
 
@@ -953,87 +1002,118 @@ describe('Python post-execution synthetic commit alignment', () => {
         const { yDocToJson } = require('../js/change-bridge-ydoc');
         const Y = require('yjs');
         const beforeSnapshot = {
+            masters: [
+                {
+                    id: 'm1',
+                    name: { dflt: 'Regular' },
+                    location: {},
+                    kerning: {},
+                    kerning_rtl: {}
+                }
+            ],
             glyphs: [
                 {
                     name: 'A',
+                    category: 'Base',
                     layers: [
                         {
                             id: 'layer-a',
                             width: 500,
                             master: { type: 'DefaultForMaster', master: 'm1' },
                             shapes: [],
-                            anchors: []
+                            anchors: [],
+                            guides: []
                         }
                     ]
                 },
                 {
                     name: 'B',
+                    category: 'Base',
                     layers: [
                         {
                             id: 'layer-b',
                             width: 600,
                             master: { type: 'DefaultForMaster', master: 'm1' },
                             shapes: [],
-                            anchors: []
+                            anchors: [],
+                            guides: []
                         }
                     ]
                 },
                 {
                     name: 'D',
+                    category: 'Base',
                     layers: [
                         {
                             id: 'layer-d',
                             width: 800,
                             master: { type: 'DefaultForMaster', master: 'm1' },
                             shapes: [],
-                            anchors: []
+                            anchors: [],
+                            guides: []
                         }
                     ]
                 }
             ]
         };
         const afterSnapshot = {
+            masters: [
+                {
+                    id: 'm1',
+                    name: { dflt: 'Regular' },
+                    location: {},
+                    kerning: {},
+                    kerning_rtl: {}
+                }
+            ],
             glyphs: [
                 {
                     name: 'B',
+                    category: 'Base',
                     layers: [
                         {
                             id: 'layer-b2',
                             width: 650,
                             master: { type: 'DefaultForMaster', master: 'm1' },
                             shapes: [],
-                            anchors: []
+                            anchors: [],
+                            guides: []
                         },
                         {
                             id: 'layer-b',
                             width: 600,
                             master: { type: 'DefaultForMaster', master: 'm1' },
                             shapes: [],
-                            anchors: []
+                            anchors: [],
+                            guides: []
                         }
                     ]
                 },
                 {
                     name: 'C',
+                    category: 'Base',
                     layers: [
                         {
                             id: 'layer-c',
                             width: 700,
                             master: { type: 'DefaultForMaster', master: 'm1' },
                             shapes: [],
-                            anchors: []
+                            anchors: [],
+                            guides: []
                         }
                     ]
                 },
                 {
                     name: 'D',
+                    category: 'Base',
                     layers: [
                         {
                             id: 'layer-d',
                             width: 800,
                             master: { type: 'DefaultForMaster', master: 'm1' },
                             shapes: [],
-                            anchors: []
+                            anchors: [],
+                            guides: []
                         }
                     ]
                 }

@@ -17,7 +17,8 @@ const {
     splitShapesForYDoc,
     reconstructShapesFromGeometry,
     writeDrawingGeometry,
-    repairDrawingGeometryOrphans,
+    assertDrawingGeometryComplete,
+    DrawingGeometryIntegrityError,
     readDrawingGeometry,
     writeNodePosition,
     topologyEqualsForNodes,
@@ -51,7 +52,8 @@ describe('layer geometry Y.Doc encoding', () => {
                             k: 'P',
                             c: true,
                             n: ['n1', 'n1'],
-                            t: ['Line', 'Line']
+                            t: ['Line', 'Line'],
+                            s: [false, false]
                         }
                     ]
                 })
@@ -72,11 +74,18 @@ describe('layer geometry Y.Doc encoding', () => {
                     v: 1,
                     g: 0,
                     shapes: [
-                        { id: 'a', k: 'P', c: true, n: ['n1'], t: ['Line'] }
+                        {
+                            id: 'a',
+                            k: 'P',
+                            c: true,
+                            n: ['n1'],
+                            t: ['Line'],
+                            s: [false]
+                        }
                     ]
                 },
                 {},
-                {}
+                { a: {} }
             )
         ).toThrow(/Missing position/);
         expect(() =>
@@ -103,7 +112,14 @@ describe('layer geometry Y.Doc encoding', () => {
                     v: 1,
                     g: 0,
                     shapes: [
-                        { id: 'a', k: 'P', c: true, n: ['n1'], t: ['Bogus'] }
+                        {
+                            id: 'a',
+                            k: 'P',
+                            c: true,
+                            n: ['n1'],
+                            t: ['Bogus'],
+                            s: [false]
+                        }
                     ]
                 })
             )
@@ -112,9 +128,139 @@ describe('layer geometry Y.Doc encoding', () => {
             reconstructShapesFromGeometry(
                 { v: 1, g: 0, shapes: [{ id: 'component', k: 'C' }] },
                 {},
-                {}
+                { component: {} }
             )
         ).toThrow(/valid reference/);
+    });
+
+    test('a shape without its stored data is refused, never read as empty', () => {
+        const topology = {
+            v: 1,
+            g: 1,
+            shapes: [
+                {
+                    id: 'p1',
+                    k: 'P',
+                    c: true,
+                    n: ['n1'],
+                    t: ['Line'],
+                    s: [false]
+                }
+            ]
+        };
+        expect(() =>
+            reconstructShapesFromGeometry(topology, { n1: '1 2' }, {})
+        ).toThrow(/Missing data for path p1/);
+        expect(() =>
+            reconstructShapesFromGeometry(
+                { v: 1, g: 1, shapes: [{ id: 'c1', k: 'C' }] },
+                {},
+                {}
+            )
+        ).toThrow(/Missing data for component c1/);
+        expect(() =>
+            reconstructShapesFromGeometry(topology, { n1: '1 2' }, { p1: 3 })
+        ).toThrow(/not a map/);
+        expect(
+            reconstructShapesFromGeometry(
+                topology,
+                { n1: '1 2' },
+                { p1: {} }
+            )[0]
+        ).toMatchObject({ id: 'p1', closed: true });
+    });
+
+    test('a path without smooth flags is refused, never read as not smooth', () => {
+        const path = (fields) => ({
+            v: 1,
+            g: 1,
+            shapes: [{ id: 'p1', k: 'P', c: true, n: ['n1'], ...fields }]
+        });
+        expect(() =>
+            decodeGeometryTopology(JSON.stringify(path({ t: ['Curve'] })))
+        ).toThrow(/no smooth flags/);
+        expect(() =>
+            reconstructShapesFromGeometry(
+                path({ t: ['Curve'] }),
+                { n1: '1 2' },
+                { p1: {} }
+            )
+        ).toThrow(/no smooth flags/);
+        expect(() =>
+            decodeGeometryTopology(
+                JSON.stringify(path({ t: ['Curve'], s: [] }))
+            )
+        ).toThrow(/smooth-flag length mismatch/);
+        expect(() =>
+            decodeGeometryTopology(
+                JSON.stringify(path({ t: ['Curve'], s: [null] }))
+            )
+        ).toThrow(/must be booleans/);
+        // A node type is never read as Line when it is missing.
+        expect(() =>
+            decodeGeometryTopology(
+                JSON.stringify(path({ t: [null], s: [true] }))
+            )
+        ).toThrow(/invalid node type/);
+        expect(() =>
+            decodeGeometryTopology(JSON.stringify(path({ s: [true] })))
+        ).toThrow(/missing node order or types/);
+        // Stored values are read as they are.
+        expect(
+            reconstructShapesFromGeometry(
+                path({ t: ['OffCurve'], s: [true] }),
+                { n1: '1 2' },
+                { p1: {} }
+            )[0].nodes[0]
+        ).toMatchObject({ nodetype: 'OffCurve', smooth: true });
+    });
+
+    test('every writer stores a type and smooth flag for each node', () => {
+        const { topology } = splitShapesForYDoc([
+            {
+                closed: false,
+                nodes: [
+                    { x: 0, y: 0, nodetype: 'Line' },
+                    { x: 1, y: 1, nodetype: 'Curve', smooth: true }
+                ]
+            }
+        ]);
+        expect(topology.shapes[0]).toMatchObject({
+            c: false,
+            t: ['Line', 'Curve'],
+            s: [false, true]
+        });
+    });
+
+    test('a drawing whose topology lost a geometry map is refused, even without shapes', () => {
+        for (const missingKey of ['nodePositionsById', 'shapeDataById']) {
+            for (const shapes of [
+                [],
+                [
+                    {
+                        closed: true,
+                        nodes: [{ x: 1, y: 2, nodetype: 'Line' }]
+                    }
+                ]
+            ]) {
+                const doc = new Y.Doc();
+                const drawing = doc.getMap('drawing');
+                writeDrawingGeometry(drawing, shapes);
+                doc.transact(() => drawing.delete(missingKey));
+                expect(() => readDrawingGeometry(drawing)).toThrow(
+                    DrawingGeometryIntegrityError
+                );
+                expect(() => assertDrawingGeometryComplete(drawing)).toThrow(
+                    DrawingGeometryIntegrityError
+                );
+                doc.transact(() => drawing.set(missingKey, 'not a map'));
+                expect(() => readDrawingGeometry(drawing)).toThrow(
+                    /is not a map/
+                );
+            }
+        }
+        // A drawing never given geometry has none to read.
+        expect(readDrawingGeometry(new Y.Doc().getMap('drawing'))).toBeNull();
     });
 
     test('uses the shared v1 geometry and packed-position golden vectors', () => {
@@ -220,7 +366,7 @@ describe('layer geometry Y.Doc encoding', () => {
         );
     });
 
-    test('converged orphan repair deletes unreferenced position and shape-data keys', () => {
+    test('geometry completeness assertion keeps orphans and throws on a missing position', () => {
         const shapes = [
             {
                 id: 'path-1',
@@ -247,11 +393,25 @@ describe('layer geometry Y.Doc encoding', () => {
         // Structural writes retain orphans until convergence so a concurrent
         // topology can still retain the node without losing its coordinate.
         expect(positions.get('n2')).toBe('10 10');
-        repairDrawingGeometryOrphans(drawing);
-        expect(positions.get('n2')).toBeUndefined();
+        // The completeness assertion never deletes an orphan.
+        assertDrawingGeometryComplete(drawing);
+        expect(positions.get('n2')).toBe('10 10');
         expect(positions.get('n1')).toBe('0 0');
         writeDrawingGeometry(drawing, shapes);
         expect(positions.get('n2')).toBe('10 10');
+        // A referenced node without a position is an error, not repaired.
+        positions.delete('n1');
+        expect(() => assertDrawingGeometryComplete(drawing)).toThrow(
+            DrawingGeometryIntegrityError
+        );
+        expect(() => readDrawingGeometry(drawing)).toThrow(
+            /Missing position for node n1/
+        );
+        // A later write may not create a stand-in positions map either.
+        drawing.delete('nodePositionsById');
+        expect(() => writeNodePosition(drawing, 'n1', 1, 2)).toThrow(
+            DrawingGeometryIntegrityError
+        );
     });
 
     test('detects topology-only vs coordinate-only node edits', () => {
@@ -269,5 +429,92 @@ describe('layer geometry Y.Doc encoding', () => {
         ];
         expect(topologyEqualsForNodes(a, moved)).toBe(true);
         expect(topologyEqualsForNodes(a, reversed)).toBe(false);
+    });
+
+    test('a node without its nodetype is never compared as a line', () => {
+        const stored = [{ id: 'n1', x: 0, y: 0, nodetype: 'Line' }];
+        const untyped = [{ id: 'n1', x: 5, y: 0 }];
+        expect(topologyEqualsForNodes(stored, untyped)).toBe(false);
+        expect(topologyEqualsForNodes(untyped, untyped)).toBe(false);
+    });
+
+    test('a node without its nodetype is refused, never written as a line', () => {
+        expect(() =>
+            splitShapesForYDoc([
+                {
+                    id: 'p1',
+                    closed: true,
+                    nodes: [{ id: 'n1', x: 0, y: 0 }]
+                }
+            ])
+        ).toThrow(/Node n1 has no nodetype/);
+        expect(() =>
+            splitShapesForYDoc([
+                {
+                    id: 'p1',
+                    closed: true,
+                    nodes: [{ id: 'n1', x: 0, y: 0, nodetype: 'l' }]
+                }
+            ])
+        ).toThrow(/Node n1 has an invalid nodetype/);
+    });
+
+    test.each([
+        ['missing', undefined],
+        ['null', null],
+        ['a string', 'true']
+    ])(
+        'a path whose closed flag is %s is refused, never read as closed',
+        (_label, closed) => {
+            const shape = {
+                id: 'p1',
+                nodes: [{ id: 'n1', x: 0, y: 0, nodetype: 'Line' }]
+            };
+            if (closed !== undefined) shape.closed = closed;
+            expect(() => splitShapesForYDoc([shape])).toThrow(
+                /Path p1 has no closed flag/
+            );
+        }
+    );
+
+    test('an open path stays open', () => {
+        const { topology } = splitShapesForYDoc([
+            {
+                id: 'p1',
+                closed: false,
+                nodes: [{ id: 'n1', x: 0, y: 0, nodetype: 'Move' }]
+            }
+        ]);
+        expect(topology.shapes[0].c).toBe(false);
+    });
+});
+
+describe('geometry writes never rewrite an equal position', () => {
+    test('a topology change leaves unchanged positions untouched', () => {
+        const doc = new Y.Doc();
+        const drawingMap = doc.getMap('drawing');
+        const shapes = [
+            {
+                id: 'p1',
+                closed: true,
+                nodes: [
+                    { id: 'n1', x: 0, y: 0, nodetype: 'Line' },
+                    { id: 'n2', x: 10, y: 0, nodetype: 'Line' }
+                ]
+            }
+        ];
+        writeDrawingGeometry(drawingMap, shapes);
+        const positions = drawingMap.get('nodePositionsById');
+        const changed = [];
+        positions.observe((event) => changed.push(...event.keysChanged));
+
+        // Remove n2, then bring it back: its stored position is kept and
+        // is not written again.
+        writeDrawingGeometry(drawingMap, [
+            { ...shapes[0], nodes: [shapes[0].nodes[0]] }
+        ]);
+        writeDrawingGeometry(drawingMap, shapes);
+        expect(changed).toEqual([]);
+        expect(positions.get('n2')).toBe(encodePackedXY(10, 0));
     });
 });

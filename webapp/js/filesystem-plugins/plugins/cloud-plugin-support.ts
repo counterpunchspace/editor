@@ -2,6 +2,7 @@
  * Shared helpers extracted from cloud-plugin.ts
  * (open pipeline, save-as, and live orchestration support).
  */
+import { assertEncodableDocumentSet } from '../../cloud-document-encode-gate';
 import {
     FilesystemPlugin,
     type CanAddGlyphsResult
@@ -33,7 +34,12 @@ import {
 } from '../../patch-sync-engine';
 import { setCollabIntegritySnapshotProvider } from '../../cloud-collab-integrity-debug';
 import { Logger } from '../../logger';
-import { getPathSegments } from '../../change-log';
+import {
+    getPathSegments,
+    glyphRenamesForHistoryAction,
+    historyReplayValue,
+    type ChangeLogEntry
+} from '../../change-log';
 import { resolveWebsiteURL } from '../../website-url';
 import { readUrlState } from '../../url-state';
 import { beginLoadingCursor, endLoadingCursor } from '../../loading-cursor';
@@ -101,6 +107,42 @@ type CloudAssetSizeWarningState = {
 type CloudSaveSizeWarningState = CloudAssetSizeWarningState & {
     canSave: boolean;
 };
+
+/**
+ * The change a committed entry made to the font. An undo packet carries the
+ * undone history item's own entries, which keep the forward edit's op and
+ * values: undoing a glyph add removes the glyph, undoing a delete brings it
+ * back, and undoing a rename restores the old name. Readers that act on what
+ * changed (the catalog) read the entry as it was applied. Redo replays the
+ * forward edit, so it is read as it is.
+ */
+export function committedEntryAsApplied<T extends ChangeLogEntry>(entry: T): T {
+    if (entry.historyAction !== 'undo') {
+        return entry;
+    }
+    const op =
+        entry.op === 'add'
+            ? 'remove'
+            : entry.op === 'remove'
+              ? 'add'
+              : entry.op;
+    return {
+        ...entry,
+        op,
+        oldValue: historyReplayValue(entry, 'redo'),
+        newValue: historyReplayValue(entry, 'undo'),
+        replayOldValue: entry.replayNewValue,
+        replayNewValue: entry.replayOldValue,
+        ...(entry.glyphRenames
+            ? {
+                  glyphRenames: glyphRenamesForHistoryAction(
+                      entry.glyphRenames,
+                      'undo'
+                  )
+              }
+            : {})
+    };
+}
 
 export function deletedGlyphIdsFromCommittedEntries(
     entries: Array<{ op?: string; path?: string | Array<string | number> }>,
@@ -731,6 +773,8 @@ export async function captureCloudSaveSeedState(
     if (!shards.length) {
         throw new Error('No live document set to seed to cloud');
     }
+    // The seed becomes the new rooms' whole state: never one with a hole.
+    assertEncodableDocumentSet(shards);
     const captureEncodeMs =
         (typeof performance !== 'undefined' && performance.now
             ? performance.now()

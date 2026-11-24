@@ -19,6 +19,29 @@ const {
     publishCloudDocumentUpdate
 } = require('../js/cloud-adapter.ts');
 const { MetadataFreeRemoteUpdateError } = require('../js/patch-sync-engine.ts');
+const Y = require('yjs');
+
+/** One single-chunk tail row frame payload, as the room pages it. */
+function tailRowPayload(blob, transactionId = '') {
+    const txn = new TextEncoder().encode(transactionId);
+    const payload = new Uint8Array(12 + txn.length + blob.length);
+    const view = new DataView(payload.buffer);
+    view.setUint32(0, 0, false);
+    view.setUint32(4, 1, false);
+    view.setUint32(8, txn.length, false);
+    payload.set(txn, 12);
+    payload.set(blob, 12 + txn.length);
+    return payload;
+}
+
+/** A complete Yjs state; linked windows and seeds refuse anything else. */
+function wholeDocState(tag = 'state') {
+    const doc = new Y.Doc();
+    doc.getMap('test').set('tag', tag);
+    const bytes = Y.encodeStateAsUpdate(doc);
+    doc.destroy();
+    return bytes;
+}
 const { CloudDurableWal } = require('../js/cloud-durable-wal.ts');
 const {
     createPackParser,
@@ -351,6 +374,7 @@ describe('CloudAdapter room worker defaults', () => {
         const adapter = new CloudAdapter({ assetId: 'asset-123' });
         adapter._wal = {
             transactionIdsFor: () => new Set(['core-1']),
+            isHeldStaged: () => false,
             hasPendingDependencies: () => pending,
             pendingCountFor: () => 0,
             onChange: (listener) => {
@@ -362,8 +386,16 @@ describe('CloudAdapter room worker defaults', () => {
         adapter._ws = { readyState: WebSocket.OPEN, send };
         adapter._bridge = {};
         adapter._clientId = 'client-1';
+        adapter._hasSynced = true;
         adapter._pendingOutboundPackets = [
-            { update: new Uint8Array([1, 2, 3]), clientTransactionId: 'core-1' }
+            {
+                update: new Uint8Array([1, 2, 3]),
+                collaborationMessage: makeLiveCollabMessage({
+                    transactionId: 1,
+                    path: 'glyphs.A:name'
+                }),
+                clientTransactionId: 'core-1'
+            }
         ];
         adapter._outboundFlushScheduled = true;
         adapter._flushPendingOutboundUpdates();
@@ -389,7 +421,7 @@ describe('CloudAdapter room worker defaults', () => {
                 assetId: 'asset-123',
                 documentId: 'font-core'
             });
-            const coreState = new Uint8Array([4, 5, 6]);
+            const coreState = wholeDocState('core');
             adapter._bridge = {
                 applyFullState: jest.fn(),
                 mergeRemoteUpdates: jest.fn(),
@@ -418,12 +450,12 @@ describe('CloudAdapter room worker defaults', () => {
                 assetId: 'asset-123',
                 documentId: 'glyph:g1'
             });
-            // Main’s document did not change (it had the bytes, or keeps
-            // them pending); a linked window may still lack them.
+            // Main’s document did not change (it had the bytes); a linked
+            // window may still lack them. The bytes are integrated: true.
             adapter._bridge = { applyRemoteUpdate: jest.fn(() => false) };
             const envelope = { source: 'cloud', messageId: 'm1' };
             const update = new Uint8Array([1, 2, 3]);
-            expect(adapter._applyRemoteUpdate(update, [envelope])).toBe(false);
+            expect(adapter._applyRemoteUpdate(update, [envelope])).toBe(true);
             expect(relay).toHaveBeenCalledWith(update, envelope, 'glyph:g1');
         } finally {
             window.windowRole = originalRole;
@@ -671,17 +703,23 @@ describe('CloudAdapter outbound updates', () => {
             websiteBaseUrl: 'https://counterpunch.space'
         });
 
-        global.fetch = jest.fn().mockResolvedValue({
-            ok: true,
-            headers: new Headers({
-                'content-type': 'application/json'
-            }),
-            json: async () => ({
-                token: 'room-token',
-                roomUrl: 'https://room.fonteditor.workers.dev/room/asset-123'
-            }),
-            text: async () => ''
-        });
+        // The room has no checkpoint yet: the shard state answers 404.
+        global.fetch = jest.fn().mockImplementation(async (url) =>
+            String(url).includes('/room-token')
+                ? {
+                      ok: true,
+                      headers: new Headers({
+                          'content-type': 'application/json'
+                      }),
+                      json: async () => ({
+                          token: 'room-token',
+                          roomUrl:
+                              'https://room.fonteditor.workers.dev/room/asset-123'
+                      }),
+                      text: async () => ''
+                  }
+                : { ok: false, status: 404, headers: new Headers() }
+        );
         adapter._openWebSocket = openWebSocket;
 
         try {
@@ -1070,7 +1108,7 @@ describe('CloudAdapter outbound updates', () => {
         adapter._applyServerStateToBridge = jest.fn(() => {
             throw new Error('apply failed');
         });
-        adapter._ws = { readyState: 1, send: jest.fn() };
+        adapter._ws = { readyState: 1, send: jest.fn(), close: jest.fn() };
         adapter._handleMessage(
             JSON.stringify({
                 type: 'sync-response',
@@ -1084,30 +1122,75 @@ describe('CloudAdapter outbound updates', () => {
         expect(adapter._ws.send).not.toHaveBeenCalled();
     });
 
-    it('stops reconnecting once the room’s state fails to apply three times', () => {
+    it('stops the document at once when the room’s state does not apply', () => {
         const adapter = new CloudAdapter({ assetId: 'asset-123' });
-        adapter._bridge = {};
+        adapter._bridge = { markDocumentBroken: jest.fn() };
         adapter._applyServerStateToBridge = jest.fn(() => {
             throw new Error('apply failed');
         });
         const close = jest.fn();
         adapter._ws = { readyState: 1, send: jest.fn(), close };
-        const page = JSON.stringify({
-            type: 'sync-response',
-            update: Buffer.from([1]).toString('base64'),
-            collaborationMessageHistory: []
-        });
-
-        adapter._handleMessage(page);
-        adapter._handleMessage(page);
-        expect(close).not.toHaveBeenCalled();
-        expect(adapter._terminalCloseDetail).toBeFalsy();
-
-        adapter._handleMessage(page);
+        adapter._handleMessage(
+            JSON.stringify({
+                type: 'sync-response',
+                update: Buffer.from([1]).toString('base64'),
+                collaborationMessageHistory: []
+            })
+        );
         expect(close).toHaveBeenCalledWith(4000, 'server-state-rejected');
-        expect(adapter._terminalCloseDetail).toMatch(/could not load/);
+        expect(adapter._terminalCloseDetail).toBe('apply failed');
+        expect(adapter._bridge.markDocumentBroken).toHaveBeenCalledWith(
+            'font-core',
+            expect.objectContaining({ message: 'apply failed' })
+        );
         expect(adapter.status).toBe('error');
         adapter.disconnect?.();
+    });
+
+    it('a framed sync page that fails to apply is fatal and keeps the cursor', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        adapter._appliedLogId = 4;
+        adapter._bridge = { markDocumentBroken: jest.fn() };
+        adapter._applyServerStateToBridge = jest.fn(() => {
+            throw new Error('page did not apply');
+        });
+        const close = jest.fn();
+        adapter._ws = { readyState: 1, send: jest.fn(), close };
+        adapter._pendingSyncPageMeta = {
+            hasMore: true,
+            throughLogId: 5,
+            serverStateVector: new Uint8Array()
+        };
+        adapter._pendingTailFrames = [
+            { type: 2, logId: 5, payload: tailRowPayload(new Uint8Array([7])) }
+        ];
+        adapter._finishFramedSyncPage(5);
+        expect(adapter._appliedLogId).toBe(4);
+        expect(adapter._ws.send).not.toHaveBeenCalled();
+        expect(close).toHaveBeenCalledWith(4000, 'sync-page-failed');
+        expect(adapter.status).toBe('error');
+    });
+
+    it('a sync page with a hole in its rows is a protocol error', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        adapter._appliedLogId = 4;
+        adapter._bridge = { markDocumentBroken: jest.fn() };
+        adapter._applyServerStateToBridge = jest.fn();
+        const close = jest.fn();
+        adapter._ws = { readyState: 1, send: jest.fn(), close };
+        adapter._pendingSyncPageMeta = {
+            hasMore: false,
+            throughLogId: 7,
+            serverStateVector: new Uint8Array()
+        };
+        adapter._pendingTailFrames = [
+            { type: 2, logId: 5, payload: tailRowPayload(new Uint8Array([7])) },
+            { type: 2, logId: 7, payload: tailRowPayload(new Uint8Array([8])) }
+        ];
+        adapter._finishFramedSyncPage(7);
+        expect(adapter._applyServerStateToBridge).not.toHaveBeenCalled();
+        expect(adapter._appliedLogId).toBe(4);
+        expect(adapter._terminalCloseDetail).toMatch(/does not follow 5/);
     });
 
     it('slows reconnects in a hidden tab with nothing to send', () => {
@@ -1131,25 +1214,212 @@ describe('CloudAdapter outbound updates', () => {
         );
     });
 
+    const liveUpdate = (logId, clientId = 'peer') =>
+        JSON.stringify({
+            type: 'update',
+            clientId,
+            seq: 1,
+            logId,
+            update: Buffer.from([1, 2, 3]).toString('base64')
+        });
+
     it('advances appliedLogId for live updates only after the Yjs apply', async () => {
         const adapter = new CloudAdapter({ assetId: 'asset-123' });
         adapter._appliedLogId = 3;
+        adapter._hasSynced = true;
         adapter._bridge = {
             applyRemoteUpdate: jest.fn().mockReturnValue(true)
         };
-        adapter._handleMessage(
-            JSON.stringify({
-                type: 'update',
-                clientId: 'peer',
-                seq: 1,
-                logId: 9,
-                update: Buffer.from([1, 2, 3]).toString('base64')
-            })
-        );
+        adapter._handleMessage(liveUpdate(4));
         expect(adapter._appliedLogId).toBe(3);
         await Promise.resolve();
         expect(adapter._bridge.applyRemoteUpdate).toHaveBeenCalled();
+        expect(adapter._appliedLogId).toBe(4);
+    });
+
+    it('buffers live rows during the first sync and applies only those after the pages', async () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        adapter._appliedLogId = 3;
+        adapter._bridge = {
+            applyRemoteUpdate: jest.fn().mockReturnValue(true),
+            onLocalUpdate: jest.fn(),
+            offLocalUpdate: jest.fn()
+        };
+        adapter._wal = {
+            replayableRecords: () => [],
+            transactionIdsFor: () => new Set(),
+            pendingCountFor: () => 0,
+            onChange: () => () => {}
+        };
+        adapter._handleMessage(liveUpdate(5));
+        adapter._handleMessage(liveUpdate(6));
+        await Promise.resolve();
+        // The pages have not reached them: nothing applies, no cursor move.
+        expect(adapter._bridge.applyRemoteUpdate).not.toHaveBeenCalled();
+        expect(adapter._appliedLogId).toBe(3);
+        // The last page ends at 5: row 5 is skipped, row 6 applies.
+        adapter._appliedLogId = 5;
+        adapter._finishInitialSyncAfterPages();
+        await Promise.resolve();
+        expect(adapter._bridge.applyRemoteUpdate).toHaveBeenCalledTimes(1);
+        expect(adapter._appliedLogId).toBe(6);
+        adapter._destroyed = true;
+    });
+
+    it('a live row after a hole is a protocol error and applies nothing', async () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        adapter._appliedLogId = 3;
+        adapter._hasSynced = true;
+        adapter._bridge = {
+            applyRemoteUpdate: jest.fn().mockReturnValue(true),
+            markDocumentBroken: jest.fn()
+        };
+        const close = jest.fn();
+        adapter._ws = { readyState: 1, send: jest.fn(), close };
+        adapter._handleMessage(liveUpdate(5));
+        await Promise.resolve();
+        expect(adapter._bridge.applyRemoteUpdate).not.toHaveBeenCalled();
+        expect(adapter._appliedLogId).toBe(3);
+        expect(close).toHaveBeenCalledWith(4000, 'protocol-error');
+        expect(adapter._terminalCloseDetail).toMatch(
+            /rows between are missing/
+        );
+        expect(adapter.status).toBe('error');
+    });
+
+    it('an ack steps the cursor over this window’s own rows after the peer rows before them', async () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        adapter._appliedLogId = 3;
+        adapter._hasSynced = true;
+        adapter._bridge = {
+            applyRemoteUpdate: jest.fn().mockReturnValue(true)
+        };
+        adapter._ws = { readyState: 1, send: jest.fn(), close: jest.fn() };
+        adapter._wal = {
+            acknowledgeMany: jest.fn(async () => {}),
+            pendingCountFor: () => 0,
+            onChange: () => () => {}
+        };
+        // Peer row 4, then our own rows 5–6 (acked), then peer row 7.
+        adapter._handleMessage(liveUpdate(4));
+        adapter._handleMessage(
+            JSON.stringify({
+                type: 'ack',
+                seq: 1,
+                durable: true,
+                clientTransactionId: 'own-1',
+                lastLogId: 6
+            })
+        );
+        expect(adapter._appliedLogId).toBe(6);
+        adapter._handleMessage(liveUpdate(7));
+        await Promise.resolve();
+        expect(adapter._bridge.applyRemoteUpdate).toHaveBeenCalledTimes(2);
+        expect(adapter._appliedLogId).toBe(7);
+        adapter._destroyed = true;
+    });
+
+    it('an ack whose own rows start past a missing peer row is a protocol error', async () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        adapter._appliedLogId = 3;
+        adapter._hasSynced = true;
+        adapter._bridge = {
+            applyRemoteUpdate: jest.fn().mockReturnValue(true),
+            markDocumentBroken: jest.fn()
+        };
+        const close = jest.fn();
+        adapter._ws = { readyState: 1, send: jest.fn(), close };
+        adapter._wal = {
+            acknowledgeMany: jest.fn(async () => {}),
+            pendingCountFor: () => 0,
+            onChange: () => () => {}
+        };
+        // Peer row 4 never reached this socket; our rows are 5–6.
+        adapter._handleMessage(
+            JSON.stringify({
+                type: 'ack',
+                seq: 1,
+                durable: true,
+                clientTransactionId: 'own-1',
+                firstLogId: 5,
+                lastLogId: 6
+            })
+        );
+        expect(adapter._appliedLogId).toBe(3);
+        expect(close).toHaveBeenCalledWith(4000, 'protocol-error');
+        expect(adapter._bridge.markDocumentBroken).toHaveBeenCalled();
+        adapter._destroyed = true;
+    });
+
+    it('an ack that is not durable never moves the cursor', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        adapter._appliedLogId = 3;
+        adapter._hasSynced = true;
+        adapter._bridge = { applyRemoteUpdate: jest.fn() };
+        adapter._ws = { readyState: 1, send: jest.fn(), close: jest.fn() };
+        adapter._handleMessage(
+            JSON.stringify({
+                type: 'ack',
+                seq: 1,
+                durable: false,
+                clientTransactionId: 'own-1',
+                lastLogId: 6
+            })
+        );
+        expect(adapter._appliedLogId).toBe(3);
+        adapter._destroyed = true;
+    });
+
+    it('the last JSON sync page sets the cursor to its end', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        adapter._appliedLogId = 2;
+        adapter._applyServerState = jest.fn(() => true);
+        adapter._finishInitialSyncAfterPages = jest.fn();
+        adapter._handleMessage(
+            JSON.stringify({
+                type: 'sync-response',
+                updates: [Buffer.from([1]).toString('base64')],
+                throughLogId: 9,
+                collaborationMessageHistory: []
+            })
+        );
+        expect(adapter._finishInitialSyncAfterPages).toHaveBeenCalled();
         expect(adapter._appliedLogId).toBe(9);
+    });
+
+    it('a sync page missing a chunk of a transaction applies nothing', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        adapter._appliedLogId = 3;
+        adapter._bridge = {
+            applyDocumentCatchUp: jest.fn(),
+            applyFullState: jest.fn(),
+            markDocumentBroken: jest.fn()
+        };
+        const close = jest.fn();
+        adapter._ws = { readyState: 1, send: jest.fn(), close };
+        const chunk = (index, total) => {
+            const txn = Buffer.from('tx-1');
+            const payload = new Uint8Array(12 + txn.length + 1);
+            const view = new DataView(payload.buffer);
+            view.setUint32(0, index, false);
+            view.setUint32(4, total, false);
+            view.setUint32(8, txn.length, false);
+            payload.set(txn, 12);
+            return payload;
+        };
+        adapter._pendingTailFrames = [
+            { type: 2, logId: 4, payload: chunk(0, 2) }
+        ];
+        adapter._pendingSyncPageMeta = {
+            hasMore: true,
+            throughLogId: 4,
+            serverStateVector: new Uint8Array()
+        };
+        adapter._finishFramedSyncPage(4);
+        expect(adapter._bridge.applyFullState).not.toHaveBeenCalled();
+        expect(adapter._appliedLogId).toBe(3);
+        expect(adapter._terminalCloseDetail).toMatch(/1 of 2 chunks/);
+        adapter._destroyed = true;
     });
 
     it('applies glyph-room sync-response to that shard without rewriting font-core', () => {
@@ -2147,6 +2417,7 @@ describe('CloudAdapter outbound updates', () => {
         });
         adapter._bridge = {
             applyRemoteUpdate: jest.fn(() => true),
+            advanceBroadcastLogCursor: jest.fn(),
             onLocalUpdate: jest.fn(),
             offLocalUpdate: jest.fn()
         };
@@ -2158,13 +2429,33 @@ describe('CloudAdapter outbound updates', () => {
         adapter._clientId = 'client-1';
         adapter._status = 'connected';
         adapter._hasSynced = true;
+        // Every packet's WAL row exists, so the queue sends it.
+        adapter._wal = {
+            transactionIdsFor: () => ({ has: () => true }),
+            isHeldStaged: () => false,
+            hasPendingDependencies: () => false,
+            acknowledgeMany: jest.fn(async () => {}),
+            pendingCountFor: () => 0,
+            pendingCount: 0,
+            onChange: () => () => {}
+        };
 
         try {
-            adapter._enqueueOutboundPacket(new Uint8Array([1, 2, 3]));
+            adapter._enqueueOutboundPacket(
+                new Uint8Array([1, 2, 3]),
+                makeLiveCollabMessage({
+                    transactionId: 2,
+                    path: 'glyphs.A:name'
+                })
+            );
             await Promise.resolve();
 
             expect(adapter.transferActivity).toBe('sending');
             expect(activities[activities.length - 1]).toBe('sending');
+            // The room acknowledges it.
+            jest.runAllTicks();
+            expect(adapter._ws.send).toHaveBeenCalledTimes(1);
+            adapter._recordDurableAck(adapter._seq);
 
             jest.advanceTimersByTime(500);
             expect(adapter.transferActivity).toBe('idle');
@@ -2350,19 +2641,22 @@ describe('CloudAdapter durability failures', () => {
             throw new MetadataFreeRemoteUpdateError();
         });
 
-        adapter._bridge = { applyRemoteUpdate };
+        adapter._bridge = { applyRemoteUpdate, markDocumentBroken: jest.fn() };
         adapter._ws = { readyState: 1, close };
-        adapter._queueInboundUpdate({ update: new Uint8Array([1]) });
-        adapter._queueInboundUpdate({ update: new Uint8Array([2]) });
+        adapter._hasSynced = true;
+        adapter._appliedLogId = 0;
+        adapter._queueInboundUpdate({ update: new Uint8Array([1]), logId: 1 });
+        adapter._queueInboundUpdate({ update: new Uint8Array([2]), logId: 2 });
 
         adapter._flushPendingInboundUpdates();
 
         expect(applyRemoteUpdate).toHaveBeenCalledTimes(1);
         expect(adapter._pendingInboundUpdates).toEqual([]);
+        expect(adapter._appliedLogId).toBe(0);
         expect(close).toHaveBeenCalledWith(4000, 'remote-update-rejected');
     });
 
-    it('resyncs after a refused remote update and only gives up after repeated refusals', () => {
+    it('any refused remote update stops the document for good, without a resync', () => {
         const adapter = new CloudAdapter({ assetId: 'asset-123' });
         const close = jest.fn();
         const statuses = [];
@@ -2370,33 +2664,34 @@ describe('CloudAdapter durability failures', () => {
         const applyRemoteUpdate = jest.fn(() => {
             throw new Error('layer is missing');
         });
-        adapter._bridge = { applyRemoteUpdate };
+        const markDocumentBroken = jest.fn();
+        adapter._bridge = { applyRemoteUpdate, markDocumentBroken };
         adapter._ws = { readyState: 1, close };
+        adapter._hasSynced = true;
+        adapter._appliedLogId = 0;
 
-        adapter._queueInboundUpdate({ update: new Uint8Array([1]) });
-        adapter._queueInboundUpdate({ update: new Uint8Array([2]) });
+        adapter._queueInboundUpdate({ update: new Uint8Array([1]), logId: 1 });
+        adapter._queueInboundUpdate({ update: new Uint8Array([2]), logId: 2 });
         adapter._flushPendingInboundUpdates();
 
-        // The rest of the batch is dropped; the socket reconnects and
-        // bootstraps instead of staying dead.
+        // Nothing after the refused row applies, the cursor stays before it,
+        // and the room is never asked for its state to cover the hole.
         expect(applyRemoteUpdate).toHaveBeenCalledTimes(1);
+        expect(adapter._appliedLogId).toBe(0);
         expect(close).toHaveBeenCalledWith(4000, 'remote-update-rejected');
-        expect(adapter._terminalCloseDetail).toBeNull();
-        expect(
-            adapter._getTerminalCloseDetail(4000, 'remote-update-rejected')
-        ).toBeNull();
-        expect(statuses).toEqual(['connecting']);
-
-        adapter._inboundHaltedUntilReconnect = false;
-        adapter._applyRemoteUpdate(new Uint8Array([3]));
-        expect(adapter._terminalCloseDetail).toBeNull();
-
-        adapter._inboundHaltedUntilReconnect = false;
-        adapter._applyRemoteUpdate(new Uint8Array([4]));
         expect(adapter._terminalCloseDetail).toBe(
             'Cloud collaboration update rejected: layer is missing'
         );
+        expect(markDocumentBroken).toHaveBeenCalledWith(
+            'font-core',
+            expect.any(Error)
+        );
         expect(statuses[statuses.length - 1]).toBe('error');
+
+        // Later rows are refused too.
+        adapter._queueInboundUpdate({ update: new Uint8Array([3]), logId: 1 });
+        adapter._flushPendingInboundUpdates();
+        expect(applyRemoteUpdate).toHaveBeenCalledTimes(1);
     });
 
     it('marks the connection errored and closes on undurable ack', () => {
@@ -2509,16 +2804,24 @@ describe('CloudAdapter durability failures', () => {
         expect(adapter._terminalCloseDetail).toBeNull();
     });
 
-    it('without a session, a refused write drops this room’s unsent edits', () => {
-        const adapter = new CloudAdapter({ assetId: 'asset-123' });
-        const drop = jest
-            .spyOn(adapter, '_dropDurableTransactions')
-            .mockImplementation(() => {});
+    it('without a session, a refused write keeps this room’s unsent edits and sends nothing', () => {
+        const statuses = [];
+        const adapter = new CloudAdapter({
+            assetId: 'asset-123',
+            onConnectionStatus: (status, detail) =>
+                statuses.push({ status, detail })
+        });
+        const drop = jest.spyOn(adapter, '_dropDurableTransactions');
+        const acknowledge = jest.spyOn(adapter._wal, 'acknowledgeMany');
         jest.spyOn(adapter._wal, 'transactionIdsFor').mockReturnValue(
             new Set(['tx-1', 'tx-2'])
         );
+        const markDocumentBroken = jest.fn();
+        adapter._bridge = { markDocumentBroken };
         adapter._pendingOutboundPackets = [{ update: new Uint8Array([1]) }];
-        adapter._ws = { readyState: 1, close: jest.fn() };
+        const send = jest.fn();
+        adapter._ws = { readyState: 1, close: jest.fn(), send };
+        adapter._hasSynced = true;
 
         adapter._handleMessage(
             JSON.stringify({
@@ -2527,8 +2830,26 @@ describe('CloudAdapter durability failures', () => {
             })
         );
 
-        expect(drop).toHaveBeenCalledWith(['tx-1', 'tx-2']);
+        expect(drop).not.toHaveBeenCalled();
+        expect(acknowledge).not.toHaveBeenCalled();
         expect(adapter._pendingOutboundPackets).toEqual([]);
+        // Kept edits never mark the document broken: peer rows still apply.
+        expect(markDocumentBroken).not.toHaveBeenCalled();
+        expect(statuses.at(-1)).toEqual({
+            status: 'error',
+            detail: '2 unsent edits are kept because write access was removed.'
+        });
+        // A requeue from the WAL does not send them while read-only.
+        adapter._pendingOutboundPackets = [
+            {
+                update: new Uint8Array([1]),
+                clientTransactionId: 'tx-1',
+                collaborationMessage: {}
+            }
+        ];
+        adapter._outboundFlushScheduled = true;
+        adapter._flushPendingOutboundUpdates();
+        expect(send).not.toHaveBeenCalled();
     });
 
     it('a busy room reconnects later each time instead of reporting an error', () => {
@@ -2567,49 +2888,75 @@ describe('CloudAdapter durability failures', () => {
         expect(adapter._serverBusyCount).toBe(0);
     });
 
-    it('stops resending a packet the room rejects for its content', () => {
+    it('a packet the room refuses for its content stops the queue at once', () => {
         const adapter = new CloudAdapter({ assetId: 'asset-123' });
         const close = jest.fn();
-        adapter._ws = { readyState: 1, close };
-        const reject = () =>
-            adapter._handleMessage(
-                JSON.stringify({
-                    type: 'error',
-                    code: 'packet_too_large',
-                    message: 'packet_too_large'
-                })
-            );
-
-        for (let i = 0; i < 4; i += 1) {
-            reject();
-        }
-        expect(adapter._terminalCloseDetail).toBeNull();
-        expect(close).toHaveBeenLastCalledWith(4000, 'server-error');
-
-        reject();
-        expect(adapter._terminalCloseDetail).toContain('packet_too_large');
-        expect(close).toHaveBeenLastCalledWith(4000, 'update-rejected');
-    });
-
-    it('an acknowledged write resets the content rejection count', () => {
-        const adapter = new CloudAdapter({ assetId: 'asset-123' });
-        adapter._ws = { readyState: 1, close: jest.fn() };
-        const reject = () =>
-            adapter._handleMessage(
-                JSON.stringify({ type: 'error', message: 'Invalid Yjs update' })
-            );
-        for (let i = 0; i < 4; i += 1) {
-            reject();
-        }
+        const markDocumentBroken = jest.fn();
+        adapter._bridge = { markDocumentBroken };
+        adapter._ws = { readyState: 1, close, send: jest.fn() };
         adapter._handleMessage(
             JSON.stringify({
-                type: 'ack',
-                clientTransactionId: 'tx-1',
-                durable: true
+                type: 'error',
+                code: 'packet_too_large',
+                message: 'packet_too_large',
+                seq: 4
             })
         );
-        reject();
-        expect(adapter._terminalCloseDetail).toBeNull();
+        expect(adapter._terminalCloseDetail).toContain('packet_too_large');
+        expect(adapter._terminalCloseDetail).toContain('update 4');
+        expect(close).toHaveBeenLastCalledWith(4000, 'update-rejected');
+        expect(adapter._outboundHalt).toBeTruthy();
+        expect(markDocumentBroken).toHaveBeenCalledTimes(1);
+    });
+
+    it('a clock_gap refusal stops the queue, keeps the rows and sends nothing more', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        const close = jest.fn();
+        const send = jest.fn();
+        const markDocumentBroken = jest.fn();
+        adapter._bridge = { markDocumentBroken };
+        adapter._ws = { readyState: 1, close, send };
+        adapter._hasSynced = true;
+        const packet = {
+            update: new Uint8Array([1]),
+            collaborationMessage: makeLiveCollabMessage({
+                transactionId: 9,
+                path: 'glyphs.A:name'
+            }),
+            clientTransactionId: 'later-row'
+        };
+        adapter._pendingOutboundPackets = [packet];
+        adapter._wal = {
+            transactionIdsFor: () => new Set(['later-row']),
+            isHeldStaged: () => false,
+            replayableRecords: () => [],
+            pendingCountFor: () => 1,
+            onChange: () => () => {}
+        };
+        adapter._handleMessage(
+            JSON.stringify({
+                type: 'error',
+                code: 'clock_gap',
+                message: 'clock_gap',
+                seq: 3,
+                client: 77,
+                need: 12,
+                have: 10
+            })
+        );
+        expect(adapter._outboundHalt.name).toBe('CloudRefusalError');
+        expect(adapter._outboundHalt.seq).toBe(3);
+        expect(adapter._terminalCloseDetail).toContain(
+            'client 77 needs clock 12'
+        );
+        expect(markDocumentBroken).toHaveBeenCalledWith(
+            'font-core',
+            adapter._outboundHalt
+        );
+        adapter._outboundFlushScheduled = true;
+        adapter._flushPendingOutboundUpdates();
+        expect(send).not.toHaveBeenCalled();
+        expect(adapter._pendingOutboundPackets).toEqual([packet]);
     });
 
     it('reconnects without surfacing an error when the room reports stale access', () => {
@@ -3869,6 +4216,7 @@ describe('publishCloudDocumentUpdate', () => {
                 assetId: 'asset-123',
                 documentId: 'font-core',
                 update: new Uint8Array([1]),
+                clientId: 'http:test-session',
                 seq: 1
             })
         ).resolves.toBe(false);
@@ -3880,6 +4228,7 @@ describe('publishCloudDocumentUpdate', () => {
                 assetId: 'asset-123',
                 documentId: 'font-deps',
                 update: new Uint8Array([1]),
+                clientId: 'http:test-session',
                 seq: 1
             })
         ).resolves.toBe(false);
@@ -3900,6 +4249,7 @@ describe('publishCloudDocumentUpdate', () => {
                 assetId: 'asset-123',
                 documentId: 'glyph:abc-def',
                 update: new Uint8Array([1, 2, 3]),
+                clientId: 'http:test-session',
                 seq: 1
             })
         ).rejects.toThrow('Live glyph publish failed (403)');
@@ -3919,6 +4269,7 @@ describe('publishCloudDocumentUpdate', () => {
                 assetId: 'asset-123',
                 documentId: 'glyph:abc-def',
                 update: new Uint8Array([1, 2, 3]),
+                clientId: 'http:test-session',
                 seq: 1
             })
         ).resolves.toBe(false);
@@ -3940,6 +4291,7 @@ describe('publishCloudDocumentUpdate', () => {
                     assetId: 'asset-123',
                     documentId: 'glyph:abc-def',
                     update: new Uint8Array([1, 2, 3]),
+                    clientId: 'http:test-session',
                     seq: 1
                 })
             ).rejects.toThrow(`Live glyph publish failed (${status})`);
@@ -4315,7 +4667,7 @@ describe('HTTP seed (POST /state for new rooms)', () => {
         var sentMessages = [];
         var postUrls = [];
         var postOptions = [];
-        const bridgeState = new Uint8Array([99, 98, 97]);
+        const bridgeState = wholeDocState('seed');
 
         adapter._bridge = {
             encodeBridgeStateVector: function () {
@@ -4455,7 +4807,7 @@ describe('HTTP seed (POST /state for new rooms)', () => {
                 return new Uint8Array(0);
             },
             encodeBridgeState: function () {
-                return new Uint8Array([99, 98, 97]);
+                return wholeDocState('seed');
             },
             applyYDocUpdateSilent: jest.fn(),
             onLocalUpdate: jest.fn(),
@@ -4566,14 +4918,44 @@ describe('HTTP seed (POST /state for new rooms)', () => {
         }
     });
 
+    it('refuses to seed a room from a state that holds changes it could not place', async () => {
+        const adapter = new CloudAdapter({
+            assetId: 'asset-123',
+            websiteBaseUrl: 'https://counterpunch.space'
+        });
+        // The second of two updates from one client, without the first:
+        // a document that holds it keeps it pending.
+        const source = new Y.Doc();
+        source.getMap('m').set('a', 1);
+        const before = Y.encodeStateVector(source);
+        source.getMap('m').set('b', 2);
+        const second = Y.encodeStateAsUpdate(source, before);
+        const holder = new Y.Doc();
+        Y.applyUpdate(holder, second);
+        adapter._bridge = {
+            encodeBridgeState: () => Y.encodeStateAsUpdate(holder)
+        };
+        global.fetch = jest.fn();
+        await expect(
+            adapter._seedRoomViaHttp(
+                'token',
+                'https://rooms.example.com/room/asset-123'
+            )
+        ).rejects.toThrow(/could not place/);
+        expect(global.fetch).not.toHaveBeenCalled();
+    });
+
     it('rejects HTTP seed when the snapshot digest mismatches', async () => {
         const adapter = new CloudAdapter({
             assetId: 'asset-123',
             websiteBaseUrl: 'https://counterpunch.space'
         });
+        // One state for both: a fresh doc's random client id can change the
+        // encoded length, which would fail the size check first.
+        const seedState = wholeDocState('seed');
         adapter._bridge = {
             encodeBridgeState: function () {
-                return new Uint8Array([1, 2, 3]);
+                return seedState;
             }
         };
         global.fetch = jest.fn(async function () {
@@ -4582,7 +4964,7 @@ describe('HTTP seed (POST /state for new rooms)', () => {
                 status: 200,
                 headers: new Headers({
                     'X-Snapshot-Sha256': 'deadbeef',
-                    'X-Snapshot-Bytes': '3'
+                    'X-Snapshot-Bytes': String(seedState.length)
                 }),
                 json: async function () {
                     return { ok: true, checkpointLogId: 1 };
@@ -5298,13 +5680,22 @@ describe('large updates sent as several room transactions', () => {
         adapter._flushPendingOutboundUpdates();
         const first = decodeSentLiveUpdateFrame(send.mock.calls[0][0]);
 
-        adapter._noteServerError({ message: 'tail_full', code: 'tail_full' });
+        adapter._handleMessage(
+            JSON.stringify({
+                type: 'error',
+                code: 'tail_full',
+                message: 'tail_full',
+                retryable: true,
+                seq: first.seq
+            })
+        );
         expect(adapter._outboundAckSentAtBySeq.has(first.seq)).toBe(false);
         expect(send).toHaveBeenCalledTimes(1);
         jest.advanceTimersByTime(1_000);
         expect(send).toHaveBeenCalledTimes(2);
         const again = decodeSentLiveUpdateFrame(send.mock.calls[1][0]);
-        expect(again.seq).toBeGreaterThan(first.seq);
+        // A resent row keeps its seq: the room lifts a block only for it.
+        expect(again.seq).toBe(first.seq);
         expect(again.clientTransactionId).toBe(first.clientTransactionId);
         expect(Array.from(again.update)).toEqual(Array.from(first.update));
         adapter.disconnect();
@@ -5356,6 +5747,8 @@ describe('large updates sent as several room transactions', () => {
             applied.push({ bytes, envelopes });
             return true;
         });
+        adapter._hasSynced = true;
+        adapter._appliedLogId = 9;
         parts.forEach((part, index) => {
             adapter._queueInboundUpdate({
                 update: part.update,
@@ -5376,11 +5769,188 @@ describe('large updates sent as several room transactions', () => {
         adapter.disconnect();
     });
 
+    function partedPeerEdit(transactionId) {
+        const { doc, base, update } = largeEdit();
+        const envelope = makeLiveCollabMessage({
+            transactionId,
+            path: 'features'
+        });
+        const {
+            planOutboundParts
+        } = require('../js/cloud-adapter-outbound-parts.ts');
+        const parts = planOutboundParts({
+            update,
+            collaborationMessage: envelope
+        });
+        expect(parts.length).toBeGreaterThan(1);
+        return { doc, base, envelope, parts };
+    }
+
+    function queuePart(adapter, part, logId) {
+        adapter._queueInboundUpdate({
+            update: part.update,
+            collaborationMessages: part.collaborationMessage
+                ? [part.collaborationMessage]
+                : undefined,
+            logId,
+            clientId: 'peer'
+        });
+        adapter._flushPendingInboundUpdates();
+    }
+
+    it('a socket that goes between parts steps the cursor back so the room replays the held parts', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        const { parts } = partedPeerEdit(61);
+        adapter._applyRemoteUpdate = jest.fn(() => true);
+        adapter._hasSynced = true;
+        adapter._appliedLogId = 9;
+        queuePart(adapter, parts[0], 10);
+        expect(adapter._applyRemoteUpdate).not.toHaveBeenCalled();
+        expect(adapter._appliedLogId).toBe(10);
+        expect(adapter._partedInbound.size).toBe(1);
+
+        adapter._abandonSocketState();
+
+        // Row 10 is not in the document: the next sync asks from row 9.
+        expect(adapter._appliedLogId).toBe(9);
+        expect(adapter._partedInbound.size).toBe(0);
+        expect(adapter._partedHeldFromLogId).toBeNull();
+        adapter.disconnect();
+    });
+
+    it('a peer row between parts applies the held parts first, in log order', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        const { parts } = partedPeerEdit(62);
+        const order = [];
+        adapter._applyServerStateToBridge = jest.fn((bytes) => {
+            order.push({ kind: 'held', bytes });
+        });
+        adapter._applyRemoteUpdate = jest.fn((bytes) => {
+            order.push({ kind: 'row', bytes });
+            return true;
+        });
+        adapter._hasSynced = true;
+        adapter._appliedLogId = 9;
+        queuePart(adapter, parts[0], 10);
+        const peerRow = new Uint8Array([7, 7, 7]);
+        adapter._queueInboundUpdate({
+            update: peerRow,
+            collaborationMessages: [
+                makeLiveCollabMessage({ transactionId: 63, path: 'features' })
+            ],
+            logId: 11,
+            clientId: 'other-peer'
+        });
+        adapter._flushPendingInboundUpdates();
+
+        expect(order.map((entry) => entry.kind)).toEqual(['held', 'row']);
+        expect(Array.from(order[0].bytes)).toEqual(
+            Array.from(Y.mergeUpdates([parts[0].update]))
+        );
+        expect(Array.from(order[1].bytes)).toEqual(Array.from(peerRow));
+        expect(adapter._partedInbound.size).toBe(0);
+        expect(adapter._partedHeldFromLogId).toBeNull();
+        expect(adapter._appliedLogId).toBe(11);
+        // The cursor now names only rows in the document.
+        adapter._abandonSocketState();
+        expect(adapter._appliedLogId).toBe(11);
+        adapter.disconnect();
+    });
+
+    it('our own acked rows after held parts apply those parts before the cursor steps over', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        const { parts } = partedPeerEdit(64);
+        adapter._applyServerStateToBridge = jest.fn();
+        adapter._applyRemoteUpdate = jest.fn(() => true);
+        adapter._hasSynced = true;
+        adapter._appliedLogId = 9;
+        queuePart(adapter, parts[0], 10);
+        adapter._noteOwnRowsAcked({ lastLogId: 12, firstLogId: 11 });
+        expect(adapter._applyServerStateToBridge).toHaveBeenCalledTimes(1);
+        expect(adapter._partedInbound.size).toBe(0);
+        expect(adapter._appliedLogId).toBe(12);
+        adapter.disconnect();
+    });
+
+    it('a held part that does not integrate fails the document instead of moving on', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        const { parts } = partedPeerEdit(65);
+        const markDocumentBroken = jest.fn();
+        adapter._bridge = { markDocumentBroken };
+        adapter._ws = { readyState: 1, close: jest.fn() };
+        adapter._applyServerStateToBridge = jest.fn(() => {
+            throw new Error('gap');
+        });
+        adapter._applyRemoteUpdate = jest.fn(() => true);
+        adapter._hasSynced = true;
+        adapter._appliedLogId = 9;
+        queuePart(adapter, parts[0], 10);
+        adapter._queueInboundUpdate({
+            update: new Uint8Array([1]),
+            logId: 11,
+            clientId: 'other-peer'
+        });
+        adapter._flushPendingInboundUpdates();
+        expect(markDocumentBroken).toHaveBeenCalled();
+        expect(adapter._applyRemoteUpdate).not.toHaveBeenCalled();
+        expect(adapter._appliedLogId).toBe(10);
+        adapter.disconnect();
+    });
+
+    it('a cleared cursor (rebaseline) stays cleared when the socket goes with held parts', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        const { parts } = partedPeerEdit(66);
+        adapter._applyRemoteUpdate = jest.fn(() => true);
+        adapter._hasSynced = true;
+        adapter._appliedLogId = 9;
+        queuePart(adapter, parts[0], 10);
+        // rebaseline-required clears the cursor before the socket closes.
+        adapter._appliedLogId = null;
+        adapter._abandonSocketState();
+        expect(adapter._appliedLogId).toBeNull();
+        expect(adapter._partedInbound.size).toBe(0);
+        expect(adapter._partedHeldFromLogId).toBeNull();
+        adapter.disconnect();
+    });
+
+    it('a JSON sync page applies held parts before its own rows', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        const { parts } = partedPeerEdit(67);
+        const order = [];
+        adapter._applyServerStateToBridge = jest.fn((bytes) => {
+            order.push({ kind: 'held', bytes });
+        });
+        adapter._applyRemoteUpdate = jest.fn(() => true);
+        adapter._hasSynced = true;
+        adapter._appliedLogId = 9;
+        queuePart(adapter, parts[0], 10);
+        adapter._applyServerState = jest.fn(() => {
+            order.push({ kind: 'page' });
+            return true;
+        });
+        adapter._finishInitialSyncAfterPages = jest.fn();
+        adapter._armInitialSyncTimeout = jest.fn();
+        adapter._handleMessage(
+            JSON.stringify({
+                type: 'sync-response',
+                updates: [Buffer.from([1, 2, 3]).toString('base64')],
+                throughLogId: 12
+            })
+        );
+        expect(order.map((entry) => entry.kind)).toEqual(['held', 'page']);
+        expect(adapter._partedInbound.size).toBe(0);
+        expect(adapter._partedHeldFromLogId).toBeNull();
+        expect(adapter._appliedLogId).toBe(12);
+        adapter.disconnect();
+    });
+
     it('publishes a large glyph update over HTTP part by part and waits out a full tail', async () => {
         const savedDelays = [...HTTP_PART_RETRY_DELAYS_MS];
         HTTP_PART_RETRY_DELAYS_MS.fill(0);
         const { doc, base, update } = largeEdit();
         const bodies = [];
+        const refusedSeqs = [];
+        const partSeqCalls = [];
         let refusedOnce = false;
         global.fetch = jest.fn(async (url, opts) => {
             // Only this edit's live posts: a timer left by another test can
@@ -5394,6 +5964,7 @@ describe('large updates sent as several room transactions', () => {
             }
             if (bodies.length === 1 && !refusedOnce) {
                 refusedOnce = true;
+                refusedSeqs.push(body.seq);
                 return {
                     ok: false,
                     status: 409,
@@ -5427,13 +5998,28 @@ describe('large updates sent as several room transactions', () => {
                 assetId: 'asset-123',
                 documentId: 'glyph:abc-def',
                 update,
+                clientId: 'http:test-session',
                 seq: 3,
+                partSeqs: (count) => {
+                    partSeqCalls.push(count);
+                    return Array.from({ length: count }, (_, i) => 3 + i * 2);
+                },
                 collaborationMessage: envelope,
                 clientTransactionId: 'tx-http-large'
             });
             expect(published).toBe(true);
             expect(refusedOnce).toBe(true);
             expect(bodies.length).toBeGreaterThan(1);
+            // One increasing seq per part, asked for once; the part sent
+            // again after the full tail keeps its seq.
+            expect(partSeqCalls).toEqual([bodies.length]);
+            expect(bodies.map((body) => body.seq)).toEqual(
+                bodies.map((_, i) => 3 + i * 2)
+            );
+            expect(refusedSeqs).toEqual([5]);
+            expect(new Set(bodies.map((body) => body.clientId))).toEqual(
+                new Set(['http:test-session'])
+            );
             const last = bodies[bodies.length - 1];
             expect(last.clientTransactionId).toBe('tx-http-large');
             expect(last.collaborationMessages[0].part).toBeUndefined();
@@ -5459,5 +6045,715 @@ describe('large updates sent as several room transactions', () => {
                 ...savedDelays
             );
         }
+    });
+});
+
+describe('one ordered outbound queue per document', () => {
+    const envelopes = new Map();
+    // One envelope per transaction number, made once (ids are generated).
+    const envelope = (n) => {
+        if (!envelopes.has(n)) {
+            envelopes.set(
+                n,
+                makeLiveCollabMessage({
+                    transactionId: n,
+                    path: 'glyphs.A:name'
+                })
+            );
+        }
+        return envelopes.get(n);
+    };
+    const {
+        collaborationMessageKey
+    } = require('../js/collaboration-message.ts');
+
+    beforeEach(() => envelopes.clear());
+
+    function queuedAdapter(walIds) {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        const send = jest.fn();
+        adapter._ws = { readyState: 1, send, close: jest.fn() };
+        adapter._bridge = {
+            onLocalUpdate: jest.fn(),
+            offLocalUpdate: jest.fn(),
+            advanceBroadcastLogCursor: jest.fn()
+        };
+        adapter._clientId = 'client-1';
+        adapter._wal = {
+            transactionIdsFor: () => walIds,
+            isHeldStaged: () => false,
+            hasPendingDependencies: () => false,
+            replayableRecords: () => [],
+            acknowledgeMany: jest.fn(async () => {}),
+            pendingCountFor: () => 0,
+            pendingCount: 0,
+            onChange: () => () => {}
+        };
+        return { adapter, send };
+    }
+
+    it('refuses a packet without an envelope', () => {
+        const { adapter } = queuedAdapter(new Set());
+        expect(() =>
+            adapter._enqueueOutboundPacket(new Uint8Array([1]))
+        ).toThrow(/without a collaboration envelope/);
+        expect(adapter._pendingOutboundPackets).toEqual([]);
+    });
+
+    it('sends only a prefix: a packet without its WAL row holds back later ones', () => {
+        const ids = [1, 2, 3].map((n) => collaborationMessageKey(envelope(n)));
+        // Rows 1 and 3 are written; row 2 is not yet.
+        const { adapter, send } = queuedAdapter(new Set([ids[0], ids[2]]));
+        adapter._hasSynced = true;
+        for (const n of [1, 2, 3]) {
+            adapter._enqueueOutboundPacket(new Uint8Array([n]), envelope(n));
+        }
+        adapter._outboundFlushScheduled = true;
+        adapter._flushPendingOutboundUpdates();
+        expect(send).toHaveBeenCalledTimes(1);
+        expect(
+            adapter._pendingOutboundPackets.map((p) => p.clientTransactionId)
+        ).toEqual([ids[1], ids[2]]);
+        adapter._destroyed = true;
+    });
+
+    it('sends nothing before the first sync completes', () => {
+        const id = collaborationMessageKey(envelope(1));
+        const { adapter, send } = queuedAdapter(new Set([id]));
+        adapter._enqueueOutboundPacket(new Uint8Array([1]), envelope(1));
+        adapter._outboundFlushScheduled = true;
+        adapter._flushPendingOutboundUpdates();
+        expect(send).not.toHaveBeenCalled();
+        expect(adapter._pendingOutboundPackets).toHaveLength(1);
+        adapter._destroyed = true;
+    });
+
+    it('a close puts unacknowledged packets back in send order, ahead of the queue', () => {
+        const ids = [1, 2, 3].map((n) => collaborationMessageKey(envelope(n)));
+        const { adapter, send } = queuedAdapter(new Set([ids[0], ids[1]]));
+        adapter._hasSynced = true;
+        for (const n of [1, 2, 3]) {
+            adapter._enqueueOutboundPacket(new Uint8Array([n]), envelope(n));
+        }
+        adapter._outboundFlushScheduled = true;
+        adapter._flushPendingOutboundUpdates();
+        expect(send).toHaveBeenCalledTimes(2);
+        expect(adapter._inFlightPackets).toHaveLength(2);
+        // The socket times out before any ack.
+        adapter._abandonSocketState();
+        expect(
+            adapter._pendingOutboundPackets.map((p) => p.clientTransactionId)
+        ).toEqual(ids);
+        expect(adapter._inFlightPackets).toEqual([]);
+        expect(adapter._outboundPendingTransactionIds.size).toBe(0);
+        adapter._destroyed = true;
+    });
+
+    function sentFrames(send) {
+        return send.mock.calls.map((call) =>
+            decodeSentLiveUpdateFrame(call[0])
+        );
+    }
+
+    it.each(['tail_full', 'rate_limit', 'journal_failed'])(
+        'a transient %s holds the queue at its seq and resends from it in order with the same seqs',
+        (code) => {
+            jest.useFakeTimers();
+            try {
+                const ids = [1, 2, 3].map((n) =>
+                    collaborationMessageKey(envelope(n))
+                );
+                const { adapter, send } = queuedAdapter(new Set(ids));
+                const markDocumentBroken = jest.fn();
+                adapter._bridge.markDocumentBroken = markDocumentBroken;
+                adapter._hasSynced = true;
+                for (const n of [1, 2, 3]) {
+                    adapter._enqueueOutboundPacket(
+                        new Uint8Array([n]),
+                        envelope(n)
+                    );
+                }
+                adapter._outboundFlushScheduled = true;
+                adapter._flushPendingOutboundUpdates();
+                const first = sentFrames(send);
+                expect(first.map((f) => f.clientTransactionId)).toEqual(ids);
+                adapter._recordDurableAck(first[0].seq);
+
+                adapter._handleMessage(
+                    JSON.stringify({
+                        type: 'error',
+                        code,
+                        message: code,
+                        retryable: true,
+                        seq: first[1].seq
+                    })
+                );
+                // A later row the room held behind it: same code, own seq.
+                adapter._handleMessage(
+                    JSON.stringify({
+                        type: 'error',
+                        code,
+                        message: code,
+                        retryable: true,
+                        seq: first[2].seq,
+                        refusedSeq: first[1].seq
+                    })
+                );
+                expect(markDocumentBroken).not.toHaveBeenCalled();
+                expect(adapter._outboundHalt).toBeNull();
+                expect(adapter._terminalCloseDetail).toBeNull();
+                expect(adapter._ws.close).not.toHaveBeenCalled();
+                expect(
+                    adapter._pendingOutboundPackets.map(
+                        (p) => p.clientTransactionId
+                    )
+                ).toEqual([ids[1], ids[2]]);
+                // Nothing goes out during the backoff, even on a flush.
+                adapter._outboundFlushScheduled = true;
+                adapter._flushPendingOutboundUpdates();
+                expect(send).toHaveBeenCalledTimes(3);
+
+                jest.advanceTimersByTime(1_000);
+                const resent = sentFrames(send).slice(3);
+                expect(resent.map((f) => f.clientTransactionId)).toEqual([
+                    ids[1],
+                    ids[2]
+                ]);
+                expect(resent.map((f) => f.seq)).toEqual([
+                    first[1].seq,
+                    first[2].seq
+                ]);
+                adapter._destroyed = true;
+            } finally {
+                jest.useRealTimers();
+            }
+        }
+    );
+
+    it('prior_refused after a transient refusal reconnects and resends instead of breaking the document', () => {
+        jest.useFakeTimers();
+        try {
+            const ids = [1, 2].map((n) => collaborationMessageKey(envelope(n)));
+            const { adapter, send } = queuedAdapter(new Set(ids));
+            const markDocumentBroken = jest.fn();
+            adapter._bridge.markDocumentBroken = markDocumentBroken;
+            adapter._hasSynced = true;
+            for (const n of [1, 2]) {
+                adapter._enqueueOutboundPacket(
+                    new Uint8Array([n]),
+                    envelope(n)
+                );
+            }
+            adapter._outboundFlushScheduled = true;
+            adapter._flushPendingOutboundUpdates();
+            const [a, b] = sentFrames(send);
+            // An older room: no seq on tail_full, and the later row gets
+            // prior_refused naming the transient one.
+            adapter._handleMessage(
+                JSON.stringify({
+                    type: 'error',
+                    code: 'tail_full',
+                    message: 'tail_full',
+                    seq: a.seq
+                })
+            );
+            adapter._handleMessage(
+                JSON.stringify({
+                    type: 'error',
+                    code: 'prior_refused',
+                    message: 'prior_refused',
+                    seq: b.seq,
+                    refusedSeq: a.seq
+                })
+            );
+            expect(markDocumentBroken).not.toHaveBeenCalled();
+            expect(adapter._outboundHalt).toBeNull();
+            expect(adapter._ws.close).toHaveBeenCalledWith(
+                4000,
+                'resend-after-transient-refusal'
+            );
+            adapter._abandonSocketState();
+            expect(adapter._transientHold).toBeNull();
+            expect(
+                adapter._pendingOutboundPackets.map(
+                    (p) => p.clientTransactionId
+                )
+            ).toEqual(ids);
+            expect(adapter._seqFor(ids[0])).toBe(a.seq);
+            expect(adapter._seqFor(ids[1])).toBe(b.seq);
+            adapter._destroyed = true;
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it('prior_refused after a permanent refusal stays terminal', () => {
+        const ids = [1, 2].map((n) => collaborationMessageKey(envelope(n)));
+        const { adapter, send } = queuedAdapter(new Set(ids));
+        const markDocumentBroken = jest.fn();
+        adapter._bridge.markDocumentBroken = markDocumentBroken;
+        adapter._hasSynced = true;
+        for (const n of [1, 2]) {
+            adapter._enqueueOutboundPacket(new Uint8Array([n]), envelope(n));
+        }
+        adapter._outboundFlushScheduled = true;
+        adapter._flushPendingOutboundUpdates();
+        const [a, b] = sentFrames(send);
+        adapter._handleMessage(
+            JSON.stringify({
+                type: 'error',
+                code: 'clock_gap',
+                message: 'clock_gap',
+                seq: a.seq
+            })
+        );
+        expect(adapter._outboundHalt.code).toBe('clock_gap');
+        adapter._handleMessage(
+            JSON.stringify({
+                type: 'error',
+                code: 'prior_refused',
+                message: 'prior_refused',
+                seq: b.seq,
+                refusedSeq: a.seq
+            })
+        );
+        expect(markDocumentBroken).toHaveBeenCalled();
+        expect(adapter._outboundHalt.code).toBe('clock_gap');
+        adapter._destroyed = true;
+    });
+
+    it('a row held behind a viewer refusal is kept, never resent or broken', () => {
+        jest.useFakeTimers();
+        try {
+            const ids = [1, 2].map((n) => collaborationMessageKey(envelope(n)));
+            const { adapter, send } = queuedAdapter(new Set(ids));
+            const markDocumentBroken = jest.fn();
+            adapter._bridge.markDocumentBroken = markDocumentBroken;
+            adapter._hasSynced = true;
+            for (const n of [1, 2]) {
+                adapter._enqueueOutboundPacket(
+                    new Uint8Array([n]),
+                    envelope(n)
+                );
+            }
+            adapter._outboundFlushScheduled = true;
+            adapter._flushPendingOutboundUpdates();
+            const [a, b] = sentFrames(send);
+            adapter._handleMessage(
+                JSON.stringify({
+                    type: 'error',
+                    message: 'Write access requires owner or editor role',
+                    seq: a.seq
+                })
+            );
+            const status = adapter._lastStatusDetail;
+            // The room holds the later row behind the refusal.
+            adapter._handleMessage(
+                JSON.stringify({
+                    type: 'error',
+                    code: 'Forbidden',
+                    message: 'Forbidden',
+                    retryable: true,
+                    seq: b.seq,
+                    refusedSeq: a.seq
+                })
+            );
+            expect(markDocumentBroken).not.toHaveBeenCalled();
+            expect(adapter._transientHold).toBeNull();
+            expect(adapter._pendingOutboundPackets).toEqual([]);
+            expect(adapter._lastStatusDetail).toBe(status);
+            jest.advanceTimersByTime(20_000);
+            expect(send).toHaveBeenCalledTimes(2);
+            adapter._destroyed = true;
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it('an acked packet is not put back after a close', () => {
+        const ids = [1, 2].map((n) => collaborationMessageKey(envelope(n)));
+        const { adapter } = queuedAdapter(new Set(ids));
+        adapter._hasSynced = true;
+        for (const n of [1, 2]) {
+            adapter._enqueueOutboundPacket(new Uint8Array([n]), envelope(n));
+        }
+        adapter._outboundFlushScheduled = true;
+        adapter._flushPendingOutboundUpdates();
+        adapter._recordDurableAck(1);
+        adapter._abandonSocketState();
+        expect(
+            adapter._pendingOutboundPackets.map((p) => p.clientTransactionId)
+        ).toEqual([ids[1]]);
+        adapter._destroyed = true;
+    });
+
+    it('a viewer’s edit is refused loudly, never dropped silently', () => {
+        const { adapter } = queuedAdapter(new Set());
+        adapter.cacheAssetRole('asset-123', 'viewer');
+        expect(() =>
+            adapter._enqueueOutboundPacket(new Uint8Array([1]), envelope(1))
+        ).toThrow(/read-only/);
+    });
+
+    const { EnvelopeTooLargeError } = require('../js/cloud-envelope-budget.ts');
+    const {
+        MAX_METADATA_BYTES
+    } = require('../js/generated/collab-protocol-limits.ts');
+    // No lossless step shortens a label, so this never fits.
+    const oversized = (n) => ({
+        ...envelope(n),
+        label: 'x'.repeat(MAX_METADATA_BYTES + 16)
+    });
+
+    it('an envelope too large to fit keeps its packet queued, halts and marks the document broken', () => {
+        const message = oversized(1);
+        const id = collaborationMessageKey(message);
+        const { adapter, send } = queuedAdapter(new Set([id]));
+        adapter._bridge.markDocumentBroken = jest.fn();
+        adapter._hasSynced = true;
+        expect(() =>
+            adapter._enqueueOutboundPacket(new Uint8Array([1]), message)
+        ).toThrow(EnvelopeTooLargeError);
+        expect(
+            adapter._pendingOutboundPackets.map((p) => p.clientTransactionId)
+        ).toEqual([id]);
+        expect(adapter._bridge.markDocumentBroken).toHaveBeenCalledWith(
+            adapter._documentId,
+            expect.any(EnvelopeTooLargeError)
+        );
+        adapter._outboundFlushScheduled = true;
+        adapter._flushPendingOutboundUpdates();
+        expect(send).not.toHaveBeenCalled();
+        expect(adapter._pendingOutboundPackets).toHaveLength(1);
+        adapter._destroyed = true;
+    });
+
+    it('a queued packet whose envelope no longer fits stops the flush at it', () => {
+        const ids = [1, 2].map((n) => collaborationMessageKey(envelope(n)));
+        const { adapter, send } = queuedAdapter(new Set(ids));
+        adapter._bridge.markDocumentBroken = jest.fn();
+        adapter._hasSynced = true;
+        adapter._enqueueOutboundPacket(new Uint8Array([1]), envelope(1));
+        // As a WAL restore of an oversized row would queue it.
+        adapter._pendingOutboundPackets.push({
+            update: new Uint8Array([2]),
+            collaborationMessage: oversized(2),
+            clientTransactionId: ids[1]
+        });
+        adapter._outboundFlushScheduled = true;
+        adapter._flushPendingOutboundUpdates();
+        expect(send).toHaveBeenCalledTimes(1);
+        expect(
+            adapter._pendingOutboundPackets.map((p) => p.clientTransactionId)
+        ).toEqual([ids[1]]);
+        expect(adapter._outboundHalt).toBeInstanceOf(EnvelopeTooLargeError);
+        expect(adapter._bridge.markDocumentBroken).toHaveBeenCalledTimes(1);
+        adapter._destroyed = true;
+    });
+
+    it('drains held rows when the engine reports this document loaded', () => {
+        const { adapter } = queuedAdapter(new Set());
+        let loaded = null;
+        const unsubscribe = jest.fn();
+        adapter._bridge.onDocumentLoaded = jest.fn((listener) => {
+            loaded = listener;
+            return unsubscribe;
+        });
+        const drain = jest
+            .spyOn(adapter, 'drainDeltasHeldUntilLoaded')
+            .mockImplementation(() => {});
+        adapter._registerOutboundHook();
+        loaded('glyph:other');
+        expect(drain).not.toHaveBeenCalled();
+        loaded(adapter._documentId);
+        expect(drain).toHaveBeenCalledTimes(1);
+        adapter._localUpdateUnsubscribe();
+        expect(unsubscribe).toHaveBeenCalledTimes(1);
+        adapter._destroyed = true;
+    });
+});
+
+describe('nothing from the room is skipped or retried past a refusal', () => {
+    const {
+        assembleTailTransactionsFromFrames,
+        decodeCollabLiveFrames,
+        CollabFrameError
+    } = require('../js/cloud-adapter-frames.ts');
+    const {
+        isTerminalDocumentError
+    } = require('../js/cloud-adapter-support.ts');
+
+    function rowPayload({ chunk = 0, total = 1, txn = 'tx', blob = [1] }) {
+        const txnBytes = new TextEncoder().encode(txn);
+        const out = new Uint8Array(12 + txnBytes.length + blob.length);
+        const view = new DataView(out.buffer);
+        view.setUint32(0, chunk, false);
+        view.setUint32(4, total, false);
+        view.setUint32(8, txnBytes.length, false);
+        out.set(txnBytes, 12);
+        out.set(blob, 12 + txnBytes.length);
+        return out;
+    }
+
+    it('a row payload under its header throws instead of being skipped', () => {
+        expect(() =>
+            assembleTailTransactionsFromFrames([
+                { type: 2, logId: 1, payload: new Uint8Array([0, 0, 1]) }
+            ])
+        ).toThrow(CollabFrameError);
+    });
+
+    it('a chunked transaction still incomplete at the end throws', () => {
+        expect(() =>
+            assembleTailTransactionsFromFrames([
+                {
+                    type: 2,
+                    logId: 1,
+                    payload: rowPayload({ chunk: 0, total: 2, blob: [1] })
+                }
+            ])
+        ).toThrow('ended with 1 of 2 chunks');
+        expect(
+            assembleTailTransactionsFromFrames([
+                {
+                    type: 2,
+                    logId: 1,
+                    payload: rowPayload({ chunk: 0, total: 2, blob: [1] })
+                },
+                {
+                    type: 2,
+                    logId: 2,
+                    payload: rowPayload({ chunk: 1, total: 2, blob: [2] })
+                }
+            ]).map((u) => Array.from(u))
+        ).toEqual([[1, 2]]);
+    });
+
+    it('a truncated binary frame throws and is a terminal document error', () => {
+        const bytes = new Uint8Array(16 + 2);
+        const view = new DataView(bytes.buffer);
+        view.setUint32(0, 2, false);
+        view.setUint32(12, 10, false);
+        let error = null;
+        try {
+            decodeCollabLiveFrames(bytes);
+        } catch (caught) {
+            error = caught;
+        }
+        expect(error).toBeInstanceOf(CollabFrameError);
+        expect(isTerminalDocumentError(error)).toBe(true);
+    });
+
+    it('a malformed binary message stops the document', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        const markDocumentBroken = jest.fn();
+        adapter._bridge = { markDocumentBroken };
+        const close = jest.fn();
+        adapter._ws = { readyState: 1, close };
+        const bytes = new Uint8Array(20);
+        new DataView(bytes.buffer).setUint32(12, 99, false);
+        adapter._handleBinaryFanout(bytes);
+        expect(markDocumentBroken).toHaveBeenCalled();
+        expect(close).toHaveBeenCalledWith(4000, 'protocol-error');
+    });
+
+    it.each([
+        [{ code: 'clock_gap', seq: 3, client: 7, need: 4, have: 2 }],
+        [{ code: 'prior_refused', seq: 4, refusedSeq: 3 }],
+        [{ code: 'metadata_too_large', seq: 5 }]
+    ])(
+        'the socket refusal %j halts the queue and marks the document broken',
+        (refusal) => {
+            const adapter = new CloudAdapter({ assetId: 'asset-123' });
+            const send = jest.fn();
+            const close = jest.fn();
+            const markDocumentBroken = jest.fn();
+            adapter._bridge = { markDocumentBroken };
+            adapter._ws = { readyState: 1, close, send };
+            adapter._hasSynced = true;
+            adapter._handleMessage(
+                JSON.stringify({
+                    type: 'error',
+                    message: refusal.code,
+                    ...refusal
+                })
+            );
+            expect(adapter._outboundHalt.name).toBe('CloudRefusalError');
+            expect(adapter._outboundHalt.code).toBe(refusal.code);
+            expect(adapter._outboundHalt.seq).toBe(refusal.seq);
+            expect(markDocumentBroken).toHaveBeenCalledWith(
+                'font-core',
+                adapter._outboundHalt
+            );
+            expect(close).toHaveBeenCalledWith(4000, 'update-rejected');
+            expect(send).not.toHaveBeenCalled();
+        }
+    );
+
+    it('unreadable JSON from the room stops the document', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        const markDocumentBroken = jest.fn();
+        adapter._bridge = { markDocumentBroken };
+        adapter._ws = { readyState: 1, close: jest.fn() };
+        adapter._handleMessage('{not json');
+        expect(markDocumentBroken).toHaveBeenCalled();
+        expect(adapter._terminalCloseDetail).toContain('unreadable message');
+    });
+
+    it.each(['clock_gap', 'prior_refused'])(
+        'an HTTP 409 %s is a refusal, never retried like tail_full',
+        async (code) => {
+            const originalFetch = global.fetch;
+            global.fetch = jest.fn(async () => ({
+                ok: false,
+                status: 409,
+                json: async () => ({ code, seq: 4, refusedSeq: 3 })
+            }));
+            try {
+                let error = null;
+                try {
+                    await publishCloudDocumentUpdate({
+                        token: 't',
+                        roomUrl: 'wss://rooms.example.com/room/asset-123',
+                        websiteBaseUrl: 'https://editor.counterpunch.space',
+                        assetId: 'asset-123',
+                        documentId: 'glyph:abc',
+                        update: new Uint8Array([1, 2, 3]),
+                        clientId: 'http:test-session',
+                        seq: 4,
+                        collaborationMessage: { transactionId: 'tx-1' }
+                    });
+                } catch (caught) {
+                    error = caught;
+                }
+                expect(error?.name).toBe('CloudRefusalError');
+                expect(error.code).toBe(code);
+                expect(error.status).toBe(409);
+                expect(isTerminalDocumentError(error)).toBe(true);
+                expect(global.fetch).toHaveBeenCalledTimes(1);
+            } finally {
+                global.fetch = originalFetch;
+            }
+        }
+    );
+
+    it('a requeued row is resent with its original seq', () => {
+        const adapter = new CloudAdapter({ assetId: 'asset-123' });
+        adapter._bridge = { advanceBroadcastLogCursor: jest.fn() };
+        const send = jest.fn();
+        adapter._ws = { readyState: 1, send, close: jest.fn() };
+        adapter._hasSynced = true;
+        const packet = {
+            update: new Uint8Array([1, 2]),
+            collaborationMessage: makeLiveCollabMessage({
+                transactionId: 21,
+                path: 'glyphs.A:name'
+            }),
+            clientTransactionId: 'row-1'
+        };
+        adapter._wal = {
+            transactionIdsFor: () => new Set(['row-1']),
+            isHeldStaged: () => false,
+            replayableRecords: () => [],
+            pendingCountFor: () => 1,
+            hasPendingDependencies: () => false,
+            onChange: () => () => {},
+            recordsFor: () => [{ clientTransactionId: 'row-1' }],
+            acknowledgeMany: async () => {},
+            isLoaded: true
+        };
+        adapter._pendingOutboundPackets = [packet];
+        adapter._outboundFlushScheduled = true;
+        adapter._flushPendingOutboundUpdates();
+        expect(send).toHaveBeenCalledTimes(1);
+        const first = decodeSentLiveUpdateFrame(send.mock.calls[0][0]);
+
+        // The socket closes before the ack; a later packet took a seq.
+        adapter._seq += 5;
+        adapter._requeueUnackedOutboxPackets();
+        adapter._outboundFlushScheduled = true;
+        adapter._flushPendingOutboundUpdates();
+        expect(send).toHaveBeenCalledTimes(2);
+        const again = decodeSentLiveUpdateFrame(send.mock.calls[1][0]);
+        expect(again.clientTransactionId).toBe('row-1');
+        expect(again.seq).toBe(first.seq);
+
+        // Acked: a new row gets a new seq.
+        adapter._recordDurableAck(first.seq);
+        expect(adapter._seqByTransactionId.has('row-1')).toBe(false);
+    });
+});
+
+describe('deltas for a document this window has not loaded', () => {
+    function glyphAdapter() {
+        const adapter = new CloudAdapter({
+            assetId: 'asset-123',
+            documentId: 'glyph:A'
+        });
+        let loaded = false;
+        const applied = [];
+        adapter._bridge = {
+            getDocumentInstance: () => (loaded ? {} : null),
+            applyRemoteUpdate: jest.fn((update) => applied.push(update[0])),
+            markDocumentBroken: jest.fn()
+        };
+        const close = jest.fn();
+        adapter._ws = { readyState: 1, close, send: jest.fn() };
+        adapter._hasSynced = true;
+        adapter._appliedLogId = 4;
+        return {
+            adapter,
+            applied,
+            close,
+            load: () => {
+                loaded = true;
+            }
+        };
+    }
+
+    it('are held in order, never applied early, and apply after the load', () => {
+        const { adapter, applied, close, load } = glyphAdapter();
+        adapter._queueInboundUpdate({ update: new Uint8Array([5]), logId: 5 });
+        adapter._queueInboundUpdate({ update: new Uint8Array([6]), logId: 6 });
+        adapter._flushPendingInboundUpdates();
+
+        expect(applied).toEqual([]);
+        expect(adapter.heldUntilLoadedCount).toBe(2);
+        expect(adapter._appliedLogId).toBe(4);
+        // The document loads in full through a fresh sync.
+        expect(close).toHaveBeenCalledWith(4000, 'document-not-loaded');
+        adapter._abandonSocketState();
+        expect(adapter.heldUntilLoadedCount).toBe(2);
+
+        load();
+        adapter._queueInboundUpdate({ update: new Uint8Array([7]), logId: 7 });
+        adapter._flushPendingInboundUpdates();
+        expect(applied).toEqual([5, 6, 7]);
+        expect(adapter._appliedLogId).toBe(7);
+        expect(adapter.heldUntilLoadedCount).toBe(0);
+    });
+
+    it('a sync for a document not loaded asks for the full document', () => {
+        const { adapter } = glyphAdapter();
+        adapter._hasSynced = false;
+        adapter._checkpointLogId = 3;
+        adapter._sendInitialSyncRequest(adapter._ws);
+        const request = JSON.parse(adapter._ws.send.mock.calls[0][0]);
+        expect(request.appliedLogId).toBe(0);
+        expect(request.checkpointLogId).toBe(0);
+    });
+
+    it('rows the full load already carried are not applied twice', () => {
+        const { adapter, applied, load } = glyphAdapter();
+        adapter._queueInboundUpdate({ update: new Uint8Array([5]), logId: 5 });
+        adapter._queueInboundUpdate({ update: new Uint8Array([6]), logId: 6 });
+        adapter._flushPendingInboundUpdates();
+        // The full load reached row 5.
+        load();
+        adapter._appliedLogId = 5;
+        adapter.drainDeltasHeldUntilLoaded();
+        adapter._flushPendingInboundUpdates();
+        expect(applied).toEqual([6]);
+        expect(adapter._appliedLogId).toBe(6);
     });
 });

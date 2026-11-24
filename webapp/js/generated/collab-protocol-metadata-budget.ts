@@ -9,10 +9,19 @@
  * glyphs, layers and top-level keys from the document, so describing a change
  * at a coarser path (a whole layer, a whole glyph, a whole top-level key)
  * converges to the same state. This module shrinks envelopes in steps and
- * stops at the first step that fits. There is deliberately no whole-font step:
- * receivers refuse whole-font syncs, so an envelope that still does not fit
- * after the last step is reported as not fitting. Editor and room share this file, so both
- * sides produce identical results.
+ * stops at the first step that fits.
+ *
+ * Every step is lossless: it only describes the same change more coarsely.
+ * Nothing is ever cut from a list. The last step, ALL_GLYPHS_IN_DOCUMENT,
+ * replaces the glyph lists with `metadata.allGlyphsChanged: true`, which means
+ * “every glyph in the receiving document changed”: a receiver re-reads every
+ * glyph and every drawing of the document the packet belongs to, and works
+ * out replay targets (composites that use them) itself. Structural changes
+ * (glyph add, remove, rename, glyph order) and non-glyph keys keep their
+ * paths. There is deliberately no whole-font step: receivers refuse
+ * whole-font syncs, so an envelope that still does not fit after the last
+ * step is reported as not fitting, and the sender must refuse to send it.
+ * Editor and room share this file, so both sides produce identical results.
  *
  * Paths: `glyphs.<name>:layers.<id>:<rest>` for layer data, `glyphs.<name>:`
  * for a glyph root, otherwise dot-separated with `\.` escaping a literal dot.
@@ -27,13 +36,9 @@ export const METADATA_FIT_LEVEL = Object.freeze({
   SHARE_REPLAY_TARGETS: 2,
   COLLAPSE_TO_LAYERS: 3,
   COLLAPSE_TO_GLYPHS: 4,
-  CAP_LISTS: 5,
-  TRUNCATE_TARGETS: 6,
+  ALL_GLYPHS_IN_DOCUMENT: 5,
 });
 
-const MAX_LISTED_NAMES = 200;
-const MAX_LABEL_CHARS = 200;
-const MAX_TRUNCATED_TARGETS = 500;
 const encoder = new TextEncoder();
 
 export function jsonBytes(value) {
@@ -161,44 +166,32 @@ function collapseToGlyphs(envelope) {
   });
 }
 
-function capLists(envelope) {
-  const count = envelope.changes.length;
-  const label =
-    typeof envelope.label === "string" && envelope.label.length > MAX_LABEL_CHARS
-      ? envelope.label.slice(0, MAX_LABEL_CHARS)
-      : envelope.label;
-  return {
-    ...envelope,
-    label,
-    summary:
-      envelope.summary && envelope.summary.length > MAX_LABEL_CHARS
-        ? `${count} changes`
-        : envelope.summary,
-    metadata: {
-      ...envelope.metadata,
-      changedGlyphNames: (envelope.metadata.changedGlyphNames || []).slice(
-        0,
-        MAX_LISTED_NAMES,
-      ),
-      changedLayerIds: (envelope.metadata.changedLayerIds || []).slice(
-        0,
-        MAX_LISTED_NAMES,
-      ),
-    },
-  };
+/** Glyph data that the document-wide flag stands for. */
+function isGlyphDataChange(change) {
+  return (
+    !isStructuralChange(change) &&
+    !isStructuralGlyphRoot(change) &&
+    glyphRoot(change.path) !== null
+  );
 }
 
-function truncateTargets(envelope) {
-  return {
-    ...envelope,
-    metadata: {
+/**
+ * Widen to “every glyph in the receiving document changed”. Runs after
+ * COLLAPSE_TO_GLYPHS and SHARE_REPLAY_TARGETS, so glyph data is already one
+ * `glyphs.<name>:` set per glyph and no change carries its own targets.
+ */
+function allGlyphsInDocument(envelope) {
+  return withChanges(
+    envelope,
+    envelope.changes.filter((change) => !isGlyphDataChange(change)),
+    {
       ...envelope.metadata,
-      workerReplayTargets: (envelope.metadata.workerReplayTargets || []).slice(
-        0,
-        MAX_TRUNCATED_TARGETS,
-      ),
+      allGlyphsChanged: true,
+      changedGlyphNames: [],
+      changedLayerIds: [],
+      workerReplayTargets: [],
     },
-  };
+  );
 }
 
 const STEPS = [
@@ -206,8 +199,7 @@ const STEPS = [
   [METADATA_FIT_LEVEL.SHARE_REPLAY_TARGETS, shareReplayTargets],
   [METADATA_FIT_LEVEL.COLLAPSE_TO_LAYERS, collapseToLayers],
   [METADATA_FIT_LEVEL.COLLAPSE_TO_GLYPHS, collapseToGlyphs],
-  [METADATA_FIT_LEVEL.CAP_LISTS, capLists],
-  [METADATA_FIT_LEVEL.TRUNCATE_TARGETS, truncateTargets],
+  [METADATA_FIT_LEVEL.ALL_GLYPHS_IN_DOCUMENT, allGlyphsInDocument],
 ];
 
 /**
@@ -269,6 +261,10 @@ export function mergeCollaborationMessages(messages) {
   const glyphRevision = list.findLast(
     (message) => typeof message.glyphRevision === "string",
   )?.glyphRevision;
+  // One widened envelope widens the merge: its lists no longer name its glyphs.
+  const allGlyphsChanged = list.some(
+    (message) => message.metadata.allGlyphsChanged === true,
+  );
   return {
     ...first,
     changes,
@@ -277,6 +273,7 @@ export function mergeCollaborationMessages(messages) {
       changedGlyphNames: union((m) => m.changedGlyphNames || []),
       changedLayerIds: union((m) => m.changedLayerIds || []),
       workerReplayTargets: [...targets.values()],
+      ...(allGlyphsChanged ? { allGlyphsChanged: true } : {}),
     },
     summary: `${changes.length} changes`,
     ...(glyphRevision ? { glyphRevision } : {}),

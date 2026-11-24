@@ -8,7 +8,10 @@
  */
 
 const Y = require('yjs');
-const { PatchSyncEngine: ChangeBridge } = require('../js/patch-sync-engine');
+const {
+    PatchSyncEngine: ChangeBridge,
+    DrawingInvariantError
+} = require('../js/patch-sync-engine');
 const { WindowSync } = require('../js/window-sync');
 const {
     jsonToYDoc,
@@ -23,8 +26,10 @@ const {
     deleteJsonPath,
     getJsonPath,
     applyDrawingDelta,
-    ensureGlyphDrawingsMap
+    ensureGlyphDrawingsMap,
+    MissingDrawingError
 } = require('../js/change-bridge-ydoc');
+const { RestingDrawingWriteError } = require('../js/resting-drawing-json');
 const {
     buildHistoryStackItems,
     createLogEntry,
@@ -1182,8 +1187,20 @@ function applyCapturedPackets(receiver, packets, extraEntries) {
     }
 }
 
-const GENERIC_ACCESSOR_SPECS = collectWritableAccessorSpecs();
-const GENERIC_MUTABLE_GETTER_SPECS = collectMutableGetterSpecs();
+// A drawing's id and station are identity: changing one to a made-up value
+// breaks the drawing invariants and is refused (see the dedicated tests).
+// A glyph's name setter records the edit under the new name, a glyph with
+// no document; renames go through renameGlyphs.
+const isDrawingIdentitySpec = (spec) =>
+    (spec.className === 'Drawing' &&
+        (spec.property === 'id' || spec.property === 'station')) ||
+    (spec.className === 'Glyph' && spec.property === 'name');
+const GENERIC_ACCESSOR_SPECS = collectWritableAccessorSpecs().filter(
+    (spec) => !isDrawingIdentitySpec(spec)
+);
+const GENERIC_MUTABLE_GETTER_SPECS = collectMutableGetterSpecs().filter(
+    (spec) => !isDrawingIdentitySpec(spec)
+);
 const COLLECTION_MUTATOR_SPECS = collectCollectionMutatorSpecs();
 
 // ── Test setup ───────────────────────────────────────────────────────
@@ -1497,9 +1514,42 @@ describe('change-bridge-ydoc', () => {
         expect(fromYType(map)).toEqual({ 0: 'a', 1: 'b' });
     });
 
+    test('setYPath refuses a leaf write into a drawing the document does not hold', () => {
+        const doc = new Y.Doc();
+        const fontMap = doc.getMap('font');
+        const path = [
+            'glyphs',
+            'A',
+            'layers',
+            'layer-1',
+            'shapes',
+            0,
+            'nodes',
+            0,
+            'x'
+        ];
+
+        expect(() => setYPath(fontMap, path, 123)).toThrow(MissingDrawingError);
+        // Nothing was created to hold the write: no stub glyph or drawing.
+        expect(fontMap.get('glyphs')).toBeUndefined();
+
+        jsonToYDoc(makeMinimalFont(), fontMap);
+        expect(() =>
+            setYPath(
+                fontMap,
+                ['glyphs', 'A', 'layers', 'missing', 'width'],
+                500
+            )
+        ).toThrow(MissingDrawingError);
+        expect(
+            getYPath(fontMap, ['glyphs', 'A', 'layers', 'missing'])
+        ).toBeUndefined();
+    });
+
     test('setYPath applies logical node leaf paths to normalized geometry storage', () => {
         const doc = new Y.Doc();
         const fontMap = doc.getMap('font');
+        jsonToYDoc(makeMinimalFont(), fontMap);
 
         setYPath(
             fontMap,
@@ -1513,14 +1563,148 @@ describe('change-bridge-ydoc', () => {
             'layers',
             'layer-1'
         ]);
-        expect(drawingMap).toBeInstanceOf(Y.Map);
         expect(drawingMap.get('shapes')).toBeUndefined();
-        expect(drawingMap.get('geometryTopology')).toEqual(expect.any(String));
         expect(drawingMap.get('nodePositionsById')).toBeInstanceOf(Y.Map);
-
         const drawingJson = fromYType(drawingMap);
         expect(drawingJson.shapes[0].nodes[0].x).toBe(123);
         expect(drawingJson.shapes[0].nodes[0].y).toBe(0);
+        expect(() =>
+            setYPath(
+                fontMap,
+                [
+                    'glyphs',
+                    'A',
+                    'layers',
+                    'layer-1',
+                    'shapes',
+                    0,
+                    'nodes',
+                    99,
+                    'x'
+                ],
+                1
+            )
+        ).toThrow(MissingDrawingError);
+    });
+
+    test('setYPath refuses invalid width, station and id leaf writes', () => {
+        const doc = new Y.Doc();
+        const fontMap = doc.getMap('font');
+        jsonToYDoc(makeMinimalFont(), fontMap);
+        const drawingPath = ['glyphs', 'A', 'layers', 'layer-1'];
+        for (const [key, value] of [
+            ['width', Number.NaN],
+            ['width', null],
+            ['width', '600'],
+            ['master', 'master-regular'],
+            ['master', { type: 'DefaultForMaster', master: '' }],
+            ['id', 'other-id']
+        ]) {
+            expect(() =>
+                setYPath(fontMap, [...drawingPath, key], value)
+            ).toThrow(RestingDrawingWriteError);
+        }
+        expect(getYPath(fontMap, [...drawingPath, 'width'])).toBe(600);
+        expect(() =>
+            setYPath(fontMap, drawingPath, { width: Infinity })
+        ).toThrow(RestingDrawingWriteError);
+        expect(getYPath(fontMap, [...drawingPath, 'width'])).toBe(600);
+    });
+
+    test('writing a stored value again creates no Yjs item', () => {
+        const doc = new Y.Doc();
+        const fontMap = doc.getMap('font');
+        jsonToYDoc(makeMinimalFont(), fontMap);
+        const updates = [];
+        doc.on('update', (update) => updates.push(update));
+
+        setYPath(fontMap, ['glyphs', 'A', 'layers', 'layer-1', 'width'], 600);
+        setYPath(
+            fontMap,
+            ['glyphs', 'A', 'layers', 'layer-1', 'id'],
+            'layer-1'
+        );
+        applyDrawingDelta(fontMap, 'A', 'layer-1', {
+            id: 'layer-1',
+            width: 600,
+            master: { type: 'DefaultForMaster', master: 'master-regular' }
+        });
+        expect(updates).toHaveLength(0);
+
+        setYPath(fontMap, ['glyphs', 'A', 'layers', 'layer-1', 'width'], 610);
+        expect(updates).toHaveLength(1);
+    });
+
+    test('deleteYPath refuses to delete a drawing’s width, id or station', () => {
+        const doc = new Y.Doc();
+        const fontMap = doc.getMap('font');
+        jsonToYDoc(makeMinimalFont(), fontMap);
+        const drawingPath = ['glyphs', 'A', 'layers', 'layer-1'];
+        for (const key of ['width', 'id', 'master']) {
+            expect(() => deleteYPath(fontMap, [...drawingPath, key])).toThrow(
+                RestingDrawingWriteError
+            );
+        }
+        const drawing = getYPath(fontMap, drawingPath);
+        expect(drawing.get('width')).toBe(600);
+        expect(drawing.get('id')).toBe('layer-1');
+        expect(drawing.get('master')).toBeInstanceOf(Y.Map);
+    });
+
+    test('setYPath refuses a write it cannot place instead of dropping it', () => {
+        const doc = new Y.Doc();
+        const fontMap = doc.getMap('font');
+        jsonToYDoc(makeMinimalFont(), fontMap);
+        const updates = [];
+        doc.on('update', (update) => updates.push(update));
+
+        // A list entry that does not exist is never created as a stub.
+        expect(() => setYPath(fontMap, ['axes', 3, 'name'], 'Width')).toThrow(
+            MissingDrawingError
+        );
+        expect(() => setYPath(fontMap, ['axes', 9], { name: 'Width' })).toThrow(
+            MissingDrawingError
+        );
+        // A path through a plain value is refused.
+        expect(() => setYPath(fontMap, ['upm', 'x'], 1)).toThrow(TypeError);
+        expect(updates).toHaveLength(0);
+        expect(getYPath(fontMap, ['axes']).length).toBe(1);
+    });
+
+    test('a drawing without its own id is not given one on read', () => {
+        const doc = new Y.Doc();
+        const fontMap = doc.getMap('font');
+        jsonToYDoc(makeMinimalFont(), fontMap);
+        getYPath(fontMap, ['glyphs', 'A', 'layers', 'layer-1']).delete('id');
+        expect(() => yDocToJson(fontMap)).toThrow(MissingDrawingError);
+    });
+
+    test('glyph creation refuses a drawing without an id or station', () => {
+        const json = makeMinimalFont();
+        delete json.glyphs[0].layers[0].id;
+        expect(() => jsonToYDoc(json, new Y.Doc().getMap('font'))).toThrow(
+            RestingDrawingWriteError
+        );
+        const noStation = makeMinimalFont();
+        delete noStation.glyphs[0].layers[0].master;
+        expect(() => jsonToYDoc(noStation, new Y.Doc().getMap('font'))).toThrow(
+            /station link/
+        );
+    });
+
+    test('a drawing delta for a missing drawing must be a whole drawing', () => {
+        const doc = new Y.Doc();
+        const fontMap = doc.getMap('font');
+        jsonToYDoc(makeMinimalFont(), fontMap);
+        expect(() =>
+            applyDrawingDelta(fontMap, 'A', 'new-drawing', { width: 500 })
+        ).toThrow(RestingDrawingWriteError);
+        expect(
+            getYPath(fontMap, ['glyphs', 'A', 'layers', 'new-drawing'])
+        ).toBeUndefined();
+        expect(() =>
+            applyDrawingDelta(fontMap, 'missing-glyph', 'x', { width: 500 })
+        ).toThrow(MissingDrawingError);
     });
 
     test('jsonToYDoc rejects wrapped shapes at ingress', () => {
@@ -2587,6 +2771,11 @@ describe('ChangeBridge', () => {
         const encoded = bridge.encodeDocumentState(glyphDocumentId);
         expect(encoded.byteLength).toBeGreaterThan(0);
         const peer = new ChangeBridge('test-catalog-peer');
+        // The glyph's drawings name stations; the peer holds the core first.
+        peer.applyDocumentCheckpoint(
+            'font-core',
+            bridge.encodeDocumentState('font-core')
+        );
         peer.applyDocumentCheckpoint(glyphDocumentId, encoded);
         expect(peer.getYValue(['glyphs', 'A', 'name'])).toBe('A');
     });
@@ -2681,6 +2870,7 @@ describe('ChangeBridge', () => {
         const { bridge } = createTestBridge('test-1');
         bridge.recordAdd(['glyphs', 'C'], {
             name: 'C',
+            category: 'Base',
             layers: []
         });
         const glyphC = bridge.getYValue(['glyphs', 'C']);
@@ -2701,8 +2891,16 @@ describe('ChangeBridge', () => {
             compileChangeSource: 'model-edit',
             compileEditType: null
         });
-        bridge.recordAdd(['glyphs', 'C'], { name: 'C', layers: [] });
-        bridge.recordAdd(['glyphs', 'D'], { name: 'D', layers: [] });
+        bridge.recordAdd(['glyphs', 'C'], {
+            name: 'C',
+            category: 'Base',
+            layers: []
+        });
+        bridge.recordAdd(['glyphs', 'D'], {
+            name: 'D',
+            category: 'Base',
+            layers: []
+        });
         bridge.endTransaction();
 
         expect(
@@ -2767,7 +2965,7 @@ describe('ChangeBridge', () => {
         );
     });
 
-    test('applyLayerDelta preserves sibling master layers when layers were stored as a Y.Array', () => {
+    test('applyLayerDelta refuses drawings stored as a Y.Array instead of replacing them', () => {
         const { bridge } = createTestBridge('array-layers-migrate');
         const glyphMap = bridge.getYValue(['glyphs', 'A']);
         const arrayDrawings = new Y.Array();
@@ -2794,22 +2992,23 @@ describe('ChangeBridge', () => {
         glyphMap.set('layers', arrayDrawings);
         expect(glyphMap.get('layers')).toBeInstanceOf(Y.Array);
 
-        applyDrawingDelta(glyphMap, 'A', 'master-regular', {
-            id: 'master-regular',
-            width: 500,
-            shapes: [{ reference: 'B' }],
-            master: {
-                type: 'DefaultForMaster',
-                master: 'master-regular'
-            }
-        });
-
-        const drawingsMap = ensureGlyphDrawingsMap(glyphMap);
-        expect(drawingsMap).toBeInstanceOf(Y.Map);
-        expect([...drawingsMap.keys()].sort()).toEqual([
-            'master-bold',
-            'master-regular'
-        ]);
+        expect(() =>
+            applyDrawingDelta(glyphMap, 'A', 'master-regular', {
+                id: 'master-regular',
+                width: 500,
+                shapes: [{ reference: 'B' }],
+                master: {
+                    type: 'DefaultForMaster',
+                    master: 'master-regular'
+                }
+            })
+        ).toThrow(MissingDrawingError);
+        expect(() => ensureGlyphDrawingsMap(glyphMap)).toThrow(
+            MissingDrawingError
+        );
+        // Both stored drawings are still there.
+        expect(glyphMap.get('layers')).toBe(arrayDrawings);
+        expect(arrayDrawings.length).toBe(2);
     });
 
     test('recordAdd syncs glyphOrder when glyph is already in font JSON order', () => {
@@ -3145,14 +3344,14 @@ describe('ChangeBridge', () => {
                 documentId,
                 sender.encodeDocumentState(documentId)
             )
-        ).toThrow('malformed glyph snapshot: drawing missing id');
+        ).toThrow(/has no id/);
         expect(packed.glyphs[0].layers[0].anchors[0].x).toBe(255);
         sender.destroy();
         receiver.destroy();
     });
 
-    test('a converged document set repairs geometry orphans', () => {
-        const { bridge: sender } = createTestBridge('geometry-repair-source');
+    test('a converged document set keeps positions no node names: nothing is deleted on load', () => {
+        const { bridge: sender } = createTestBridge('geometry-orphan-source');
         const senderDrawing = sender
             ._glyphMapForName('A')
             .get('layers')
@@ -3160,7 +3359,9 @@ describe('ChangeBridge', () => {
         senderDrawing.get('nodePositionsById').set('orphan-node', '3 4');
         senderDrawing.get('shapeDataById').set('orphan-shape', new Y.Map());
 
-        const receiver = new ChangeBridge('geometry-repair-receiver');
+        const receiver = new ChangeBridge('geometry-orphan-receiver');
+        const updates = [];
+        receiver.onLocalUpdate((update) => updates.push(update));
         receiver.applyDocumentSetState(sender.encodeDocumentSet());
         const receiverDrawing = receiver
             ._glyphMapForName('A')
@@ -3168,38 +3369,40 @@ describe('ChangeBridge', () => {
             .get('layer-1');
         expect(
             receiverDrawing.get('nodePositionsById').has('orphan-node')
-        ).toBe(false);
+        ).toBe(true);
         expect(receiverDrawing.get('shapeDataById').has('orphan-shape')).toBe(
-            false
+            true
         );
+        expect(updates).toEqual([]);
         sender.destroy();
         receiver.destroy();
     });
 
-    test('a converged glyph checkpoint repairs geometry orphans', () => {
+    test('a converged glyph checkpoint whose topology names a node without a position is refused', () => {
+        const {
+            decodeGeometryTopology
+        } = require('../js/drawing-geometry-ydoc');
         const { bridge: sender } = createTestBridge(
-            'geometry-checkpoint-source'
+            'geometry-missing-position-source'
         );
-        const receiver = new ChangeBridge('geometry-checkpoint-receiver');
+        const receiver = new ChangeBridge('geometry-missing-position-receiver');
         receiver.applyDocumentSetState(sender.encodeDocumentSet());
         const documentId = sender.listLiveGlyphDocumentIds()[0];
         const senderDrawing = sender
             ._glyphMapForName('A')
             .get('layers')
             .get('layer-1');
-        senderDrawing.get('nodePositionsById').set('orphan-node', '3 4');
+        const nodeId = decodeGeometryTopology(
+            senderDrawing.get('geometryTopology')
+        ).shapes[0].n[0];
+        senderDrawing.get('nodePositionsById').delete(nodeId);
 
-        receiver.applyDocumentCheckpoint(
-            documentId,
-            sender.encodeDocumentState(documentId)
-        );
-        const receiverDrawing = receiver
-            ._glyphMapForName('A')
-            .get('layers')
-            .get('layer-1');
-        expect(
-            receiverDrawing.get('nodePositionsById').has('orphan-node')
-        ).toBe(false);
+        expect(() =>
+            receiver.applyDocumentCheckpoint(
+                documentId,
+                sender.encodeDocumentState(documentId)
+            )
+        ).toThrow();
         sender.destroy();
         receiver.destroy();
     });
@@ -3428,7 +3631,7 @@ describe('Transactions', () => {
         expect(fontJson.glyphs[0].layers[0].shapes).toEqual(originalShapes);
     });
 
-    test('layer snapshot history fills missing identity and strips interpolator keys', () => {
+    test('layer snapshot history refuses missing identity and strips interpolator keys', () => {
         const { bridge } = createTestBridge(
             'layer-snapshot-interpolator-sparse'
         );
@@ -3438,6 +3641,34 @@ describe('Transactions', () => {
         const nextAnchors = cloneValue(original.anchors);
         nextAnchors[0].y = original.anchors[0].y + 12;
 
+        // A snapshot without its width or station is refused, never
+        // completed from the stored drawing.
+        expect(() =>
+            bridge.syncDrawingSnapshotsFromJson(
+                [
+                    {
+                        glyphName: 'A',
+                        layerId: 'layer-1',
+                        drawingJson: {
+                            id: 'layer-1',
+                            shapes: cloneValue(original.shapes)
+                        }
+                    }
+                ],
+                'Drag anchor',
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                'test-sync',
+                null
+            )
+        ).toThrow(/width/);
+        expect(bridge.getFontJsonSnapshot().glyphs[0].layers[0].width).toBe(
+            original.width
+        );
+
         bridge.syncDrawingSnapshotsFromJson(
             [
                 {
@@ -3445,6 +3676,8 @@ describe('Transactions', () => {
                     layerId: 'layer-1',
                     drawingJson: {
                         id: 'layer-1',
+                        width: original.width,
+                        master: cloneValue(original.master),
                         _interpolationRequestId: 9,
                         isInterpolated: true,
                         shapes: cloneValue(original.shapes),
@@ -3907,18 +4140,22 @@ describe('Transactions', () => {
         receiverBridge.destroy();
     });
 
-    test('explicit no-op layer snapshot sync still emits replay metadata update', () => {
+    test('explicit no-op layer snapshot sync sends no packet and refreshes its replay targets locally', () => {
         const { bridge, fontJson } = createTestBridge(
             'explicit-layer-snapshot-metadata-only'
         );
         const drawing = fontJson.glyphs[0].layers[0];
         const localUpdates = [];
         const workerUpdates = [];
+        const committed = [];
         bridge.onLocalUpdate((update, _message, changeLogEntries) => {
             localUpdates.push({ update, changeLogEntries });
         });
-        bridge.setYjsWorkerCallback((update, changeLogEntries) => {
-            workerUpdates.push({ update, changeLogEntries });
+        bridge.setYjsWorkerCallback((update, changeLogEntries, documentId) => {
+            workerUpdates.push({ update, changeLogEntries, documentId });
+        });
+        bridge.onCommittedChange((entries, context) => {
+            committed.push({ entries, context });
         });
 
         const logStart = bridge.getChangeLog().length;
@@ -3945,10 +4182,13 @@ describe('Transactions', () => {
         );
 
         expect(bridge.getChangeLog()).toHaveLength(logStart);
-        expect(localUpdates).toHaveLength(1);
+        // Nothing changed, so nothing goes to any room.
+        expect(localUpdates).toHaveLength(0);
         expect(workerUpdates).toHaveLength(1);
-        expect(Array.from(localUpdates[0].update)).toEqual([0, 0]);
-        expect(localUpdates[0].changeLogEntries).toEqual([
+        expect(Array.from(workerUpdates[0].update)).toEqual([0, 0]);
+        const glyphDocumentId = bridge.documentIdForPath(['glyphs', 'A']);
+        expect(workerUpdates[0].documentId).toBe(glyphDocumentId);
+        expect(workerUpdates[0].changeLogEntries).toEqual([
             expect.objectContaining({
                 path: 'glyphs.A:layers.layer-1',
                 compileChangeSource: 'mouse-drag-outline',
@@ -3959,9 +4199,15 @@ describe('Transactions', () => {
                 ]
             })
         ]);
-        expect(workerUpdates[0].changeLogEntries).toEqual(
-            localUpdates[0].changeLogEntries
+        expect(committed).toHaveLength(1);
+        expect(committed[0].context).toEqual(
+            expect.objectContaining({
+                origin: 'local',
+                documentId: glyphDocumentId,
+                localOnly: true
+            })
         );
+        expect(committed[0].entries).toEqual(workerUpdates[0].changeLogEntries);
     });
 
     test('layer sync point edit preserves omitted optional layer fields', () => {
@@ -4078,9 +4324,18 @@ describe('Transactions', () => {
                 )
             )
         ).toEqual({ 'com.schriftgestalt.Glyphs.attr': {} });
+        // Drawings carry their anchor and guide maps from creation.
         expect(
-            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'anchors'])
-        ).toBeUndefined();
+            fromYType(
+                bridge.getYValue([
+                    'glyphs',
+                    'A',
+                    'layers',
+                    'layer-1',
+                    'anchors'
+                ])
+            )
+        ).toEqual([]);
 
         bridge.undo('A', 'layer-1');
         expect(
@@ -4163,12 +4418,23 @@ describe('Transactions', () => {
         expect(log.map((entry) => entry.path)).toEqual([
             'glyphs.A:layers.layer-1:width'
         ]);
+        // Drawings carry their anchor and guide maps from creation.
         expect(
-            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'anchors'])
-        ).toBeUndefined();
+            fromYType(
+                bridge.getYValue([
+                    'glyphs',
+                    'A',
+                    'layers',
+                    'layer-1',
+                    'anchors'
+                ])
+            )
+        ).toEqual([]);
         expect(
-            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'guides'])
-        ).toBeUndefined();
+            fromYType(
+                bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1', 'guides'])
+            )
+        ).toEqual([]);
         expect(
             cloneValue(
                 fromYType(
@@ -6756,7 +7022,12 @@ describe('WindowSync', () => {
         }
     });
 
-    test('a remote update held back by Yjs still reaches the worker hook', () => {
+    test('a remote update that waits for an earlier one is refused and blocks local writes', () => {
+        const {
+            BrokenDocumentError,
+            ClockGapError,
+            isDocumentBroken
+        } = require('../js/yjs-update-integrity');
         const bridge = new ChangeBridge('held-back-receiver');
         bridge.initFromJson(makeMinimalFont());
         const remote = new Y.Doc();
@@ -6769,18 +7040,25 @@ describe('WindowSync', () => {
         bridge.setYjsWorkerCallback((update, entries, documentId) => {
             workerUpdates.push({ update, entries, documentId });
         });
-        // The second update arrives first: Yjs keeps it pending, the
-        // document does not change, and the worker must still get the bytes.
-        const changed = bridge.applyRemoteUpdate(
-            updates[1],
-            [{ op: 'set', path: 'heldBackTest.second', value: 2 }],
-            undefined,
-            'font-core'
+        // The second update arrives first: nothing of it is applied, nothing
+        // waits in the document, and the worker never sees it.
+        expect(() =>
+            bridge.applyRemoteUpdate(
+                updates[1],
+                [{ op: 'set', path: 'heldBackTest.second', value: 2 }],
+                undefined,
+                'font-core'
+            )
+        ).toThrow(ClockGapError);
+        expect(workerUpdates).toEqual([]);
+        expect(bridge.yDoc.store.pendingStructs).toBeNull();
+        expect(bridge.yDoc.store.pendingDs).toBeNull();
+        expect(bridge.yDoc.getMap('heldBackTest').size).toBe(0);
+        expect(isDocumentBroken(bridge.yDoc)).toBe(true);
+        expect(() => bridge.recordChange([], 'note', '', 'refused')).toThrow(
+            BrokenDocumentError
         );
-        expect(changed).toBe(false);
-        expect(workerUpdates).toEqual([
-            { update: updates[1], entries: [], documentId: 'font-core' }
-        ]);
+        expect(bridge.yDoc.getMap('font').get('note')).toBe('');
         bridge.destroy();
     });
 
@@ -8381,12 +8659,12 @@ describe('syncGlyphFromJson', () => {
                     },
                     workerReplayTargets: [
                         { glyphName: 'A', layerId: 'layer-1' },
-                        { glyphName: 'Adieresis', layerId: 'layer-2' }
+                        { glyphName: 'B', layerId: 'layer-2' }
                     ]
                 },
                 {
                     op: 'set',
-                    path: ['glyphs', 'Adieresis', 'layers', 'layer-2'],
+                    path: ['glyphs', 'B', 'layers', 'layer-2'],
                     oldValue: {
                         id: 'layer-2',
                         width: 600,
@@ -8403,7 +8681,7 @@ describe('syncGlyphFromJson', () => {
                     },
                     workerReplayTargets: [
                         { glyphName: 'A', layerId: 'layer-1' },
-                        { glyphName: 'Adieresis', layerId: 'layer-2' }
+                        { glyphName: 'B', layerId: 'layer-2' }
                     ]
                 }
             ],
@@ -8426,7 +8704,7 @@ describe('syncGlyphFromJson', () => {
                 }),
                 expect.objectContaining({
                     historyAction: 'undo',
-                    path: 'glyphs.Adieresis:layers.layer-2:'
+                    path: 'glyphs.B:layers.layer-2:'
                 })
             ])
         );
@@ -8855,37 +9133,41 @@ describe('syncGlyphFromJson', () => {
         );
     });
 
-    test('malformed scalar layer snapshot payload does not clear an existing layer root', () => {
+    test('a malformed scalar drawing snapshot is refused and leaves the drawing as it was', () => {
         const { bridge } = createTestBridge('test-1');
         const drawingPath = ['glyphs', 'A', 'layers', 'layer-1'];
         const originalDrawing = normalizeYDocValue(
             bridge.getYValue(drawingPath)
         );
 
-        bridge._applyBufferedOperation({
-            op: 'set',
-            path: drawingPath,
-            oldValue: 'A',
-            newValue: 'Drag point',
-            applyMode: 'drawing-snapshot'
-        });
+        expect(() =>
+            bridge._applyBufferedOperation({
+                op: 'set',
+                path: drawingPath,
+                oldValue: 'A',
+                newValue: 'Drag point',
+                applyMode: 'drawing-snapshot'
+            })
+        ).toThrow(DrawingInvariantError);
 
         expect(normalizeYDocValue(bridge.getYValue(drawingPath))).toEqual(
             originalDrawing
         );
     });
 
-    test('malformed scalar layer snapshot payload does not create an empty missing layer root', () => {
+    test('a malformed scalar drawing snapshot is refused and creates no drawing', () => {
         const { bridge } = createTestBridge('test-1');
         const missingDrawingPath = ['glyphs', 'A', 'layers', 'missing-layer'];
 
-        bridge._applyBufferedOperation({
-            op: 'set',
-            path: missingDrawingPath,
-            oldValue: 'A',
-            newValue: 'Drag point',
-            applyMode: 'drawing-snapshot'
-        });
+        expect(() =>
+            bridge._applyBufferedOperation({
+                op: 'set',
+                path: missingDrawingPath,
+                oldValue: 'A',
+                newValue: 'Drag point',
+                applyMode: 'drawing-snapshot'
+            })
+        ).toThrow(DrawingInvariantError);
 
         expect(bridge.getYValue(missingDrawingPath)).toBeUndefined();
     });
@@ -8898,7 +9180,7 @@ describe('syncGlyphFromJson', () => {
             width: 480,
             master: {
                 type: 'AssociatedWithMaster',
-                master: 'layer-1'
+                master: 'master-regular'
             },
             shapes: [],
             format_specific: { test: true }
@@ -8914,7 +9196,7 @@ describe('syncGlyphFromJson', () => {
 
         expect(
             normalizeYDocValue(bridge.getYValue(missingDrawingPath))
-        ).toEqual(drawingSnapshot);
+        ).toEqual({ ...drawingSnapshot, anchors: [], guides: [] });
     });
 
     test('partial layer snapshot updates do not delete omitted layer fields', () => {
@@ -8957,12 +9239,20 @@ describe('syncGlyphFromJson', () => {
         ).toBe(600);
     });
 
-    test('sparse layer delta without width leaves existing width alone (no throw)', () => {
+    test('a delta for a drawing that already lost its width is refused', () => {
         const { bridge } = createTestBridge('test-1');
         const drawingPath = ['glyphs', 'A', 'layers', 'layer-1'];
-        deleteBridgeYPath(bridge, [...drawingPath, 'width']);
+        // Damage the stored drawing directly: no write path may do this.
+        bridge
+            ._glyphMapForName('A')
+            .get('layers')
+            .get('layer-1')
+            .delete('width');
+        const anchorsBefore = normalizeYDocValue(
+            bridge.getYValue([...drawingPath, 'anchors'])
+        );
 
-        // Sparse delta: only anchors changed, width absent means "don't touch."
+        // The stored drawing is broken; no edit builds on it.
         expect(() =>
             bridge._applyBufferedOperation({
                 op: 'set',
@@ -8971,18 +9261,18 @@ describe('syncGlyphFromJson', () => {
                 newValue: { anchors: [{ name: 'top', x: 100, y: 700 }] },
                 applyMode: 'drawing-snapshot'
             })
-        ).not.toThrow();
+        ).toThrow(DrawingInvariantError);
 
-        // Width is still absent — the Y.Doc was already corrupted.
         expect(bridge.getYValue([...drawingPath, 'width'])).toBeUndefined();
+        expect(
+            normalizeYDocValue(bridge.getYValue([...drawingPath, 'anchors']))
+        ).toEqual(anchorsBefore);
     });
 
-    test('sparse layer delta with null width preserves existing valid width', () => {
+    test('a delta that would delete the width is refused', () => {
         const { bridge } = createTestBridge('test-1');
         const drawingPath = ['glyphs', 'A', 'layers', 'layer-1'];
 
-        // Delta with width=null is invalid — the receiver silently
-        // drops the invalid width and preserves the existing valid width.
         expect(() =>
             bridge._applyBufferedOperation({
                 op: 'set',
@@ -8991,22 +9281,24 @@ describe('syncGlyphFromJson', () => {
                 newValue: { width: null, anchors: [] },
                 applyMode: 'drawing-snapshot'
             })
-        ).not.toThrow();
+        ).toThrow(/width/);
 
         expect(bridge.getYValue([...drawingPath, 'width'])).toBe(600);
     });
 
-    test('partial layer snapshot does not materialize a missing layer root', () => {
+    test('a partial drawing snapshot is refused and creates no drawing', () => {
         const { bridge } = createTestBridge('test-1');
         const missingDrawingPath = ['glyphs', 'A', 'layers', 'missing-layer'];
 
-        bridge._applyBufferedOperation({
-            op: 'set',
-            path: missingDrawingPath,
-            oldValue: null,
-            newValue: { width: 620 },
-            applyMode: 'drawing-snapshot'
-        });
+        expect(() =>
+            bridge._applyBufferedOperation({
+                op: 'set',
+                path: missingDrawingPath,
+                oldValue: null,
+                newValue: { width: 620 },
+                applyMode: 'drawing-snapshot'
+            })
+        ).toThrow(DrawingInvariantError);
 
         expect(bridge.getYValue(missingDrawingPath)).toBeUndefined();
     });
@@ -9094,6 +9386,9 @@ describe('syncGlyphFromJson', () => {
 
         fontJson.glyphs[0].layers[0] = {
             id: 'layer-1',
+            // A snapshot is a whole drawing: it carries its own identity.
+            width: 600,
+            master: { type: 'DefaultForMaster', master: 'master-regular' },
             shapes: [
                 {
                     nodes: [
@@ -9171,6 +9466,12 @@ describe('syncGlyphFromJson', () => {
             layers: [
                 {
                     id: 'layer-1',
+                    // A snapshot is a whole drawing: it carries its own identity.
+                    width: 600,
+                    master: {
+                        type: 'DefaultForMaster',
+                        master: 'master-regular'
+                    },
                     shapes: [
                         {
                             nodes: [
@@ -10218,6 +10519,9 @@ describe('syncGlyphFromJson', () => {
 
         font1.glyphs[0].layers[0] = {
             id: 'layer-1',
+            // A snapshot is a whole drawing: it carries its own identity.
+            width: 600,
+            master: { type: 'DefaultForMaster', master: 'master-regular' },
             anchors: [{ name: 'top', x: 320, y: 720 }]
         };
 
@@ -10443,24 +10747,364 @@ describe('syncGlyphFromJson', () => {
         collaborator.destroy();
     });
 
-    test('a remote layer caught without its width keeps the width it had', () => {
+    describe('undo guard for a drawing a collaborator added later', () => {
+        // Fuzz seed 129931909: this window opened a contour, a collaborator
+        // then added a free drawing copied with the open contour, and the
+        // undo closed the contour everywhere but in the new drawing.
+        const syncA = (bridge, label, drawingId = 'layer-1') =>
+            bridge.syncGlyphFromJson(
+                'A',
+                label,
+                undefined,
+                undefined,
+                drawingId,
+                undefined,
+                undefined,
+                undefined,
+                'test-sync',
+                null
+            );
+        const runScenario = (localEdit, { redo = false } = {}) => {
+            const localFontJson = makeMinimalFont();
+            const collaboratorFontJson = cloneValue(localFontJson);
+            const local = new ChangeBridge('local-structure-guard');
+            const collaborator = new ChangeBridge(
+                'collaborator-structure-guard'
+            );
+            local.initFromJson(localFontJson);
+            collaborator.setFontJson(collaboratorFontJson);
+            collaborator.applyDocumentSetState(local.encodeDocumentSet());
+            const localPackets = attachPacketCapture(local);
+            localEdit(localFontJson.glyphs[0].layers[0]);
+            syncA(local, 'Local edit');
+            if (redo) {
+                // Undone before the collaborator copies the drawing; the
+                // redo then replays the edit over the new drawing.
+                expect(local.undo('A', 'layer-1')).not.toBeNull();
+            }
+            applyCapturedPackets(collaborator, localPackets);
+
+            const collaboratorPackets = attachPacketCapture(collaborator);
+            const freeDrawing = cloneValue(
+                collaboratorFontJson.glyphs[0].layers[0]
+            );
+            freeDrawing.id = 'free-1';
+            freeDrawing.master = { type: 'FreeFloating' };
+            freeDrawing.location = { wght: 500 };
+            delete freeDrawing.background_layer_id;
+            collaboratorFontJson.glyphs[0].layers.push(freeDrawing);
+            syncA(collaborator, 'Add free drawing', null);
+            for (const packet of collaboratorPackets) {
+                // Described the way the model records Glyph.addDrawing().
+                local.applyRemoteUpdate(
+                    packet.update,
+                    [
+                        normalizeChangeLogEntry({
+                            timestamp: Date.now(),
+                            windowId: 'collaborator-structure-guard',
+                            op: 'add',
+                            path: 'glyphs.A:layers.free-1',
+                            newValue: freeDrawing
+                        })
+                    ],
+                    undefined,
+                    packet.documentId,
+                    { captureInUndo: false, fromCollaborator: true }
+                );
+            }
+            const blocked = jest.fn();
+            window.addEventListener('history-replay-blocked', blocked);
+            let result;
+            try {
+                result = redo
+                    ? local.redo('A', 'layer-1')
+                    : local.undo('A', 'layer-1');
+            } finally {
+                window.removeEventListener('history-replay-blocked', blocked);
+            }
+            const readDrawing = (drawingId) =>
+                normalizeYDocValue(
+                    local.getYValue(['glyphs', 'A', 'layers', drawingId])
+                );
+            const outcome = {
+                result,
+                blocked,
+                layer1: readDrawing('layer-1'),
+                free: readDrawing('free-1')
+            };
+            local.destroy();
+            collaborator.destroy();
+            return outcome;
+        };
+
+        test('undo of opening a contour is skipped', () => {
+            const outcome = runScenario((drawing) => {
+                drawing.shapes[0].closed = false;
+            });
+            expect(outcome.free.shapes[0].closed).toBe(false);
+            expect(outcome.result).toBeNull();
+            expect(outcome.blocked).toHaveBeenCalledTimes(1);
+            expect(outcome.blocked.mock.calls[0][0].detail.reason).toBe(
+                'collaborator-edit'
+            );
+            // Both drawings keep the open contour and still match.
+            expect(outcome.layer1.shapes[0].closed).toBe(false);
+            expect(outcome.free.shapes[0].closed).toBe(false);
+        });
+
+        test('redo of opening a contour is skipped', () => {
+            const outcome = runScenario(
+                (drawing) => {
+                    drawing.shapes[0].closed = false;
+                },
+                { redo: true }
+            );
+            expect(outcome.result).toBeNull();
+            expect(outcome.blocked).toHaveBeenCalledTimes(1);
+            expect(outcome.blocked.mock.calls[0][0].detail.historyAction).toBe(
+                'redo'
+            );
+            // Both drawings keep the closed contour and still match.
+            expect(outcome.layer1.shapes[0].closed).toBe(true);
+            expect(outcome.free.shapes[0].closed).toBe(true);
+        });
+
+        test('undo of moving a point still runs', () => {
+            const outcome = runScenario((drawing) => {
+                drawing.shapes[0].nodes[0].x = 123;
+            });
+            expect(outcome.result).not.toBeNull();
+            expect(outcome.blocked).not.toHaveBeenCalled();
+            expect(outcome.layer1.shapes[0].nodes[0].x).toBe(100);
+        });
+    });
+
+    test('the undo guard tells structural edits from moves', () => {
+        const local = new ChangeBridge('local-undo-structure');
+        local.initFromJson(makeMinimalFont());
+        const drawing = 'glyphs.A:layers.layer-1:';
+        const blocks = (entry, touchPath = 'glyphs.A:layers.free-1') => {
+            local._collaboratorTouches = [];
+            local._collaboratorDrawingSetTouches = [];
+            local._noteCollaboratorTouches([touchPath]);
+            return local._historyItemOverlapsLaterCollaboratorEdit({
+                entries: [entry],
+                transitionSeq: -1
+            });
+        };
+        const node = (x, nodetype = 'line') => ({ x, y: 0, nodetype });
+        const path = (closed, nodes) => ({ closed, nodes });
+        const component = (reference, x = 0) => ({
+            reference,
+            transform: { translation: [x, 0] }
+        });
+        const set = (suffix, oldValue, newValue) => ({
+            op: 'set',
+            path: drawing + suffix,
+            oldValue,
+            newValue
+        });
+
+        // Structure: open/closed, node count and type, shapes, components.
+        expect(blocks(set('shapes.0.closed', true, false))).toBe(true);
+        expect(
+            blocks(
+                set(
+                    'shapes',
+                    [path(true, [node(0), node(1)])],
+                    [path(true, [node(0), node(1), node(2)])]
+                )
+            )
+        ).toBe(true);
+        expect(blocks(set('shapes.0.nodes.1.nodetype', 'line', 'curve'))).toBe(
+            true
+        );
+        expect(
+            blocks({
+                op: 'add',
+                path: drawing + 'shapes.0.nodes.2',
+                newValue: node(5)
+            })
+        ).toBe(true);
+        expect(blocks(set('shapes', [component('B')], [component('C')]))).toBe(
+            true
+        );
+        expect(
+            blocks(
+                set(
+                    'shapes',
+                    [component('B'), path(true, [node(0)])],
+                    [path(true, [node(0)]), component('B')]
+                )
+            )
+        ).toBe(true);
+        // Anchors are not: drawings that differ in anchors still compile
+        // (interpolation only warns), so undoing an anchor add, remove or
+        // rename stays allowed (fuzz seed 20261110, step 10).
+        expect(
+            blocks(
+                set(
+                    'anchors',
+                    [{ name: 'top', x: 0, y: 0 }],
+                    [
+                        { name: 'top', x: 0, y: 0 },
+                        { name: 'bottom', x: 0, y: 0 }
+                    ]
+                )
+            )
+        ).toBe(false);
+        expect(blocks(set('anchors.0.name', 'top', 'ogonek'))).toBe(false);
+
+        // Moves are not structure.
+        expect(blocks(set('shapes.0.nodes.0.x', 100, 120))).toBe(false);
+        expect(
+            blocks(
+                set(
+                    'shapes',
+                    [path(true, [node(0), node(1)])],
+                    [path(true, [node(5), node(6)])]
+                )
+            )
+        ).toBe(false);
+        expect(
+            blocks(set('shapes', [component('B', 0)], [component('B', 40)]))
+        ).toBe(false);
+        expect(
+            blocks(
+                set(
+                    'anchors',
+                    [{ name: 'top', x: 0, y: 0 }],
+                    [{ name: 'top', x: 9, y: 9 }]
+                )
+            )
+        ).toBe(false);
+        expect(blocks(set('width', 600, 640))).toBe(false);
+
+        // Only a drawing added, removed or replaced in the same glyph, after
+        // the history item, blocks it.
+        const closeContour = set('shapes.0.closed', false, true);
+        expect(blocks(closeContour, 'glyphs.B:layers.free-1')).toBe(false);
+        expect(
+            blocks(closeContour, 'glyphs.A:layers.layer-2:shapes.0.nodes.0.x')
+        ).toBe(false);
+        expect(blocks(closeContour, 'glyphs.A:layers')).toBe(true);
+        expect(blocks(closeContour, 'glyphs.A.ss01:layers.free-1')).toBe(false);
+        local._collaboratorTouches = [];
+        local._collaboratorDrawingSetTouches = [];
+        local._noteCollaboratorTouches(['glyphs.A:layers.free-1']);
+        expect(
+            local._historyItemOverlapsLaterCollaboratorEdit({
+                entries: [closeContour],
+                transitionSeq: local._changeLog.length
+            })
+        ).toBe(false);
+        local.destroy();
+    });
+
+    test('a whole drawing written without anchors or guides empties them', () => {
+        const bridge = new ChangeBridge('replace-whole-drawing');
+        const fontJson = makeMinimalFont();
+        bridge.initFromJson(fontJson);
+        const drawingPath = ['glyphs', 'A', 'layers', 'layer-1'];
+        const drawingMap = bridge.getYValue(drawingPath);
+        const anchorsById = drawingMap.get('anchorsById');
+        const guidesById = drawingMap.get('guidesById');
+        expect(anchorsById.size).toBe(1);
+        expect(guidesById.size).toBe(1);
+        const whole = cloneValue(fontJson.glyphs[0].layers[0]);
+        delete whole.anchors;
+        delete whole.guides;
+        drawingMap.doc.transact(() => {
+            bridge._replaceDrawingMapContents(drawingMap, whole);
+        });
+        const stored = normalizeYDocValue(bridge.getYValue(drawingPath));
+        expect(stored.anchors ?? []).toEqual([]);
+        expect(stored.guides ?? []).toEqual([]);
+        // Emptied in place: the keyed maps are never replaced.
+        expect(drawingMap.get('anchorsById')).toBe(anchorsById);
+        expect(drawingMap.get('guidesById')).toBe(guidesById);
+        expect(anchorsById.size).toBe(0);
+        expect(drawingMap.get('anchorOrder').length).toBe(0);
+        expect(drawingMap.get('guideOrder').length).toBe(0);
+        // Width and shapes came with the drawing and are unchanged.
+        expect(stored.width).toBe(600);
+        expect(stored.shapes).toHaveLength(2);
+        bridge.destroy();
+    });
+
+    test('a drawing delta without anchors keeps them', () => {
+        const fontJson = makeMinimalFont();
+        const bridge = new ChangeBridge('delta-keeps-anchors');
+        bridge.initFromJson(fontJson);
+        fontJson.glyphs[0].layers[0].width = 640;
+        bridge.syncGlyphFromJson(
+            'A',
+            'Width',
+            undefined,
+            undefined,
+            'layer-1',
+            undefined,
+            undefined,
+            undefined,
+            'test-sync',
+            null
+        );
+        const stored = normalizeYDocValue(
+            bridge.getYValue(['glyphs', 'A', 'layers', 'layer-1'])
+        );
+        expect(stored.width).toBe(640);
+        expect(stored.anchors.map((anchor) => anchor.name)).toEqual(['top']);
+        expect(stored.guides.map((guide) => guide.name)).toEqual([
+            'cap-height'
+        ]);
+        bridge.destroy();
+    });
+
+    test('projection refuses a drawing without width, id or a station link', () => {
         const bridge = new ChangeBridge('remote-partial-width');
         bridge.initFromJson(makeMinimalFont());
-        // An update that arrives before the one it builds on leaves the
-        // width briefly unreadable; this must not throw and stop syncing.
-        const normalized = bridge._normalizeDrawingSnapshot(
-            'layer-1',
-            { id: 'layer-1', width: undefined, shapes: [] },
-            { id: 'layer-1', width: 600, shapes: [] }
-        );
-        expect(normalized.width).toBe(600);
-        expect(() =>
+        const station = { type: 'DefaultForMaster', master: 'master-regular' };
+        const project = (stored) =>
             bridge._normalizeDrawingSnapshot(
                 'layer-1',
-                { id: 'layer-1', width: undefined, shapes: [] },
-                { id: 'layer-1', shapes: [] }
-            )
-        ).toThrow(/invalid width/);
+                stored,
+                undefined,
+                false
+            );
+        expect(
+            project({ id: 'layer-1', width: 600, master: station, shapes: [] })
+                .width
+        ).toBe(600);
+        // Nothing stands in for a missing value: not the window's old
+        // drawing, not the map key, not the drawing id.
+        expect(() =>
+            project({ id: 'layer-1', master: station, shapes: [] })
+        ).toThrow(DrawingInvariantError);
+        expect(() =>
+            project({ width: 600, master: station, shapes: [] })
+        ).toThrow(DrawingInvariantError);
+        expect(() =>
+            project({ id: 'layer-1', width: 600, shapes: [] })
+        ).toThrow(DrawingInvariantError);
+        // A station another document has not added yet, or has just
+        // removed: adding or removing a station reaches each document in its
+        // own packet, so a projection may see the link before or after it.
+        expect(
+            project({
+                id: 'layer-1',
+                width: 600,
+                master: { type: 'DefaultForMaster', master: 'no-such-station' },
+                shapes: []
+            }).width
+        ).toBe(600);
+        expect(() =>
+            project({
+                id: 'layer-1',
+                width: 600,
+                master: { type: 'DefaultForMaster' },
+                shapes: []
+            })
+        ).toThrow(DrawingInvariantError);
         bridge.destroy();
     });
 
@@ -11466,6 +12110,12 @@ describe('syncGlyphFromJson', () => {
             layers: [
                 {
                     id: 'layer-1',
+                    // A snapshot is a whole drawing: it carries its own identity.
+                    width: 600,
+                    master: {
+                        type: 'DefaultForMaster',
+                        master: 'master-regular'
+                    },
                     anchors: [{ name: 'top', x: 340, y: 740 }]
                 }
             ]
@@ -11629,6 +12279,9 @@ describe('syncGlyphFromJson', () => {
             senderBridge.getNewChangeLogEntries()
         );
 
+        // A drawing's keyed guide maps are never deleted (a map created
+        // again later races a collaborator's): removing the guides empties
+        // them.
         expect(
             receiverBridge.getYValue([
                 'glyphs',
@@ -11637,8 +12290,8 @@ describe('syncGlyphFromJson', () => {
                 'layer-1',
                 'guides'
             ])
-        ).toBeUndefined();
-        expect('guides' in receiverFontJson.glyphs[0].layers[0]).toBe(false);
+        ).toEqual([]);
+        expect(receiverFontJson.glyphs[0].layers[0].guides ?? []).toEqual([]);
         expect(receiverFontJson.glyphs[0].layers[0].anchors).toEqual(
             senderFontJson.glyphs[0].layers[0].anchors
         );
@@ -11700,8 +12353,8 @@ describe('syncGlyphFromJson', () => {
                 'layer.regular.v1',
                 'guides'
             ])
-        ).toBeUndefined();
-        expect('guides' in receiverFontJson.glyphs[0].layers[0]).toBe(false);
+        ).toEqual([]);
+        expect(receiverFontJson.glyphs[0].layers[0].guides ?? []).toEqual([]);
         expect(receiverFontJson.glyphs[0].layers[0].anchors).toEqual(
             senderFontJson.glyphs[0].layers[0].anchors
         );
@@ -11883,6 +12536,9 @@ describe('syncGlyphFromJson', () => {
 
         senderFontJson.glyphs[0].layers[0] = {
             id: 'layer-1',
+            // A snapshot is a whole drawing: it carries its own identity.
+            width: 600,
+            master: { type: 'DefaultForMaster', master: 'master-regular' },
             anchors: [{ name: 'top', x: 320, y: 720 }]
         };
         senderFontJson.glyphs[1].layers[0].width = 777;
@@ -12307,43 +12963,25 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         delete window.changeBridge;
     });
 
-    test('layer-scoped _syncJsonFromYDoc merges partial Y.Doc layer data with the existing layer snapshot', () => {
+    test('layer-scoped _syncJsonFromYDoc refuses a stored drawing without width and leaves the JSON alone', () => {
         const fontJson = makeMinimalFont();
         const bridge = new ChangeBridge('test-sync-ydoc-layer-partial');
         bridge.initFromJson(fontJson);
         window.changeBridge = bridge;
 
-        bridge.yDoc.transact(() => {
-            deleteBridgeYPath(bridge, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ]);
-            deleteBridgeYPath(bridge, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'shapes'
-            ]);
-            setBridgeYPath(
-                bridge,
-                ['glyphs', 'A', 'layers', 'layer-1', 'anchors'],
-                [{ name: 'top', x: 333, y: 722 }]
-            );
-        }, 'test');
+        // Damage the stored drawing directly: no write path may do this.
+        bridge
+            ._glyphMapForName('A')
+            .get('layers')
+            .get('layer-1')
+            .delete('width');
 
-        bridge._syncJsonFromYDoc({ glyphName: 'A', layerId: 'layer-1' });
-
+        expect(() =>
+            bridge._syncJsonFromYDoc({ glyphName: 'A', layerId: 'layer-1' })
+        ).toThrow(DrawingInvariantError);
+        // The window's old drawing never stands in for the missing width.
         expect(fontJson.glyphs[0].layers[0].width).toBe(600);
-        expect(fontJson.glyphs[0].layers[0].anchors[0].x).toBe(333);
-        expect(fontJson.glyphs[0].layers[0].shapes[0].nodes[0].x).toBe(100);
-        expect(fontJson.glyphs[0].layers[0].master).toEqual({
-            type: 'DefaultForMaster',
-            master: 'master-regular'
-        });
+        bridge.destroy();
     });
 
     test('sparse layer snapshot without shapes leaves existing outlines in Y.Doc and stored JSON', () => {
@@ -12423,77 +13061,42 @@ describe('ChangeBridge _syncJsonFromYDoc scope-aware undo regression', () => {
         expect(fontJson.glyphs[0].layers[0].shapes || []).toEqual([]);
     });
 
-    test('full-state bootstrap merges partial Y.Doc layer data with the existing glyph snapshot', () => {
-        const fontJson = makeMinimalFont();
-        const bridge = new ChangeBridge('test-sync-ydoc-glyph-partial');
-        bridge.initFromJson(fontJson);
-        window.changeBridge = bridge;
+    test('a full-state load refuses a stored drawing without width', () => {
+        const source = new ChangeBridge('test-sync-ydoc-glyph-partial-source');
+        source.initFromJson(makeMinimalFont());
+        source
+            ._glyphMapForName('A')
+            .get('layers')
+            .get('layer-1')
+            .delete('width');
 
-        bridge.yDoc.transact(() => {
-            deleteBridgeYPath(bridge, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'width'
-            ]);
-            deleteBridgeYPath(bridge, [
-                'glyphs',
-                'A',
-                'layers',
-                'layer-1',
-                'shapes'
-            ]);
-            setBridgeYPath(
-                bridge,
-                ['glyphs', 'A', 'layers', 'layer-1', 'anchors'],
-                [{ name: 'top', x: 345, y: 733 }]
-            );
-        }, 'test');
-
-        bridge.applyFullState(bridge.encodeBridgeState());
-
-        expect(fontJson.glyphs[0].layers[0].width).toBe(600);
-        expect(fontJson.glyphs[0].layers[0].anchors[0].x).toBe(345);
-        expect(fontJson.glyphs[0].layers[0].shapes[0].nodes[0].x).toBe(100);
-        expect(fontJson.glyphs[0].layers[0].master).toEqual({
-            type: 'DefaultForMaster',
-            master: 'master-regular'
-        });
+        const receiver = new ChangeBridge('test-sync-ydoc-glyph-partial');
+        expect(() =>
+            receiver.applyDocumentSetState(source.encodeDocumentSet())
+        ).toThrow(DrawingInvariantError);
+        source.destroy();
+        receiver.destroy();
     });
 
-    test('full-state bootstrap restores a missing default master tag when layer id matches a known master id', () => {
+    test('a drawing without a station is refused, even when its id names a station', () => {
         const fontJson = makeMinimalFont();
         fontJson.glyphs[0].layers[0].id = 'master-regular';
         delete fontJson.glyphs[0].layers[0].master;
 
         const bridge = new ChangeBridge('test-sync-ydoc-default-master-id');
-        bridge.initFromJson(fontJson);
-        window.changeBridge = bridge;
-
-        bridge.applyFullState(bridge.encodeBridgeState());
-
-        expect(fontJson.glyphs[0].layers[0].master).toEqual({
-            type: 'DefaultForMaster',
-            master: 'master-regular'
-        });
+        // The station is never guessed from the drawing id.
+        expect(() => bridge.initFromJson(fontJson)).toThrow();
+        bridge.destroy();
     });
 
-    test('full-state bootstrap does not treat an empty master object as FreeFloating when layer id matches a known master id', () => {
+    test('a drawing with an empty station object is refused, even when its id names a station', () => {
         const fontJson = makeMinimalFont();
         fontJson.glyphs[0].layers[0].id = 'master-regular';
         fontJson.glyphs[0].layers[0].master = {};
 
         const bridge = new ChangeBridge('test-sync-ydoc-empty-master-object');
-        bridge.initFromJson(fontJson);
-        window.changeBridge = bridge;
-
-        bridge.applyFullState(bridge.encodeBridgeState());
-
-        expect(fontJson.glyphs[0].layers[0].master).toEqual({
-            type: 'DefaultForMaster',
-            master: 'master-regular'
-        });
+        expect(() => bridge.initFromJson(fontJson)).toThrow();
+        bridge.destroy();
     });
 
     test('unscoped steady-state synchronization fails without rebuilding the font', () => {

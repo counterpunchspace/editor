@@ -128,6 +128,7 @@ describe('FontManager committed layer serialization', () => {
             {
                 id: 'layer-1',
                 width: 500,
+                master: { type: 'DefaultForMaster', master: 'master-1' },
                 customDrawingData: { retained: true },
                 isInterpolated: true,
                 _verticalMetrics: { ascender: 700 },
@@ -791,58 +792,54 @@ describe('FontManager saveDrawingData', () => {
         });
     });
 
-    test('preserves existing shapes and anchors when outline save payload omits them', async () => {
+    test('saveDrawingData refuses an outline save payload without shapes and keeps the stored drawing', async () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
         const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
-        const originalWidth = drawing.width;
-        const originalShapes = cloneJson(drawing.shapes);
-        const originalAnchors = cloneJson(drawing.anchors);
+        const before = cloneJson(drawing);
 
-        await fontManager.saveDrawingData(
-            'a',
-            drawing.id,
-            {
-                id: drawing.id,
-                width: originalWidth + 25,
-                master: cloneJson(drawing.master)
-            },
-            'mouse-drag-outline'
-        );
+        await expect(
+            fontManager.saveDrawingData(
+                'a',
+                drawing.id,
+                {
+                    id: drawing.id,
+                    width: before.width + 25,
+                    master: cloneJson(drawing.master)
+                },
+                'mouse-drag-outline'
+            )
+        ).rejects.toThrow(/a whole drawing must carry its shapes/);
 
         const savedDrawing = fontManager.currentFont.babelfontData.glyphs
             .find((entry) => entry.name === 'a')
             .layers.find((entry) => entry.id === drawing.id);
-        const modelDrawing = fontManager.currentFont.fontModel
-            .findGlyph('a')
-            .findDrawingById(drawing.id);
-
-        expect(savedDrawing.width).toBe(originalWidth + 25);
-        expect(stripLayerStableIds(savedDrawing).shapes).toEqual(
-            stripLayerStableIds({ shapes: originalShapes }).shapes
-        );
-        expect(savedDrawing.anchors).toEqual(originalAnchors);
-        expect(stripLayerStableIds(modelDrawing.toJSON()).shapes).toEqual(
-            stripLayerStableIds({ shapes: originalShapes }).shapes
-        );
-        expect(modelDrawing.toJSON().anchors).toEqual(originalAnchors);
+        expect(savedDrawing).toEqual(before);
     });
 
-    test('serializeDrawingForStorage does not synthesize empty shapes for skeletal layers', () => {
+    test('serializeDrawingForStorage refuses a whole drawing without a shapes list and keeps an empty one', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
         const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
-        glyph.layers[glyph.layers.indexOf(drawing)] = {
-            id: drawing.id,
-            width: 0,
-            master: cloneJson(drawing.master)
-        };
+
+        expect(() =>
+            fontManager.serializeDrawingForStorage(
+                'a',
+                drawing.id,
+                {
+                    id: drawing.id,
+                    width: 640,
+                    master: cloneJson(drawing.master)
+                },
+                undefined
+            )
+        ).toThrow(/a whole drawing must carry its shapes/);
 
         const serialized = fontManager.serializeDrawingForStorage(
             'a',
@@ -850,13 +847,13 @@ describe('FontManager saveDrawingData', () => {
             {
                 id: drawing.id,
                 width: 640,
-                master: cloneJson(drawing.master)
+                master: cloneJson(drawing.master),
+                shapes: []
             },
             undefined
         );
-
         expect(serialized.width).toBe(640);
-        expect(serialized.shapes).toBeUndefined();
+        expect(serialized.shapes).toEqual([]);
     });
 
     test('serializeDrawingForStorage rejects malformed path nodes instead of repairing them', () => {
@@ -920,30 +917,31 @@ describe('FontManager saveDrawingData', () => {
         expect(serialized.shapes[0].transform.translation[0]).toBe(40);
     });
 
-    test('serializeDrawingForStorage fills missing width from the stored layer', () => {
+    test('serializeDrawingForStorage refuses a missing width instead of taking the stored one', () => {
         const glyph = fontManager.currentFont.babelfontData.glyphs.find(
             (entry) => entry.name === 'a'
         );
         const drawing = glyph.layers.find(
             (entry) => entry.id === '1FA54028-AD2E-4209-AA7B-72DF2DF16264'
         );
-        const {
-            width: _width,
-            master: _station,
-            ...sparse
-        } = cloneJson(drawing);
+        const { width: _width, ...sparse } = cloneJson(drawing);
+
+        expect(() =>
+            fontManager.serializeDrawingForStorage(
+                'a',
+                drawing.id,
+                sparse,
+                undefined
+            )
+        ).toThrow();
+
         const serialized = fontManager.serializeDrawingForStorage(
             'a',
             drawing.id,
-            {
-                ...sparse,
-                _interpolationRequestId: 3
-            },
+            { ...cloneJson(drawing), _interpolationRequestId: 3 },
             undefined
         );
-
         expect(serialized.width).toBe(drawing.width);
-        expect(serialized.master).toEqual(drawing.master);
         expect(serialized._interpolationRequestId).toBeUndefined();
     });
 
@@ -3802,7 +3800,7 @@ describe('FontManager boundary-crossing budget', () => {
         ).toBe(true);
     });
 
-    test('refreshWorkerCacheForReplayTargets fails closed when worker document sync rejects', async () => {
+    test('refreshWorkerCacheForReplayTargets surfaces a rejected worker document sync', async () => {
         const currentFont = fontManager.currentFont;
         const drawingId = currentFont.fontModel.findGlyph('a').drawings[0].id;
         const awaitWorkerDocumentSyncSpy = jest
@@ -3814,7 +3812,7 @@ describe('FontManager boundary-crossing budget', () => {
                 fontManager.refreshWorkerCacheForReplayTargets([
                     { glyphName: 'a', layerId: drawingId }
                 ])
-            ).resolves.toBe(false);
+            ).rejects.toThrow('seed failed');
             expect(sendMessageSpy).not.toHaveBeenCalled();
         } finally {
             awaitWorkerDocumentSyncSpy.mockRestore();
@@ -3950,10 +3948,10 @@ describe('FontManager boundary-crossing budget', () => {
         }
     });
 
-    test('forwardWorkerYjsUpdate skips font-wide updates with no cache metadata', async () => {
+    test('forwardWorkerYjsUpdate refuses a font-wide update with no cache metadata', async () => {
         await expect(
             fontManager.forwardWorkerYjsUpdate(new Uint8Array([1, 2, 3]), [])
-        ).resolves.toBe(true);
+        ).rejects.toThrow('Refusing to send an undescribed update');
 
         expect(sendMessageSpy).not.toHaveBeenCalled();
     });
@@ -4268,7 +4266,7 @@ describe('FontManager boundary-crossing budget', () => {
         window.patchSyncEngine = originalPatchSyncEngine;
     });
 
-    test('forwardWorkerYjsUpdate reseeds from bridge after applyYjsUpdate failure and does not resend the failed update', async () => {
+    test('forwardWorkerYjsUpdate surfaces an applyYjsUpdate failure without reseeding or resending', async () => {
         const originalPatchSyncEngine = window.patchSyncEngine;
         const rawUpdate = fontManager.buildWorkerSeedYjsState();
         const bridgeState = new Uint8Array([4, 5, 6]);
@@ -4285,12 +4283,10 @@ describe('FontManager boundary-crossing budget', () => {
                 fontManager.forwardWorkerYjsUpdate(rawUpdate, ['a'], {
                     invalidateLayoutClosure: false
                 })
-            ).resolves.toBe(true);
+            ).rejects.toThrow('RuntimeError: unreachable');
 
-            expect(fontManager.workerMirrorQuarantined).toBe(false);
-            expect(seedWorkerYDocFromStateSpy).toHaveBeenCalledWith(
-                bridgeState
-            );
+            expect(fontManager.workerMirrorQuarantined).toBe(true);
+            expect(seedWorkerYDocFromStateSpy).not.toHaveBeenCalled();
             expect(sendMessageSpy).toHaveBeenCalledTimes(1);
             expect(sendMessageSpy).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -4300,6 +4296,54 @@ describe('FontManager boundary-crossing budget', () => {
                 })
             );
         } finally {
+            window.patchSyncEngine = originalPatchSyncEngine;
+        }
+    });
+
+    test('a ClockGapError from the worker marks the document broken and is never reseeded', async () => {
+        const originalPatchSyncEngine = window.patchSyncEngine;
+        const markDocumentBroken = jest.fn();
+        window.patchSyncEngine = {
+            markDocumentBroken,
+            encodeBridgeState: jest.fn(() => new Uint8Array([4, 5, 6]))
+        };
+        seedWorkerYDocFromStateSpy.mockClear();
+        sendMessageSpy.mockRejectedValueOnce(
+            new Error(
+                'applyYjsUpdate failed: apply_yjs_update: ClockGapError: document font-core: client 7 needs clock 4, have 2'
+            )
+        );
+
+        try {
+            await expect(
+                fontManager.forwardWorkerYjsUpdate(
+                    new Uint8Array([1, 2, 3]),
+                    ['a'],
+                    { invalidateLayoutClosure: false }
+                )
+            ).rejects.toThrow('ClockGapError');
+            expect(markDocumentBroken).toHaveBeenCalledWith(
+                'font-core',
+                expect.any(Error)
+            );
+
+            // Later updates of that document are refused without a send,
+            // and nothing reseeds the worker behind the gap.
+            sendMessageSpy.mockClear();
+            await expect(
+                fontManager.forwardWorkerYjsUpdate(
+                    new Uint8Array([1, 2, 3]),
+                    ['a'],
+                    { invalidateLayoutClosure: false }
+                )
+            ).rejects.toThrow('ClockGapError');
+            await expect(
+                fontManager.recoverWorkerCacheFromBridgeState('test')
+            ).rejects.toThrow(/is broken/);
+            expect(sendMessageSpy).not.toHaveBeenCalled();
+            expect(seedWorkerYDocFromStateSpy).not.toHaveBeenCalled();
+        } finally {
+            fontManager.workerBrokenDocumentErrors.clear();
             window.patchSyncEngine = originalPatchSyncEngine;
         }
     });
@@ -4322,7 +4366,7 @@ describe('FontManager boundary-crossing budget', () => {
                 fontManager.forwardWorkerYjsUpdate(rawUpdate, ['a'], {
                     invalidateLayoutClosure: false
                 })
-            ).resolves.toBe(false);
+            ).rejects.toThrow('RuntimeError: unreachable');
 
             expect(fontManager.workerMirrorQuarantined).toBe(true);
             expect(fontCompilation.hasWorkerCacheDocument()).toBe(false);
@@ -5026,29 +5070,24 @@ describe('FontManager boundary-crossing budget', () => {
         }
     });
 
-    test('a catalog room update the worker skips does not quarantine its cache', async () => {
-        // Room layout 2: catalog rooms carry names and codepoints the worker
-        // never compiles from. A quarantine here blocked every later compile
-        // until another edit happened to reseed the worker (a Unicode undo
-        // or redo then timed out waiting for its compile).
-        sendMessageSpy.mockResolvedValueOnce({
-            success: true,
-            skipped: 'catalog_document'
-        });
-        await expect(
-            fontManager.forwardWorkerYjsUpdate(new Uint8Array([1, 2, 3]), [], {
-                documentId: 'catalog:1',
-                nonGlyphChangeHints: ['glyphCatalog']
-            })
-        ).resolves.toBe(true);
-        expect(sendMessageSpy).toHaveBeenCalledWith(
-            expect.objectContaining({
-                type: 'applyYjsUpdate',
-                documentId: 'catalog:1'
-            })
-        );
-        expect(fontManager.workerMirrorQuarantined).toBe(false);
-    });
+    test.each(['catalog:1', 'font-deps'])(
+        'a %s update is not sent to the worker, which keeps no copy of it',
+        async (documentId) => {
+            // Catalog rooms carry names and codepoints, font-deps the
+            // dependency index; the worker never compiles from either and
+            // keeps no copy, so there is no gap to leave. A quarantine here
+            // blocked every later compile until another edit reseeded it.
+            await expect(
+                fontManager.forwardWorkerYjsUpdate(
+                    new Uint8Array([1, 2, 3]),
+                    [],
+                    { documentId }
+                )
+            ).resolves.toBe(true);
+            expect(sendMessageSpy).not.toHaveBeenCalled();
+            expect(fontManager.workerMirrorQuarantined).toBe(false);
+        }
+    );
 
     test('forwardWorkerYjsUpdate quarantines on unseeded worker doc and does not resend the failed update', async () => {
         const originalPatchSyncEngine = window.patchSyncEngine;
@@ -5071,7 +5110,7 @@ describe('FontManager boundary-crossing budget', () => {
                         layerTargets: [{ glyphName: 'a', layerId: drawingId }]
                     }
                 )
-            ).resolves.toBe(false);
+            ).rejects.toThrow(/without the editor’s documents/);
 
             expect(fontManager.workerMirrorQuarantined).toBe(true);
             expect(fontCompilation.hasWorkerCacheDocument()).toBe(false);
@@ -6431,5 +6470,111 @@ describe('FontManager open sessions and fontReady', () => {
 
         expect(sessionIds).toHaveLength(2);
         expect([...readySessionIds].sort()).toEqual([...sessionIds].sort());
+    });
+});
+
+describe('FontManager refused undo or redo notice', () => {
+    let originalOpenedFonts;
+    let originalCurrentFontId;
+    let originalCloudPlugin;
+
+    beforeEach(() => {
+        originalOpenedFonts = fontManager.openedFonts;
+        originalCurrentFontId = fontManager.currentFontId;
+        originalCloudPlugin = window.cloudPlugin;
+        fontManager.openedFonts = new Map([
+            [
+                'test-font',
+                {
+                    name: 'TestFont',
+                    path: '/cloud/asset-1',
+                    isCloudBacked: () => true
+                }
+            ]
+        ]);
+        fontManager.currentFontId = 'test-font';
+        window.cloudPlugin = {
+            setAssetNotice: jest.fn(),
+            clearAssetNotice: jest.fn()
+        };
+        jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+        fontManager.openedFonts = originalOpenedFonts;
+        fontManager.currentFontId = originalCurrentFontId;
+        window.cloudPlugin = originalCloudPlugin;
+        jest.useRealTimers();
+    });
+
+    test('a collaborator-edit refusal says a collaborator changed it', () => {
+        fontManager.showHistoryReplayBlockedNotice({
+            reason: 'collaborator-edit',
+            historyAction: 'redo'
+        });
+        expect(window.cloudPlugin.setAssetNotice).toHaveBeenCalledWith(
+            'cloud/asset-1',
+            {
+                kind: 'history-blocked',
+                tone: 'warning',
+                title: 'Redo skipped: a collaborator changed this since, and their edit was kept.'
+            }
+        );
+        jest.advanceTimersByTime(8000);
+        expect(window.cloudPlugin.clearAssetNotice).toHaveBeenCalledWith(
+            'cloud/asset-1',
+            'history-blocked'
+        );
+    });
+
+    test.each([['document-not-loaded'], [undefined]])(
+        'a refusal for reason %s shows no collaborator notice',
+        (reason) => {
+            fontManager.showHistoryReplayBlockedNotice({
+                reason,
+                historyAction: 'undo'
+            });
+            fontManager.showHistoryReplayBlockedNotice(null);
+            expect(window.cloudPlugin.setAssetNotice).not.toHaveBeenCalled();
+        }
+    );
+
+    test('the history-replay-blocked event reaches the notice only for collaborator-edit', () => {
+        // Capture init's window listeners without registering them twice.
+        const handlers = new Map();
+        const addSpy = jest
+            .spyOn(window, 'addEventListener')
+            .mockImplementation((type, handler) => {
+                handlers.set(type, handler);
+            });
+        try {
+            fontManager.init();
+        } finally {
+            addSpy.mockRestore();
+        }
+        const handler = handlers.get('history-replay-blocked');
+        expect(typeof handler).toBe('function');
+
+        handler(
+            new CustomEvent('history-replay-blocked', {
+                detail: { reason: 'document-not-loaded', historyAction: 'undo' }
+            })
+        );
+        handler(new CustomEvent('history-replay-blocked'));
+        expect(window.cloudPlugin.setAssetNotice).not.toHaveBeenCalled();
+
+        handler(
+            new CustomEvent('history-replay-blocked', {
+                detail: { reason: 'collaborator-edit', historyAction: 'undo' }
+            })
+        );
+        expect(window.cloudPlugin.setAssetNotice).toHaveBeenCalledWith(
+            'cloud/asset-1',
+            {
+                kind: 'history-blocked',
+                tone: 'warning',
+                title: 'Undo skipped: a collaborator changed this since, and their edit was kept.'
+            }
+        );
     });
 });

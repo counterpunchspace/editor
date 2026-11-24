@@ -1,0 +1,76 @@
+{
+    "glyphName": "a",
+    "drawingId": "L1",
+    "created": {
+        "id": "L1",
+        "width": 500,
+        "name": "Regular",
+        "master": { "type": "DefaultForMaster", "master": "m1" },
+        "shapes": [
+            {
+                "id": "p1",
+                "closed": true,
+                "nodes": [
+                    { "id": "n1", "x": 0, "y": 0, "nodetype": "Line" },
+                    { "id": "n2", "x": 12.5, "y": -0.25, "nodetype": "OffCurve" },
+                    { "id": "n3", "x": 100.125, "y": 0.0000001, "nodetype": "OffCurve" },
+                    { "id": "n4", "x": 250, "y": 700, "nodetype": "Curve", "smooth": true }
+                ]
+            },
+            {
+                "id": "p2",
+                "closed": false,
+                "nodes": [
+                    { "id": "n5", "x": 10, "y": 20, "nodetype": "Move" },
+                    { "id": "n6", "x": 30, "y": 40, "nodetype": "Line" }
+                ],
+                "format_specific": { "com.example.path": "kept" }
+            },
+            {
+                "id": "c1",
+                "reference": "b",
+                "transform": {
+                    "translation": [10, 20],
+                    "rotation": 0,
+                    "scale": [1, 1],
+                    "skew": [0, 0],
+                    "order": "RestOfTheWorld"
+                }
+            }
+        ],
+        "anchors": [{ "id": "a1", "name": "top", "x": 250, "y": 700 }],
+        "guides": [],
+        "format_specific": { "com.example.drawing": "kept" }
+    },
+    "rewritten": {
+        "id": "L1",
+        "width": 510,
+        "name": "Regular",
+        "master": { "type": "DefaultForMaster", "master": "m1" },
+        "shapes": [
+            {
+                "id": "p1",
+                "closed": true,
+                "nodes": [
+                    { "id": "n1", "x": 0, "y": 0, "nodetype": "Line" },
+                    { "id": "n2", "x": 15, "y": -0.25, "nodetype": "OffCurve" },
+                    { "id": "n3", "x": 100.125, "y": 0.0000001, "nodetype": "OffCurve" },
+                    { "id": "n4", "x": 250, "y": 700, "nodetype": "Curve", "smooth": true },
+                    { "id": "n7", "x": 300, "y": 350, "nodetype": "Line" }
+                ]
+            },
+            {
+                "id": "p2",
+                "closed": true,
+                "nodes": [
+                    { "id": "n5", "x": 10, "y": 20, "nodetype": "Line" },
+                    { "id": "n6", "x": 30, "y": 40, "nodetype": "Line" }
+                ],
+                "format_specific": { "com.example.path": "changed" }
+            }
+        ],
+        "anchors": [{ "id": "a1", "name": "top", "x": 255, "y": 700 }],
+        "guides": [],
+        "format_specific": { "com.example.drawing": "kept" }
+    }
+}

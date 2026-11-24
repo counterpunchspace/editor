@@ -195,7 +195,7 @@ describe('history visibility vs undo actionability', () => {
             compileEditType: null
         });
         bridge.recordChange(
-            ['masters', 'master-regular', 'kerning', 'A'],
+            ['masters', 0, 'kerning', 'A'],
             'V',
             undefined,
             -40
@@ -240,7 +240,7 @@ describe('history visibility vs undo actionability', () => {
             compileEditType: null
         });
         bridge.recordChange(
-            ['masters', 'master-regular', 'kerning', 'A'],
+            ['masters', 0, 'kerning', 'A'],
             'V',
             undefined,
             -40
@@ -275,12 +275,7 @@ describe('history visibility vs undo actionability', () => {
             [{ name: 'g1' }],
             []
         );
-        bridge.recordChange(
-            ['masters', 'master-regular'],
-            'guides',
-            [],
-            [{ name: 'g1' }]
-        );
+        bridge.recordChange(['masters', 0], 'guides', [], [{ name: 'g1' }]);
         bridge.endTransaction();
 
         const context = {

@@ -59,6 +59,32 @@ type RustYjsBatchResult = {
     metadataJson?: string;
 };
 
+/**
+ * Refuse a Rust batch result without its core packet or metadata. An edit
+ * that came back without them is never passed on as an empty edit.
+ */
+function requireRustBatchResult(
+    result: RustYjsBatchResult
+): asserts result is RustYjsBatchResult & {
+    update: Uint8Array;
+    metadataJson: string;
+} {
+    if (!(result?.update instanceof Uint8Array)) {
+        throw new Error('Rust batch returned no Yjs update.');
+    }
+    if (typeof result.metadataJson !== 'string' || !result.metadataJson) {
+        throw new Error('Rust batch returned no metadata.');
+    }
+}
+
+/** Parse a JSON result from Rust; a result that does not parse is an error. */
+function parseRustResultJson<T>(resultJson: unknown, operation: string): T {
+    if (typeof resultJson !== 'string') {
+        throw new Error(`${operation} returned no JSON result.`);
+    }
+    return JSON.parse(resultJson) as T;
+}
+
 // Note: This is a Web Worker, cannot import Logger from main thread
 // Using standard console.log with facility prefix
 
@@ -1808,16 +1834,11 @@ self.onmessage = async (event) => {
                 // fontCacheEpoch in sync with Rust's FONT_CACHE_EPOCH prevents
                 // the next compile from forcing a layout-closure re-prime with
                 // stale CANONICAL_JSON_CACHE.
-                let parsedResult: {
+                const parsedResult = parseRustResultJson<{
                     skipped?: string;
                     changedGlyphs?: unknown;
                     workerCacheStatus?: unknown;
-                } | null = null;
-                try {
-                    parsedResult = JSON.parse(resultJson);
-                } catch {
-                    // Ignore parse errors — treat as non-skipped
-                }
+                } | null>(resultJson, 'apply_yjs_update');
                 const wasSkipped = parsedResult?.skipped != null;
                 const changedGlyphCount = Array.isArray(
                     parsedResult?.changedGlyphs
@@ -1898,15 +1919,10 @@ self.onmessage = async (event) => {
                     ),
                     updateMetadataJson
                 );
-                let parsedResult: {
+                const parsedResult = parseRustResultJson<{
                     skipped?: string;
                     changedGlyphs?: unknown;
-                } | null = null;
-                try {
-                    parsedResult = JSON.parse(resultJson);
-                } catch {
-                    // Ignore parse errors — treat as non-skipped
-                }
+                } | null>(resultJson, 'apply_preview_layer_overlay');
                 const wasSkipped = parsedResult?.skipped != null;
                 if (!wasSkipped && invalidateLayoutClosure !== false) {
                     cachedPreviewBaseSubsetKey = null;
@@ -2035,13 +2051,14 @@ self.onmessage = async (event) => {
                     glyphName,
                     drawingId
                 ) as RustYjsBatchResult;
+                requireRustBatchResult(result);
                 self.postMessage({
                     id,
                     type: 'reinterpolateDrawingYjs',
                     success: true,
-                    update: result.update ?? new Uint8Array(),
+                    update: result.update,
                     updates: result.updates,
-                    metadataJson: result.metadataJson ?? '{}'
+                    metadataJson: result.metadataJson
                 });
                 timelineMark('font.worker.reinterpolateDrawingYjs.success');
             } catch (e: any) {
@@ -2075,13 +2092,14 @@ self.onmessage = async (event) => {
                 const result = reinterpolate_master_layers_yjs(
                     stationId
                 ) as RustYjsBatchResult;
+                requireRustBatchResult(result);
                 self.postMessage({
                     id,
                     type: 'reinterpolateStationDrawingsYjs',
                     success: true,
-                    update: result.update ?? new Uint8Array(),
+                    update: result.update,
                     updates: result.updates,
-                    metadataJson: result.metadataJson ?? '{}'
+                    metadataJson: result.metadataJson
                 });
                 timelineMark(
                     'font.worker.reinterpolateStationDrawingsYjs.success'
@@ -2139,13 +2157,14 @@ self.onmessage = async (event) => {
                 const result = add_master_with_interpolated_layers_yjs(
                     payload
                 ) as RustYjsBatchResult;
+                requireRustBatchResult(result);
                 self.postMessage({
                     id,
                     type: 'addStationWithInterpolatedDrawingsYjs',
                     success: true,
-                    update: result.update ?? new Uint8Array(),
+                    update: result.update,
                     updates: result.updates,
-                    metadataJson: result.metadataJson ?? '{}'
+                    metadataJson: result.metadataJson
                 });
                 timelineMark(
                     'font.worker.addStationWithInterpolatedDrawingsYjs.success'
@@ -2179,13 +2198,14 @@ self.onmessage = async (event) => {
                 const result = add_axis_with_master_copies_yjs(
                     JSON.stringify(plan)
                 ) as RustYjsBatchResult;
+                requireRustBatchResult(result);
                 self.postMessage({
                     id,
                     type: 'addAxisWithStationCopiesYjs',
                     success: true,
-                    update: result.update ?? new Uint8Array(),
+                    update: result.update,
                     updates: result.updates,
-                    metadataJson: result.metadataJson ?? '{}'
+                    metadataJson: result.metadataJson
                 });
             } catch (e) {
                 console.error(
@@ -2212,20 +2232,31 @@ self.onmessage = async (event) => {
 
             try {
                 timelineMark('font.worker.refineDrawingSnapshotsYjs.started');
+                if (!(baseUpdate instanceof Uint8Array)) {
+                    throw new Error(
+                        'refineDrawingSnapshotsYjs needs the base batch’s Yjs update.'
+                    );
+                }
+                if (!Array.isArray(overrides)) {
+                    throw new Error(
+                        'refineDrawingSnapshotsYjs needs a list of drawing overrides.'
+                    );
+                }
+                // Per-document base packets are passed as they came: a list
+                // of {documentId, update} or undefined. Rust refuses others.
                 const result = refine_layer_snapshots_yjs(
-                    baseUpdate instanceof Uint8Array
-                        ? baseUpdate
-                        : new Uint8Array(baseUpdate || []),
-                    JSON.stringify(overrides ?? []),
-                    baseUpdates ?? []
+                    baseUpdate,
+                    JSON.stringify(overrides),
+                    baseUpdates
                 ) as RustYjsBatchResult;
+                requireRustBatchResult(result);
                 self.postMessage({
                     id,
                     type: 'refineDrawingSnapshotsYjs',
                     success: true,
-                    update: result.update ?? new Uint8Array(),
+                    update: result.update,
                     updates: result.updates,
-                    metadataJson: result.metadataJson ?? '{}'
+                    metadataJson: result.metadataJson
                 });
                 timelineMark('font.worker.refineDrawingSnapshotsYjs.success');
             } catch (e: any) {
@@ -2257,13 +2288,14 @@ self.onmessage = async (event) => {
                 const result = remove_masters_yjs(
                     JSON.stringify(stationIds ?? [])
                 ) as RustYjsBatchResult;
+                requireRustBatchResult(result);
                 self.postMessage({
                     id,
                     type: 'removeStationsYjs',
                     success: true,
-                    update: result.update ?? new Uint8Array(),
+                    update: result.update,
                     updates: result.updates,
-                    metadataJson: result.metadataJson ?? '{}'
+                    metadataJson: result.metadataJson
                 });
                 timelineMark('font.worker.removeStationsYjs.success');
             } catch (e: any) {

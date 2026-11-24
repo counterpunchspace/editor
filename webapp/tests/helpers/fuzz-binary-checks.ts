@@ -1551,6 +1551,31 @@ export function compareBinaryWithModel(
         const base = glyphByName.get(baseName);
         const mark = glyphByName.get(markName);
         if (!base || !mark) continue;
+        // Inside one of its variation's ranges the base glyph shapes to its
+        // variation glyph (the variation check above verifies that glyph).
+        const pairLocation = Object.fromEntries(
+            (atKey ?? '')
+                .split(',')
+                .filter(Boolean)
+                .map((pair) => {
+                    const [axis, value] = pair.split('=');
+                    return [axis, Number(value)];
+                })
+        ) as Location;
+        const baseSwapped =
+            baseGid !== gidOfGlyph(baseName) &&
+            base.variations.some((variation) =>
+                variation.rules.every(
+                    (rule) =>
+                        (rule.min === undefined ||
+                            (pairLocation[rule.axis] ?? 0) >= rule.min) &&
+                        (rule.max === undefined ||
+                            (pairLocation[rule.axis] ?? 0) <= rule.max)
+                )
+            );
+        if (baseSwapped && markGid === gidOfGlyph(markName)) {
+            continue;
+        }
         if (
             baseGid !== gidOfGlyph(baseName) ||
             markGid !== gidOfGlyph(markName)

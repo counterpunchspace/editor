@@ -72,6 +72,23 @@ const {
 } = require('../js/change-bridge-ydoc');
 const { PatchSyncEngine } = require('../js/patch-sync-engine');
 
+const TEST_STATION_ID = 'station-regular';
+
+function testStation() {
+    return {
+        id: TEST_STATION_ID,
+        name: { dflt: 'Regular' },
+        location: {},
+        guides: [],
+        metrics: {},
+        kerning: {}
+    };
+}
+
+function stationLink() {
+    return { type: 'DefaultForMaster', master: TEST_STATION_ID };
+}
+
 describe('cloud glyph catalog', () => {
     const font = {
         upm: 1000,
@@ -376,7 +393,7 @@ describe('live font-deps updates', () => {
     });
 
     function liveDrawing(shapes = []) {
-        return { id: 'layer-1', width: 600, shapes };
+        return { id: 'layer-1', width: 600, master: stationLink(), shapes };
     }
 
     function liveComponent(reference) {
@@ -393,6 +410,7 @@ describe('live font-deps updates', () => {
     }
 
     function startLiveSession(fontJson) {
+        fontJson.masters = [testStation()];
         applyCloudOwnedData(fontJson);
         const bridge = new PatchSyncEngine('live-deps');
         bridge.initFromJson(fontJson);
@@ -467,8 +485,9 @@ describe('live font-deps updates', () => {
                 layers: [liveDrawing()]
             }))
         });
+        // A linked window starts from main's own state, so every packet it
+        // relays builds on items main already has.
         const linked = new PatchSyncEngine('linked');
-        linked.initFromJson(JSON.parse(JSON.stringify(live)));
         linked.applyDocumentSetState(main.encodeDocumentSet());
         const relayed = [];
         linked.onLocalUpdate((update, message, _entries, documentId) => {
@@ -2369,7 +2388,7 @@ describe('sparse hydration fixed point', () => {
     }
 
     function publishedFontWithoutComponentIndex(glyphs) {
-        const fontJson = { upm: 1000, glyphs };
+        const fontJson = { upm: 1000, masters: [testStation()], glyphs };
         applyCloudOwnedData(fontJson);
         const documentSet = new CloudDocumentSet();
         documentSet.initFromFontJson(fontJson);
@@ -2422,6 +2441,8 @@ describe('sparse hydration fixed point', () => {
             layers: [
                 {
                     id: 'layer-1',
+                    width: 600,
+                    master: stationLink(),
                     shapes: [{ reference: 'acute' }]
                 }
             ]
@@ -2429,12 +2450,16 @@ describe('sparse hydration fixed point', () => {
         const glyphAcute = {
             id: acuteId,
             name: 'acute',
-            layers: [{ id: 'layer-1', shapes: [] }]
+            layers: [
+                { id: 'layer-1', width: 600, master: stationLink(), shapes: [] }
+            ]
         };
         const glyphZ = {
             id: zId,
             name: 'z',
-            layers: [{ id: 'layer-1', shapes: [] }]
+            layers: [
+                { id: 'layer-1', width: 600, master: stationLink(), shapes: [] }
+            ]
         };
         const shards = new Map([
             [glyphDocumentId(aId), encodeGlyphShard(glyphA, 'authoritative')],
@@ -2501,7 +2526,9 @@ describe('sparse hydration fixed point', () => {
         const glyphs = catalog.map((entry) => ({
             id: entry.glyphId,
             name: entry.name,
-            layers: [{ id: 'layer-1', shapes: [] }]
+            layers: [
+                { id: 'layer-1', width: 600, master: stationLink(), shapes: [] }
+            ]
         }));
         const shards = new Map(
             glyphs.map((glyph) => [
@@ -2574,7 +2601,14 @@ describe('sparse hydration fixed point', () => {
                 {
                     id: aId,
                     name: 'a',
-                    layers: [{ id: 'layer-1', shapes: [] }]
+                    layers: [
+                        {
+                            id: 'layer-1',
+                            width: 600,
+                            master: stationLink(),
+                            shapes: []
+                        }
+                    ]
                 }
             ]
         });
@@ -2615,6 +2649,8 @@ describe('sparse hydration fixed point', () => {
                 layers: [
                     {
                         id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
                         shapes: [
                             { reference: 'e' },
                             { reference: 'dieresiscomb' }
@@ -2625,7 +2661,14 @@ describe('sparse hydration fixed point', () => {
             {
                 id: ids.e,
                 name: 'e',
-                layers: [{ id: 'layer-1', shapes: [] }]
+                layers: [
+                    {
+                        id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
+                        shapes: []
+                    }
+                ]
             },
             {
                 id: ids.dieresiscomb,
@@ -2633,6 +2676,8 @@ describe('sparse hydration fixed point', () => {
                 layers: [
                     {
                         id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
                         shapes: [
                             { reference: 'dotaccentcomb' },
                             { reference: 'dotaccentcomb' }
@@ -2643,12 +2688,26 @@ describe('sparse hydration fixed point', () => {
             {
                 id: ids.dotaccentcomb,
                 name: 'dotaccentcomb',
-                layers: [{ id: 'layer-1', shapes: [] }]
+                layers: [
+                    {
+                        id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
+                        shapes: []
+                    }
+                ]
             },
             {
                 id: ids.z,
                 name: 'z',
-                layers: [{ id: 'layer-1', shapes: [] }]
+                layers: [
+                    {
+                        id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
+                        shapes: []
+                    }
+                ]
             }
         ];
         applyCloudOwnedData({ glyphs });
@@ -2719,39 +2778,88 @@ describe('sparse hydration fixed point', () => {
                 id: ids.a,
                 name: 'a',
                 rightMetricsKey: 'n',
-                layers: [{ id: 'layer-1', shapes: [] }]
+                layers: [
+                    {
+                        id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
+                        shapes: []
+                    }
+                ]
             },
             {
                 id: ids.n,
                 name: 'n',
                 leftMetricsKey: '=l-5',
                 rightMetricsKey: '=l-10',
-                layers: [{ id: 'layer-1', shapes: [] }]
+                layers: [
+                    {
+                        id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
+                        shapes: []
+                    }
+                ]
             },
             {
                 id: ids.l,
                 name: 'l',
-                layers: [{ id: 'layer-1', shapes: [] }]
+                layers: [
+                    {
+                        id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
+                        shapes: []
+                    }
+                ]
             },
             {
                 id: ids.e,
                 name: 'e',
-                layers: [{ id: 'layer-1', shapes: [] }]
+                layers: [
+                    {
+                        id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
+                        shapes: []
+                    }
+                ]
             },
             {
                 id: ids.dieresiscomb,
                 name: 'dieresiscomb',
-                layers: [{ id: 'layer-1', shapes: [] }]
+                layers: [
+                    {
+                        id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
+                        shapes: []
+                    }
+                ]
             },
             {
                 id: ids.acutecomb,
                 name: 'acutecomb',
-                layers: [{ id: 'layer-1', shapes: [] }]
+                layers: [
+                    {
+                        id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
+                        shapes: []
+                    }
+                ]
             },
             {
                 id: ids.tildecomb,
                 name: 'tildecomb',
-                layers: [{ id: 'layer-1', shapes: [] }]
+                layers: [
+                    {
+                        id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
+                        shapes: []
+                    }
+                ]
             },
             {
                 id: ids.adieresis,
@@ -2759,6 +2867,8 @@ describe('sparse hydration fixed point', () => {
                 layers: [
                     {
                         id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
                         shapes: [
                             { reference: 'a' },
                             { reference: 'dieresiscomb' }
@@ -2772,6 +2882,8 @@ describe('sparse hydration fixed point', () => {
                 layers: [
                     {
                         id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
                         shapes: [{ reference: 'a' }, { reference: 'acutecomb' }]
                     }
                 ]
@@ -2782,6 +2894,8 @@ describe('sparse hydration fixed point', () => {
                 layers: [
                     {
                         id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
                         shapes: [{ reference: 'n' }, { reference: 'tildecomb' }]
                     }
                 ]
@@ -2789,7 +2903,14 @@ describe('sparse hydration fixed point', () => {
             {
                 id: ids.lslash,
                 name: 'lslash',
-                layers: [{ id: 'layer-1', shapes: [{ reference: 'l' }] }]
+                layers: [
+                    {
+                        id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
+                        shapes: [{ reference: 'l' }]
+                    }
+                ]
             },
             {
                 id: ids.ae,
@@ -2797,6 +2918,8 @@ describe('sparse hydration fixed point', () => {
                 layers: [
                     {
                         id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
                         shapes: [{ reference: 'a' }, { reference: 'e' }]
                     }
                 ]
@@ -2804,22 +2927,44 @@ describe('sparse hydration fixed point', () => {
             {
                 id: ids.ss03,
                 name: 'a.ss03',
-                layers: [{ id: 'layer-1', shapes: [] }]
+                layers: [
+                    {
+                        id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
+                        shapes: []
+                    }
+                ]
             },
             {
                 id: ids.h,
                 name: 'h',
                 rightMetricsKey: 'n',
-                layers: [{ id: 'layer-1', shapes: [] }]
+                layers: [
+                    {
+                        id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
+                        shapes: []
+                    }
+                ]
             },
             {
                 id: ids.z,
                 name: 'z',
-                layers: [{ id: 'layer-1', shapes: [] }]
+                layers: [
+                    {
+                        id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
+                        shapes: []
+                    }
+                ]
             }
         ];
         const fontJson = {
             upm: 1000,
+            masters: [testStation()],
             glyphOrder: ['a'],
             glyphs
         };
@@ -2948,18 +3093,34 @@ describe('sparse hydration fixed point', () => {
         const fillers = Array.from({ length: 40 }, (_, index) => ({
             id: `id-fill-${index}`,
             name: `fill${index}`,
-            layers: [{ id: 'layer-1', shapes: [] }]
+            layers: [
+                { id: 'layer-1', width: 600, master: stationLink(), shapes: [] }
+            ]
         }));
         const glyphs = [
             {
                 id: ids.a,
                 name: 'a',
-                layers: [{ id: 'layer-1', shapes: [] }]
+                layers: [
+                    {
+                        id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
+                        shapes: []
+                    }
+                ]
             },
             {
                 id: ids.ss03,
                 name: 'a.ss03',
-                layers: [{ id: 'layer-1', shapes: [] }]
+                layers: [
+                    {
+                        id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
+                        shapes: []
+                    }
+                ]
             },
             {
                 id: ids.adieresis,
@@ -2967,6 +3128,8 @@ describe('sparse hydration fixed point', () => {
                 layers: [
                     {
                         id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
                         shapes: [{ reference: 'a' }]
                     }
                 ]
@@ -2977,6 +3140,8 @@ describe('sparse hydration fixed point', () => {
                 layers: [
                     {
                         id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
                         shapes: [{ reference: 'a.ss03' }]
                     }
                 ]
@@ -3028,12 +3193,26 @@ describe('sparse hydration fixed point', () => {
             {
                 id: ids.a,
                 name: 'a',
-                layers: [{ id: 'layer-1', shapes: [] }]
+                layers: [
+                    {
+                        id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
+                        shapes: []
+                    }
+                ]
             },
             {
                 id: ids.ss03,
                 name: 'a.ss03',
-                layers: [{ id: 'layer-1', shapes: [] }]
+                layers: [
+                    {
+                        id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
+                        shapes: []
+                    }
+                ]
             },
             {
                 id: ids.adieresis,
@@ -3041,6 +3220,8 @@ describe('sparse hydration fixed point', () => {
                 layers: [
                     {
                         id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
                         shapes: [{ reference: 'a' }]
                     }
                 ]
@@ -3051,6 +3232,8 @@ describe('sparse hydration fixed point', () => {
                 layers: [
                     {
                         id: 'layer-1',
+                        width: 600,
+                        master: stationLink(),
                         shapes: [{ reference: 'a.ss03' }]
                     }
                 ]
@@ -3088,6 +3271,7 @@ describe('section 2 catalog packets and freshness', () => {
     function twoGlyphFont() {
         return {
             upm: 1000,
+            masters: [testStation()],
             glyphs: [
                 {
                     name: 'A',
@@ -3096,6 +3280,7 @@ describe('section 2 catalog packets and freshness', () => {
                         {
                             id: 'layer-1',
                             width: 600,
+                            master: stationLink(),
                             shapes: [
                                 {
                                     reference: 'B',
@@ -3114,7 +3299,14 @@ describe('section 2 catalog packets and freshness', () => {
                 {
                     name: 'B',
                     codepoints: [66],
-                    layers: [{ id: 'layer-1', width: 600, shapes: [] }]
+                    layers: [
+                        {
+                            id: 'layer-1',
+                            width: 600,
+                            master: stationLink(),
+                            shapes: []
+                        }
+                    ]
                 }
             ]
         };
@@ -3200,7 +3392,14 @@ describe('section 2 catalog packets and freshness', () => {
             glyphs.push({
                 name: `g${index}`,
                 codepoints: [index + 32],
-                layers: [{ id: `layer-${index}`, width: 600, shapes: [] }]
+                layers: [
+                    {
+                        id: `layer-${index}`,
+                        width: 600,
+                        master: stationLink(),
+                        shapes: []
+                    }
+                ]
             });
         }
         glyphs[10].layers[0].shapes.push({
@@ -3213,7 +3412,7 @@ describe('section 2 catalog packets and freshness', () => {
                 order: 'RestOfTheWorld'
             }
         });
-        const fontJson = { upm: 1000, glyphs };
+        const fontJson = { upm: 1000, masters: [testStation()], glyphs };
         const bridge = new PatchSyncEngine('catalog-large-delete');
         bridge.initFromJson(fontJson);
         bridge.syncCloudOwnedProjection(applyCloudOwnedData(fontJson));
@@ -3242,11 +3441,19 @@ describe('section 2 catalog packets and freshness', () => {
     it('treats an empty codepoint list like a missing one', () => {
         const fontJson = {
             upm: 1000,
+            masters: [testStation()],
             glyphs: [
                 {
                     name: 'A',
                     codepoints: [],
-                    layers: [{ id: 'layer-a', width: 600, shapes: [] }]
+                    layers: [
+                        {
+                            id: 'layer-a',
+                            width: 600,
+                            master: stationLink(),
+                            shapes: []
+                        }
+                    ]
                 }
             ]
         };
@@ -3265,11 +3472,19 @@ describe('section 2 catalog packets and freshness', () => {
     it('tombstones a deleted glyph without rewriting an unchanged neighbor', () => {
         const fontJson = {
             upm: 1000,
+            masters: [testStation()],
             glyphs: [
                 {
                     name: 'base',
                     codepoints: [66],
-                    layers: [{ id: 'layer-base', width: 600, shapes: [] }]
+                    layers: [
+                        {
+                            id: 'layer-base',
+                            width: 600,
+                            master: stationLink(),
+                            shapes: []
+                        }
+                    ]
                 },
                 {
                     name: 'accent',
@@ -3278,6 +3493,7 @@ describe('section 2 catalog packets and freshness', () => {
                         {
                             id: 'layer-accent',
                             width: 600,
+                            master: stationLink(),
                             shapes: [{ reference: 'base' }]
                         }
                     ]
@@ -3285,7 +3501,14 @@ describe('section 2 catalog packets and freshness', () => {
                 {
                     name: 'other',
                     codepoints: [68],
-                    layers: [{ id: 'layer-other', width: 600, shapes: [] }]
+                    layers: [
+                        {
+                            id: 'layer-other',
+                            width: 600,
+                            master: stationLink(),
+                            shapes: []
+                        }
+                    ]
                 }
             ]
         };

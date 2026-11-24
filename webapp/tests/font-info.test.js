@@ -3652,6 +3652,94 @@ describe('FontInfo feature code compilation scheduling', () => {
         expect(applySyntheticChangeSet).not.toHaveBeenCalled();
     });
 
+    test('a refused add-axis edit is shown to the user and changes nothing', async () => {
+        document.body.innerHTML = `
+                <div id="view-fontinfo" class="view view-fontinfo focused">
+                    <div class="view-title-bar">
+                        <div class="view-title-right">
+                            <div id="fontinfo-search-control" style="display: none;">
+                                <input id="fontinfo-search-input" />
+                            </div>
+                        </div>
+                    </div>
+                    <div class="view-content">
+                        <div id="browser-compat"></div>
+                    </div>
+                </div>
+            `;
+
+        const fontInfoManager = loadFontInfoManager();
+        const beginTransaction = jest.fn();
+        const endTransaction = jest.fn();
+        const applySyntheticChangeSet = jest.fn();
+        const runWithoutRecording = jest.fn((fn) => fn());
+
+        window.currentFontModel = {
+            axes: [
+                {
+                    name: { dflt: 'Weight' },
+                    tag: 'wght',
+                    min: 100,
+                    default: 400,
+                    max: 900
+                }
+            ],
+            names: {},
+            features: { features: [] },
+            stations: [
+                {
+                    id: 'M1',
+                    name: { dflt: 'Regular' },
+                    location: { wght: 400 },
+                    metrics: { ascender: 800 },
+                    kerning: {}
+                }
+            ],
+            addAxisWithStationCopies: jest.fn(async () => {
+                // What babelfont-model’s StationEditRefusedError says.
+                throw new Error(
+                    'Couldn’t add the axis, so nothing was changed: refused stored data'
+                );
+            }),
+            instances: [
+                {
+                    id: 'I1',
+                    name: { dflt: 'Regular' },
+                    location: { wght: 400 },
+                    custom_names: {}
+                }
+            ]
+        };
+        window.patchSyncEngine = {
+            beginTransaction,
+            endTransaction,
+            applySyntheticChangeSet,
+            runWithoutRecording
+        };
+
+        fontInfoManager.init();
+        jest.runOnlyPendingTimers();
+        fontInfoManager.switchTab('axes');
+
+        const addAxesButton = document.querySelector(
+            '[data-fontinfo-list-action="axes-add"]'
+        );
+        await addAxisThroughDialog(addAxesButton, 'commit');
+
+        expect(
+            window.currentFontModel.addAxisWithStationCopies
+        ).toHaveBeenCalledTimes(1);
+        const shown = [
+            ...document.querySelectorAll(
+                '.font-window-notice > span:first-child'
+            )
+        ].map((span) => span.textContent);
+        expect(shown).toContain(
+            'Couldn’t add the axis, so nothing was changed: refused stored data'
+        );
+        expect(window.currentFontModel.axes).toHaveLength(1);
+    });
+
     test('adding and removing axes syncs master and instance location fields', async () => {
         document.body.innerHTML = `
                 <div id="view-fontinfo" class="view view-fontinfo focused">
@@ -4095,6 +4183,83 @@ describe('FontInfo feature code compilation scheduling', () => {
 
         expect(removeStationsByIds).toHaveBeenCalledWith(['M2']);
         expect(window.currentFontModel.stations).toHaveLength(1);
+    });
+
+    test('a refused station removal is shown and keeps the stations and selection', async () => {
+        document.body.innerHTML = `
+            <div id="view-fontinfo" class="view view-fontinfo focused">
+                <div class="view-title-bar">
+                    <div class="view-title-right">
+                        <div id="fontinfo-search-control" style="display: none;">
+                            <input id="fontinfo-search-input" />
+                        </div>
+                    </div>
+                </div>
+                <div class="view-content">
+                    <div id="browser-compat"></div>
+                </div>
+            </div>
+        `;
+
+        const fontInfoManager = loadFontInfoManager();
+        const removeStationsByIds = jest.fn(async () => {
+            throw new Error(
+                'Couldn’t remove the stations, so nothing was changed: refused stored data'
+            );
+        });
+        window.currentFontModel = {
+            axes: [],
+            names: {},
+            features: { features: [] },
+            stations: [
+                {
+                    id: 'M1',
+                    name: { dflt: 'Regular' },
+                    location: {},
+                    metrics: { ascender: 800 },
+                    kerning: {}
+                },
+                {
+                    id: 'M2',
+                    name: { dflt: 'Bold' },
+                    location: {},
+                    metrics: { ascender: 820 },
+                    kerning: {}
+                }
+            ],
+            glyphs: [],
+            removeStationsByIds
+        };
+
+        fontInfoManager.init();
+        jest.runOnlyPendingTimers();
+        fontInfoManager.switchTab('masters');
+
+        document
+            .querySelectorAll(
+                '#fontinfo-stations-content .fontinfo-record-item'
+            )[1]
+            .click();
+
+        fontInfoManager.setDeleteConfirmationHandler(true);
+        document
+            .querySelector('[data-fontinfo-list-action="stations-remove"]')
+            .click();
+
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(removeStationsByIds).toHaveBeenCalledWith(['M2']);
+        expect(window.currentFontModel.stations).toHaveLength(2);
+        expect(fontInfoManager.selectedStationIndex).toBe(1);
+        const shown = [
+            ...document.querySelectorAll(
+                '.font-window-notice > span:first-child'
+            )
+        ].map((span) => span.textContent);
+        expect(shown).toContain(
+            'Couldn’t remove the stations, so nothing was changed: refused stored data'
+        );
     });
 
     test('confirmation cancel aborts master deletion', () => {

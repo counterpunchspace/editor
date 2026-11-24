@@ -177,6 +177,71 @@ export class CloudPartedInboundBuffer {
         return { kind: 'apply', update, envelopes };
     }
 
+    /**
+     * The key of the edit a leading part belongs to, or null when the row is
+     * not a leading part.
+     */
+    static leadingPartKey(
+        envelopes: CollaborationMessageEnvelope[] | undefined
+    ): string | null {
+        const envelope = envelopes?.length === 1 ? envelopes[0] : null;
+        const part = envelope?.part;
+        if (
+            part &&
+            typeof part.of === 'string' &&
+            Number.isInteger(part.index) &&
+            Number.isInteger(part.total) &&
+            part.index < part.total - 1
+        ) {
+            return part.of;
+        }
+        return null;
+    }
+
+    /** The key a last part (an envelope with no part marker) would release. */
+    static lastPartKey(
+        envelopes: CollaborationMessageEnvelope[] | undefined
+    ): string | null {
+        const envelope = envelopes?.length === 1 ? envelopes[0] : null;
+        return envelope && !envelope.part
+            ? collaborationMessageKey(envelope)
+            : null;
+    }
+
+    /** Whether this row continues or completes every edit now held. */
+    continuesHeld(
+        envelopes: CollaborationMessageEnvelope[] | undefined
+    ): boolean {
+        if (!this._held.size) {
+            return true;
+        }
+        const key =
+            CloudPartedInboundBuffer.leadingPartKey(envelopes) ??
+            CloudPartedInboundBuffer.lastPartKey(envelopes);
+        return key !== null && this._held.size === 1 && this._held.has(key);
+    }
+
+    /**
+     * Every held edit, merged in the order it was held, and empties the
+     * buffer. Null when nothing is held.
+     */
+    takeAll(): Uint8Array | null {
+        if (!this._held.size) {
+            return null;
+        }
+        const updates: Uint8Array[] = [];
+        for (const held of this._held.values()) {
+            updates.push(...held.updates);
+        }
+        this._held.clear();
+        return Y.mergeUpdates(updates);
+    }
+
+    /** Forget every held part (their rows are replayed by the room). */
+    clear(): void {
+        this._held.clear();
+    }
+
     /** Merged updates of edits held longer than `holdMs`. */
     takeExpired(
         now = Date.now(),

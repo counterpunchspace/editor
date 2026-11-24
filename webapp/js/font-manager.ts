@@ -11,7 +11,10 @@ import {
     fullFontCompilation,
     requestOpenFontConversion,
     COMPILATION_TARGETS,
-    adoptTransferredUint8Array
+    adoptTransferredUint8Array,
+    isTerminalWorkerDocumentError,
+    markTerminalWorkerDocumentError,
+    terminalWorkerErrorDocumentId
 } from './font-compilation';
 import { get_glyph_order } from '../wasm-dist/babelfont_fontc_web';
 import { prepareCompileFilters } from './compile-filter-host';
@@ -30,6 +33,7 @@ import {
     withSuppressedModelRecording,
     jsonPartsToChunks,
     jsonPartsToData,
+    isEmptyYjsUpdate,
     type AxisStationCopyPlan,
     type BabelfontJsonParts
 } from './babelfont-model';
@@ -53,6 +57,7 @@ import {
 import { compilationPlan, type CompileEditStamp } from './edit-intent';
 import { jsonToYDoc, fromYType, getYPath } from './change-bridge-ydoc';
 import {
+    describeDrawingStationViolation,
     describeRestingDrawingViolation,
     omitRestingDrawingRuntimeKeys,
     toRestingDrawingJson,
@@ -60,6 +65,8 @@ import {
 } from './resting-drawing-json';
 import { sidebarErrorDisplay } from './sidebar-error-display';
 import type { FilesystemPlugin } from './filesystem-plugins';
+import { FONT_DEPS_DOCUMENT_ID } from './filesystem-plugins/cloud-document-set';
+import { catalogBucketOfDocument } from './filesystem-plugins/cloud-room-layout';
 import { Logger } from './logger';
 import type {
     LivePreviewCompile,
@@ -531,10 +538,12 @@ export type RustBatchResult = {
 };
 
 export function rustBatchHasContent(result: RustBatchResult): boolean {
-    if (result.update.length > 0) {
+    if (!isEmptyYjsUpdate(result.update)) {
         return true;
     }
-    return Boolean(result.updates?.some((packet) => packet.update.length > 0));
+    return Boolean(
+        result.updates?.some((packet) => !isEmptyYjsUpdate(packet.update))
+    );
 }
 
 export type AddStationInterpolationLocation = {
@@ -1248,6 +1257,13 @@ class FontManager {
     lastWorkerFontCacheEpoch: number;
     /** True while the worker document is quarantined after a failed sync. */
     private workerMirrorQuarantined: boolean;
+    /**
+     * Documents the worker reported as having lost an update
+     * (`ClockGapError`) or as broken (`BrokenDocumentError`). Updates for
+     * them are refused, and the worker is never reseeded behind them, until
+     * the font is opened again.
+     */
+    private workerBrokenDocumentErrors: Map<string, Error> = new Map();
     private editingCompileContextsByRevision: Map<
         string,
         EditingCompileContext
@@ -1353,27 +1369,14 @@ class FontManager {
             this.updateFontDisplay();
         });
         window.addEventListener('history-replay-blocked', (event) => {
-            const font = this.currentFontId
-                ? (this.openedFonts.get(this.currentFontId) ?? null)
-                : null;
-            const assetId = this.normalizeCloudAssetId(font);
-            const plugin = window.cloudPlugin;
-            if (!assetId || !plugin?.setAssetNotice) {
-                return;
-            }
-            const action =
-                (event as CustomEvent<{ historyAction?: string }>).detail
-                    ?.historyAction === 'redo'
-                    ? 'Redo'
-                    : 'Undo';
-            plugin.setAssetNotice(assetId, {
-                kind: 'history-blocked',
-                tone: 'warning',
-                title: `${action} skipped: a collaborator changed this since, and their edit was kept.`
-            });
-            setTimeout(() => {
-                plugin.clearAssetNotice?.(assetId, 'history-blocked');
-            }, 8000);
+            this.showHistoryReplayBlockedNotice(
+                (
+                    event as CustomEvent<{
+                        historyAction?: string;
+                        reason?: string;
+                    } | null>
+                ).detail ?? null
+            );
         });
         window.addEventListener('cloud-persist-failed', (event) => {
             this.cloudPersistFailed = true;
@@ -1824,40 +1827,55 @@ class FontManager {
         if (value instanceof ArrayBuffer) {
             return new Uint8Array(value);
         }
-        if (Array.isArray(value)) {
-            return new Uint8Array(value);
-        }
-        return new Uint8Array();
+        // A batch without its packet is refused, never read as no edit.
+        throw new TypeError('The worker batch returned no Yjs update.');
     }
 
+    /**
+     * The batch's per-document packets exactly as the worker returned them.
+     * A malformed entry is refused: dropping it would lose that document's
+     * edits while the rest of the batch applies.
+     */
     private normalizeWorkerBatchUpdates(
         value: unknown
     ): RustBatchDocumentUpdate[] | undefined {
-        if (!Array.isArray(value) || value.length === 0) {
+        if (value === undefined || value === null) {
             return undefined;
         }
-        const packets = value.flatMap((entry) => {
-            if (!entry || typeof entry !== 'object') {
-                return [];
+        if (!Array.isArray(value)) {
+            throw new TypeError(
+                'The worker batch returned per-document packets that are not a list.'
+            );
+        }
+        if (value.length === 0) {
+            return undefined;
+        }
+        return value.map((entry) => {
+            const record =
+                entry && typeof entry === 'object'
+                    ? (entry as Record<string, unknown>)
+                    : null;
+            if (
+                !record ||
+                typeof record.documentId !== 'string' ||
+                !record.documentId
+            ) {
+                throw new TypeError(
+                    'The worker batch returned a packet without its document id.'
+                );
             }
-            const record = entry as Record<string, unknown>;
-            if (typeof record.documentId !== 'string' || !record.documentId) {
-                return [];
-            }
-            const update = this.normalizeWorkerBatchUpdate(record.update);
-            if (!update.length) {
-                return [];
-            }
-            return [{ documentId: record.documentId, update }];
+            return {
+                documentId: record.documentId,
+                update: this.normalizeWorkerBatchUpdate(record.update)
+            };
         });
-        return packets.length ? packets : undefined;
     }
 
     private parseWorkerBatchMetadata(value: unknown): RustBatchMetadata {
-        const rawMetadata =
-            typeof value === 'string' && value.length > 0
-                ? (JSON.parse(value) as Record<string, unknown>)
-                : {};
+        if (typeof value !== 'string' || !value.length) {
+            throw new TypeError('The worker batch returned no metadata.');
+        }
+        const rawMetadata = JSON.parse(value) as Record<string, unknown>;
         const changedGlyphs = Array.isArray(rawMetadata.changedGlyphs)
             ? rawMetadata.changedGlyphs.filter(
                   (glyphName): glyphName is string =>
@@ -1865,41 +1883,48 @@ class FontManager {
               )
             : [];
         const drawingTargets = Array.isArray(rawMetadata.layerTargets)
-            ? rawMetadata.layerTargets.flatMap((target) => {
-                  if (!target || typeof target !== 'object') {
-                      return [];
-                  }
-                  const glyphName = (target as Record<string, unknown>)
-                      .glyphName;
-                  const drawingId = (target as Record<string, unknown>).layerId;
-                  return typeof glyphName === 'string' &&
-                      typeof drawingId === 'string'
-                      ? [{ glyphName, layerId: drawingId }]
-                      : [];
-              })
-            : [];
-        const drawingOperations = Array.isArray(rawMetadata.layerOperations)
-            ? rawMetadata.layerOperations.flatMap((operation) => {
-                  if (!operation || typeof operation !== 'object') {
-                      return [];
-                  }
-                  const record = operation as Record<string, unknown>;
+            ? rawMetadata.layerTargets.map((target) => {
+                  const record =
+                      target && typeof target === 'object'
+                          ? (target as Record<string, unknown>)
+                          : {};
                   const glyphName = record.glyphName;
                   const drawingId = record.layerId;
                   if (
                       typeof glyphName !== 'string' ||
                       typeof drawingId !== 'string'
                   ) {
-                      return [];
+                      throw new TypeError(
+                          'The worker batch named a drawing target without its glyph or drawing.'
+                      );
                   }
-                  return [
-                      {
-                          glyphName,
-                          layerId: drawingId,
-                          oldValue: record.oldValue,
-                          newValue: record.newValue
-                      }
-                  ];
+                  return { glyphName, layerId: drawingId };
+              })
+            : [];
+        const drawingOperations = Array.isArray(rawMetadata.layerOperations)
+            ? rawMetadata.layerOperations.map((operation) => {
+                  const record =
+                      operation && typeof operation === 'object'
+                          ? (operation as Record<string, unknown>)
+                          : {};
+                  const glyphName = record.glyphName;
+                  const drawingId = record.layerId;
+                  if (
+                      typeof glyphName !== 'string' ||
+                      typeof drawingId !== 'string'
+                  ) {
+                      // Dropping it would apply the packet without the
+                      // drawing's model update.
+                      throw new TypeError(
+                          'The worker batch returned a drawing operation without its glyph or drawing.'
+                      );
+                  }
+                  return {
+                      glyphName,
+                      layerId: drawingId,
+                      oldValue: record.oldValue,
+                      newValue: record.newValue
+                  };
               })
             : [];
         const stationsOperation =
@@ -2008,9 +2033,36 @@ class FontManager {
             layerId: string;
             layer: unknown;
         }>,
-        /** The base batch's packets per document, glyph packets included. */
-        baseUpdates: Array<{ documentId: string; update: Uint8Array }> = []
+        /**
+         * The base batch's packets per document, glyph packets included, or
+         * undefined when it had none.
+         */
+        baseUpdates?: Array<{ documentId: string; update: Uint8Array }>
     ): Promise<RustBatchResult> {
+        if (!(baseUpdate instanceof Uint8Array)) {
+            throw new TypeError(
+                'Refining drawing snapshots needs the base batch’s Yjs update.'
+            );
+        }
+        if (baseUpdates !== undefined) {
+            if (!Array.isArray(baseUpdates)) {
+                throw new TypeError(
+                    'Base packets for a refine must be a list of {documentId, update}.'
+                );
+            }
+            for (const packet of baseUpdates) {
+                if (
+                    !packet ||
+                    typeof packet.documentId !== 'string' ||
+                    !packet.documentId ||
+                    !(packet.update instanceof Uint8Array)
+                ) {
+                    throw new TypeError(
+                        'Each base packet for a refine needs a document id and a Yjs update.'
+                    );
+                }
+            }
+        }
         return this.requestRustBatchFromWorker({
             type: 'refineDrawingSnapshotsYjs',
             baseUpdate,
@@ -2076,6 +2128,37 @@ class FontManager {
         }
         window.currentFontModel = null;
         return null;
+    }
+
+    /**
+     * Show the cloud asset notice for an undo or redo the engine refused
+     * because a collaborator changed the same thing since. Other reasons
+     * (document-not-loaded) have their own notice (font-windows/dialogs.ts),
+     * so this shows nothing for them.
+     */
+    showHistoryReplayBlockedNotice(
+        detail: { historyAction?: string; reason?: string } | null
+    ): void {
+        if (detail?.reason !== 'collaborator-edit') {
+            return;
+        }
+        const font = this.currentFontId
+            ? (this.openedFonts.get(this.currentFontId) ?? null)
+            : null;
+        const assetId = this.normalizeCloudAssetId(font);
+        const plugin = window.cloudPlugin;
+        if (!assetId || !plugin?.setAssetNotice) {
+            return;
+        }
+        const action = detail.historyAction === 'redo' ? 'Redo' : 'Undo';
+        plugin.setAssetNotice(assetId, {
+            kind: 'history-blocked',
+            tone: 'warning',
+            title: `${action} skipped: a collaborator changed this since, and their edit was kept.`
+        });
+        setTimeout(() => {
+            plugin.clearAssetNotice?.(assetId, 'history-blocked');
+        }, 8000);
     }
 
     private normalizeCloudAssetId(font: OpenedFont | null): string | null {
@@ -2362,6 +2445,7 @@ class FontManager {
         this.forceFullEditingCacheRefresh = false;
         this.workerDrawingFingerprintCache.clear();
         this.workerMirrorQuarantined = false;
+        this.workerBrokenDocumentErrors.clear();
         window.currentFontModel = null;
         (window.fontInterpolation as any)?.resetRequestTracking?.();
 
@@ -5071,19 +5155,6 @@ class FontManager {
         forceValidation: boolean
     ): void {
         try {
-            let fixCount = 0;
-            const knownStationIds = new Set(
-                Array.isArray(data?.masters)
-                    ? data.masters
-                          .map((station: any) =>
-                              station && typeof station === 'object'
-                                  ? String(station.id || '')
-                                  : ''
-                          )
-                          .filter(Boolean)
-                    : []
-            );
-
             // Fields that must always be arrays in babelfont format
             const arrayFields = new Set([
                 'shapes',
@@ -5118,176 +5189,28 @@ class FontManager {
                 return arr;
             };
 
-            const normalizeDrawingStationValue = (
-                stationValue: any,
-                isBackground: boolean,
-                drawingId: string
-            ): Record<string, unknown> | null => {
-                if (typeof stationValue === 'string' && stationValue.length) {
-                    return {
-                        type: 'DefaultForMaster',
-                        master: stationValue
-                    };
-                }
-
-                if (
-                    !stationValue ||
-                    typeof stationValue !== 'object' ||
-                    Array.isArray(stationValue)
-                ) {
-                    if (!isBackground && knownStationIds.has(drawingId)) {
-                        return {
-                            type: 'DefaultForMaster',
-                            master: drawingId
-                        };
+            // A drawing's station link is checked, never rewritten: a
+            // drawing without a valid one is refused.
+            if (Array.isArray(data?.glyphs)) {
+                data.glyphs.forEach((glyph: any, glyphIndex: number) => {
+                    if (!glyph || !Array.isArray(glyph.layers)) {
+                        return;
                     }
-                    return null;
-                }
-
-                if (stationValue.type === 'FreeFloating') {
-                    return { type: 'FreeFloating' };
-                }
-
-                if (
-                    (stationValue.type === 'DefaultForMaster' ||
-                        stationValue.type === 'AssociatedWithMaster') &&
-                    typeof stationValue.master === 'string' &&
-                    stationValue.master.length
-                ) {
-                    return {
-                        type: stationValue.type,
-                        master: stationValue.master
-                    };
-                }
-
-                if (
-                    typeof stationValue.master === 'string' &&
-                    stationValue.master.length
-                ) {
-                    return {
-                        type: 'DefaultForMaster',
-                        master: stationValue.master
-                    };
-                }
-
-                if (
-                    typeof stationValue.DefaultForMaster === 'string' &&
-                    stationValue.DefaultForMaster.length
-                ) {
-                    return {
-                        type: 'DefaultForMaster',
-                        master: stationValue.DefaultForMaster
-                    };
-                }
-
-                if (
-                    typeof stationValue.default_for_master === 'string' &&
-                    stationValue.default_for_master.length
-                ) {
-                    return {
-                        type: 'DefaultForMaster',
-                        master: stationValue.default_for_master
-                    };
-                }
-
-                if (
-                    typeof stationValue.AssociatedWithMaster === 'string' &&
-                    stationValue.AssociatedWithMaster.length
-                ) {
-                    return {
-                        type: 'AssociatedWithMaster',
-                        master: stationValue.AssociatedWithMaster
-                    };
-                }
-
-                if (
-                    typeof stationValue.associated_with_master === 'string' &&
-                    stationValue.associated_with_master.length
-                ) {
-                    return {
-                        type: 'AssociatedWithMaster',
-                        master: stationValue.associated_with_master
-                    };
-                }
-
-                if ('FreeFloating' in stationValue) {
-                    return { type: 'FreeFloating' };
-                }
-
-                if (!isBackground && knownStationIds.has(drawingId)) {
-                    return {
-                        type: 'DefaultForMaster',
-                        master: drawingId
-                    };
-                }
-
-                return null;
-            };
-
-            const canonicalizeGlyphDrawingIdentities = (
-                glyph: any,
-                glyphPath: string
-            ): void => {
-                if (!glyph || !Array.isArray(glyph.layers)) {
-                    return;
-                }
-
-                for (const drawing of glyph.layers) {
-                    if (!drawing || typeof drawing !== 'object') {
-                        continue;
-                    }
-
-                    const drawingId =
-                        typeof drawing.id === 'string' ? drawing.id : '';
-                    const normalizedStation = normalizeDrawingStationValue(
-                        drawing.master,
-                        drawing.is_background === true,
-                        drawingId
-                    );
-
-                    if (normalizedStation) {
-                        const stationChanged =
-                            JSON.stringify(drawing.master ?? null) !==
-                            JSON.stringify(normalizedStation);
-                        if (stationChanged) {
-                            drawing.master = normalizedStation;
-                            fixCount++;
-                        }
-
-                        if (
-                            normalizedStation.type === 'DefaultForMaster' &&
-                            typeof normalizedStation.master === 'string' &&
-                            normalizedStation.master.length
-                        ) {
-                            const canonicalDrawingId = normalizedStation.master;
-                            const conflictingDrawing = glyph.layers.find(
-                                (candidate: any) =>
-                                    candidate !== drawing &&
-                                    candidate &&
-                                    typeof candidate.id === 'string' &&
-                                    candidate.id === canonicalDrawingId
+                    glyph.layers.forEach(
+                        (drawing: any, drawingIndex: number) => {
+                            if (!drawing || typeof drawing !== 'object') {
+                                return;
+                            }
+                            const violation = describeDrawingStationViolation(
+                                drawing.master,
+                                { isBackground: drawing.is_background === true }
                             );
-
-                            if (
-                                !conflictingDrawing &&
-                                drawing.id !== canonicalDrawingId
-                            ) {
-                                drawing.id = canonicalDrawingId;
-                                fixCount++;
-                                console.warn(
-                                    `[FontManager] Canonicalized default drawing id at ${glyphPath} from ${drawingId || '[missing]'} to ${canonicalDrawingId}`
+                            if (violation) {
+                                throw new TypeError(
+                                    `Glyph “${glyph.name}” drawing ${drawing.id ?? `glyphs[${glyphIndex}].layers[${drawingIndex}]`}: ${violation}.`
                                 );
                             }
                         }
-                    }
-                }
-            };
-
-            if (Array.isArray(data?.glyphs)) {
-                data.glyphs.forEach((glyph: any, index: number) => {
-                    canonicalizeGlyphDrawingIdentities(
-                        glyph,
-                        `glyphs[${index}]`
                     );
                 });
             }
@@ -5449,23 +5372,15 @@ class FontManager {
                 }
             }
 
-            if (fixCount > 0) {
-                throw new Error(
-                    '[FontManager] validateBabelfontDataForRust must not repair node or shape structure.'
-                );
-            } else if (forceValidation) {
+            if (forceValidation) {
                 console.log(
                     `[FontManager] Validation ran (forceValidation=${forceValidation}), no issues found`
                 );
             }
         } catch (e) {
-            console.warn(
-                '[FontManager] Failed to validate/fix babelfontJson:',
-                e
-            );
-            if (e instanceof FontDataIntegrityError || e instanceof TypeError) {
-                throw e;
-            }
+            // Every validation failure stops the compile; none is skipped.
+            console.error('[FontManager] Font data failed validation:', e);
+            throw e;
         }
     }
 
@@ -5484,7 +5399,7 @@ class FontManager {
                 '[FontManager] Error syncing babelfont JSON from model:',
                 error
             );
-            return false;
+            throw error;
         }
     }
 
@@ -5571,7 +5486,6 @@ class FontManager {
         drawingId: string,
         drawingData: Babelfont.Layer,
         options?: {
-            preserveExistingShapes?: boolean;
             authoritativeOptionalDrawingFields?: Array<
                 'anchors' | 'guides' | 'format_specific'
             >;
@@ -5612,27 +5526,26 @@ class FontManager {
             options?.authoritativeOptionalDrawingFields
         );
 
-        const resolvedWidth =
-            typeof drawingData?.width === 'number' &&
-            Number.isFinite(drawingData.width)
-                ? drawingData.width
-                : originalDrawing?.width;
+        // This writes a whole drawing: its width and shapes come from the
+        // drawing being written, never from the stored copy. A drawing
+        // without them is refused rather than completed from storage.
+        if (!drawingData) {
+            throw new Error(
+                `Couldn’t store drawing ${glyphName}/${drawingId}: no drawing was given.`
+            );
+        }
+        const resolvedWidth = drawingData.width;
         assertFiniteDrawingWidth(resolvedWidth, {
             glyphName,
             layerId: drawingId,
             operation: 'serializeDrawingForStorage'
         });
-
-        const cleanOriginalShapes = Array.isArray(originalDrawing?.shapes)
-            ? originalDrawing.shapes.map(cleanShapeForSaving)
-            : originalDrawing?.shapes;
-        const cleanShapes = Array.isArray(drawingData?.shapes)
-            ? drawingData.shapes.map(cleanShapeForSaving)
-            : cleanOriginalShapes;
-        const storedShapes =
-            options?.preserveExistingShapes && originalDrawing?.shapes
-                ? cleanOriginalShapes
-                : cleanShapes;
+        if (!Array.isArray(drawingData.shapes)) {
+            throw new Error(
+                `Couldn’t store drawing ${glyphName}/${drawingId}: it has no shapes list, and a whole drawing must carry its shapes.`
+            );
+        }
+        const storedShapes = drawingData.shapes.map(cleanShapeForSaving);
 
         const cleanAnchors =
             Array.isArray(drawingData.anchors) &&
@@ -5702,7 +5615,7 @@ class FontManager {
                 ...(drawingName !== undefined && { name: drawingName }),
                 id: drawingId,
                 master: originalDrawing?.master ?? drawingData.master,
-                ...(Array.isArray(storedShapes) && { shapes: storedShapes }),
+                shapes: storedShapes,
                 ...(cleanAnchors && { anchors: cleanAnchors }),
                 ...(cleanGuides && { guides: cleanGuides }),
                 ...((drawingData.color ?? originalDrawing?.color) && {
@@ -5897,19 +5810,6 @@ class FontManager {
      * touching the current font or any bridge. Used to seed the worker's
      * Y.Doc with the empty font before the normal pipeline runs.
      */
-    private buildWorkerYjsStateFromJson(
-        babelfontJson: string
-    ): Uint8Array | null {
-        try {
-            const parsed = JSON.parse(babelfontJson) as Record<string, unknown>;
-            const yDoc = new Y.Doc();
-            jsonToYDoc(parsed, yDoc.getMap('font'));
-            return Y.encodeStateAsUpdate(yDoc);
-        } catch {
-            return null;
-        }
-    }
-
     /** Discard JS fingerprint/epoch state that must stay coherent with the worker document. */
     private invalidateWorkerCacheMirror(): void {
         this.workerDrawingFingerprintCache.clear();
@@ -5992,10 +5892,21 @@ class FontManager {
                 return false;
             }
 
+            // A document the worker lost an update for stays refused: its
+            // later updates would build on the gap.
+            const workerDocumentId = documentId ?? 'font-core';
+            const brokenError =
+                this.workerBrokenDocumentErrors.get(workerDocumentId);
+            if (brokenError) {
+                throw brokenError;
+            }
+
             // Quarantine is an exceptional failure state (e.g. a prior
             // applyYjsUpdate throw). Re-seed from the authoritative bridge
             // once so later incremental edits are not stuck forever; this is
-            // the same recovery class as cloud reconnect rebaseline.
+            // the same recovery class as cloud reconnect rebaseline. A
+            // terminal document error is never reseeded (see
+            // recoverWorkerCacheFromAuthoritativeState).
             if (this.workerMirrorQuarantined) {
                 const recovered =
                     await this.recoverWorkerCacheFromAuthoritativeState(
@@ -6011,11 +5922,21 @@ class FontManager {
                 nonGlyphChangeHints.length > 0 ||
                 drawingTargets.length > 0 ||
                 glyphRenames.length > 0;
-            if (!hasRefreshMetadata) {
-                // Core stamps like glyphRevisions have no compile-cache
-                // metadata. Applying them through WASM used to discard the
-                // worker Y.Doc ("missing cache metadata for non-glyph update").
+            if (
+                documentId === FONT_DEPS_DOCUMENT_ID ||
+                (documentId && catalogBucketOfDocument(documentId) !== null)
+            ) {
+                // The worker keeps no copy of these documents, so there is
+                // nothing to keep in step and no gap to leave.
                 return true;
+            }
+            if (!hasRefreshMetadata && update.length > 0) {
+                // Skipping it would leave a gap in the worker's copy that
+                // every later update of this document trips on. Keys no
+                // compile cache reads arrive marked `cache-neutral`.
+                throw new Error(
+                    `Refusing to send an undescribed update for ${documentId ?? 'font-core'} to the compile worker.`
+                );
             }
             const updateToSend =
                 update.length > 0
@@ -6044,6 +5965,10 @@ class FontManager {
             // see that packet: it drops the emptied glyph, and a later packet
             // of the same document (an undo of the delete) builds on it.
             try {
+                // A glyph document the worker does not hold yet (a new
+                // glyph, or one loaded since the seed) gets its whole state
+                // first; the worker refuses an update for it otherwise.
+                await fontCompilation.ensureWorkerHoldsDocument(documentId);
                 const response = await fontCompilation.sendMessage({
                     type: 'applyYjsUpdate',
                     update: updateToSend,
@@ -6113,8 +6038,30 @@ class FontManager {
 
                 return true;
             } catch (error) {
+                if (isTerminalWorkerDocumentError(error)) {
+                    // The worker's copy lost an update or is broken. Mark the
+                    // document broken and surface the error; nothing retries
+                    // or reseeds it.
+                    const failure = markTerminalWorkerDocumentError(
+                        error,
+                        workerDocumentId
+                    );
+                    this.workerBrokenDocumentErrors.set(
+                        terminalWorkerErrorDocumentId(
+                            failure,
+                            workerDocumentId
+                        ),
+                        failure
+                    );
+                    console.error(
+                        '[FontManager] The compile worker refused a Yjs update; the document is broken:',
+                        { documentId: workerDocumentId, changedGlyphs },
+                        failure
+                    );
+                    throw failure;
+                }
                 this.invalidateWorkerCacheMirror();
-                console.warn(
+                console.error(
                     '[FontManager] Failed to send worker Yjs update:',
                     {
                         changedGlyphs,
@@ -6122,9 +6069,7 @@ class FontManager {
                     },
                     error
                 );
-                return this.recoverWorkerCacheFromAuthoritativeState(
-                    'applyYjsUpdate failed; reseeding from bridge'
-                );
+                throw error;
             }
         };
 
@@ -6159,11 +6104,15 @@ class FontManager {
         this.workerYjsSendQueue = queuedReseed.catch(() => undefined);
         const cacheUpdatePromise = queuedReseed.then(() => undefined);
         this.workerCacheUpdatePromise = cacheUpdatePromise;
-        void cacheUpdatePromise.finally(() => {
-            if (this.workerCacheUpdatePromise === cacheUpdatePromise) {
-                this.workerCacheUpdatePromise = null;
-            }
-        });
+        // The failure reaches the caller through the promise returned
+        // below; this bookkeeping chain only clears the slot.
+        void cacheUpdatePromise
+            .finally(() => {
+                if (this.workerCacheUpdatePromise === cacheUpdatePromise) {
+                    this.workerCacheUpdatePromise = null;
+                }
+            })
+            .catch(() => undefined);
         return queuedReseed;
     }
 
@@ -6234,6 +6183,14 @@ class FontManager {
         reason: string,
         options?: { quiet?: boolean }
     ): Promise<boolean> {
+        // A reseed would clear the worker's record of a document that lost
+        // an update; that document stays broken until the font is opened
+        // again.
+        for (const [documentId, error] of this.workerBrokenDocumentErrors) {
+            throw new Error(
+                `The compile worker is not reseeded (${reason}): document ${documentId} is broken. ${error.message}`
+            );
+        }
         const documentSet = window.patchSyncEngine?.encodeDocumentSet?.();
         const bridgeState = window.patchSyncEngine?.encodeBridgeState?.();
         if (
@@ -6242,11 +6199,9 @@ class FontManager {
         ) {
             this.workerMirrorQuarantined = true;
             fontCompilation?.setWorkerCacheDocumentReady(false);
-            console.error(
-                '[FontManager] Cannot recover worker cache without bridge state:',
-                reason
+            throw new Error(
+                `Cannot rebuild the compile worker’s documents without the editor’s documents (${reason}).`
             );
-            return false;
         }
 
         try {
@@ -6272,7 +6227,18 @@ class FontManager {
                 reason,
                 error
             );
-            return false;
+            if (isTerminalWorkerDocumentError(error)) {
+                const failure = markTerminalWorkerDocumentError(
+                    error,
+                    'font-core'
+                );
+                this.workerBrokenDocumentErrors.set(
+                    terminalWorkerErrorDocumentId(failure, 'font-core'),
+                    failure
+                );
+                throw failure;
+            }
+            throw error;
         }
     }
 
@@ -6482,11 +6448,15 @@ class FontManager {
               ]).then(() => undefined)
             : forwardedUpdatePromise.then(() => undefined);
         this.workerCacheUpdatePromise = cacheUpdatePromise;
-        void cacheUpdatePromise.finally(() => {
-            if (this.workerCacheUpdatePromise === cacheUpdatePromise) {
-                this.workerCacheUpdatePromise = null;
-            }
-        });
+        // The failure reaches the caller through the promise returned
+        // below; this bookkeeping chain only clears the slot.
+        void cacheUpdatePromise
+            .finally(() => {
+                if (this.workerCacheUpdatePromise === cacheUpdatePromise) {
+                    this.workerCacheUpdatePromise = null;
+                }
+            })
+            .catch(() => undefined);
 
         return await forwardedUpdatePromise;
     }
@@ -7084,11 +7054,9 @@ class FontManager {
                 }
             }
 
-            try {
-                await fontCompilation.awaitWorkerDocumentSync();
-            } catch {
-                return false;
-            }
+            // A failed worker sync is an error, not a cache that is
+            // merely not refreshed.
+            await fontCompilation.awaitWorkerDocumentSync();
 
             return true;
         })();
@@ -7101,6 +7069,8 @@ class FontManager {
               ]).then(() => undefined)
             : refreshPromise.then(() => undefined);
         this.workerCacheUpdatePromise = cacheUpdatePromise;
+        // Awaited by awaitWorkerCacheUpdate, and surfaced below.
+        void cacheUpdatePromise.catch(() => undefined);
         try {
             return await refreshPromise;
         } finally {
@@ -7218,7 +7188,6 @@ class FontManager {
         drawingId: string,
         drawingData: Babelfont.Layer,
         options?: {
-            preserveExistingShapes?: boolean;
             authoritativeOptionalDrawingFields?: Array<
                 'anchors' | 'guides' | 'format_specific'
             >;
@@ -7328,14 +7297,7 @@ class FontManager {
                 return;
             }
 
-            try {
-                await fontCompilation.awaitWorkerDocumentSync();
-            } catch (error) {
-                console.error(
-                    '[FontManager] Error waiting for authoritative worker Yjs sync:',
-                    error
-                );
-            }
+            await fontCompilation.awaitWorkerDocumentSync();
         };
 
         const cacheUpdatePromise = run();
@@ -7379,11 +7341,8 @@ class FontManager {
         if (!this.workerCacheUpdatePromise) {
             return;
         }
-        try {
-            await this.workerCacheUpdatePromise;
-        } catch {
-            // Ignore update failures here — undo/redo refresh has its own forced sync path.
-        }
+        // A failed worker update is surfaced to the caller.
+        await this.workerCacheUpdatePromise;
     }
 
     async refreshGlyphsAfterModelBatch(
@@ -7753,11 +7712,7 @@ class FontManager {
             return false;
         }
 
-        try {
-            await fontCompilation.awaitWorkerDocumentSync();
-        } catch {
-            return false;
-        }
+        await fontCompilation.awaitWorkerDocumentSync();
 
         const normalized = this.normalizeDrawingForRust(serializedDrawing);
         this.workerDrawingFingerprintCache.set(

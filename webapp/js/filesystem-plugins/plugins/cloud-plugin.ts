@@ -20,6 +20,12 @@ import {
     type RoomLayout
 } from '../cloud-room-layout';
 import { ROOM_LAYOUT_VERSION } from '../cloud-room-layout';
+import { CloudWalPersistError } from '../../cloud-durable-wal';
+import {
+    keepRowUntilSession,
+    keptSessionRowCount,
+    writeKeptRowsIntoSession
+} from './cloud-plugin-session-rows';
 import { showNotice } from '../../font-windows/dialogs';
 import {
     FilesystemPlugin,
@@ -38,7 +44,9 @@ import {
 } from '../../cloud-adapter';
 import {
     CLOUD_SUBSCRIPTION_LAPSED_CODE,
-    CLOUD_SUBSCRIPTION_LAPSED_MESSAGE
+    CLOUD_SUBSCRIPTION_LAPSED_MESSAGE,
+    rememberLoadedDocumentLogCursor,
+    rememberLoadedDocumentLogCursors
 } from '../../cloud-adapter-support';
 import { cloudPluginOpenMethods } from './cloud-plugin-open';
 import { cloudPluginSaveAsMethods } from './cloud-plugin-save-as';
@@ -64,6 +72,7 @@ import {
 import { setCollabIntegritySnapshotProvider } from '../../cloud-collab-integrity-debug';
 import { Logger } from '../../logger';
 import { getPathSegments } from '../../change-log';
+import { recordCollabTrace } from '../../collab-trace';
 import { resolveWebsiteURL } from '../../website-url';
 import { readUrlState, updateUrlState } from '../../url-state';
 import { beginLoadingCursor, endLoadingCursor } from '../../loading-cursor';
@@ -123,6 +132,7 @@ import './cloud-plugin-save-as';
 import './cloud-plugin-live';
 
 import {
+    committedEntryAsApplied,
     deletedGlyphIdsFromCommittedEntries,
     catalogGlyphNameFromCommittedEntry,
     depsGlyphNamesFromCommittedEntries,
@@ -171,6 +181,7 @@ import {
 } from './cloud-plugin-support';
 
 export {
+    committedEntryAsApplied,
     deletedGlyphIdsFromCommittedEntries,
     catalogGlyphNameFromCommittedEntry,
     depsGlyphNamesFromCommittedEntries,
@@ -227,6 +238,9 @@ export type CloudAssetNotice = {
 };
 
 const WRITE_ACCESS_LOST_NOTICE = 'write-access-lost';
+/** Shown with every edit the engine refuses while this user may only view. */
+export const WRITE_ACCESS_READ_ONLY_REASON =
+    'You no longer have write access to this font.';
 const SUBSCRIPTION_LAPSE_NOTICE = 'subscription-lapse';
 
 const console = new Logger('CloudPlugin');
@@ -251,15 +265,38 @@ const GLYPH_ORPHAN_LIVE_LIST_LIMIT = 20000;
 /** Tries per glyph orphan post before waiting for the next catalog change. */
 const GLYPH_ORPHAN_SYNC_ATTEMPTS = 4;
 
+/**
+ * A cloud packet arrived while a reconnect left no cloud session to keep its
+ * outbox row. The row is kept in memory, in order, and written when the
+ * session is back; like a storage failure, the edit is only not durable yet.
+ */
+export class CloudSessionMissingError extends CloudWalPersistError {
+    readonly documentId: string;
+
+    constructor(documentId: string) {
+        super(new Error('no cloud session'));
+        this.message = `The edit to ${documentId} is kept in this window until the cloud connection is back; it isn’t stored on this device yet.`;
+        this.name = 'CloudSessionMissingError';
+        this.documentId = documentId;
+    }
+}
+
 export class CloudPlugin extends FilesystemPlugin {
     private _cloudAdapter: CloudAdapter | null = null;
     private _liveSession: CloudLiveSession | null = null;
+    /** The font of the last session, for rows kept while there is none. */
+    private _lastSessionAssetId: string | null = null;
     private _roomLayoutUnsubscribe: (() => void) | null = null;
     /** Lets go of a rebase's old rooms once their late edits are in. */
     private _retiredRoomsTimer: ReturnType<typeof setTimeout> | null = null;
     /** How long a window keeps a rebase's old rooms live after the move. */
     _retiredRoomsGraceMs = 10 * 60 * 1000;
     private _attachingSession: CloudLiveSession | null = null;
+    /**
+     * The engine of the font this window's cloud session edits: the one
+     * `setReadOnly` goes to. Null while no cloud font is connected.
+     */
+    private _readOnlyEngine: PatchSyncEngine | null = null;
     private _editingSubsetListener: (() => void) | null = null;
     private _isSyncingCatalog = false;
     private _pendingCatalogProjection: {
@@ -290,7 +327,7 @@ export class CloudPlugin extends FilesystemPlugin {
     _reloadWindow: () => void = () => window.location.reload();
     /**
      * Lasting messages per font, shown in the cloud warning badge until the
-     * cause goes away (role change that discarded edits, billing lapse).
+     * cause goes away (role change that kept unsent edits, billing lapse).
      */
     private _assetNoticeByAssetId = new Map<string, CloudAssetNotice>();
     private _sparsePreviewOnly = false;
@@ -320,6 +357,13 @@ export class CloudPlugin extends FilesystemPlugin {
     private _seenGlyphRevisions = new Map<string, string>();
     private _glyphRevisionSnapshotReady = false;
     private _glyphCatchUpInFlight = new Set<string>();
+
+    /** Glyph ids (not document ids) whose catch-up is in flight. */
+    private _glyphIdsWithCatchUpInFlight(): string[] {
+        return [...this._glyphCatchUpInFlight]
+            .filter((documentId) => documentId.startsWith('glyph:'))
+            .map((documentId) => documentId.slice('glyph:'.length));
+    }
     private _glyphCatchUpAgain = new Set<string>();
     private _glyphCatchUpAttempts = new Map<string, number>();
     private _glyphCatchUpRetryTimer: number | null = null;
@@ -503,11 +547,57 @@ export class CloudPlugin extends FilesystemPlugin {
         return this.getAdapter() as CloudAdapter;
     }
 
+    /**
+     * Why local edits to the connected cloud font are refused, or null when
+     * they are not: this user is a viewer, or the room refused an edit for
+     * lack of write access in this session.
+     */
+    private _engineReadOnlyReason(): string | null {
+        const session = this._liveSession ?? this._attachingSession;
+        if (session?.readOnly === true) {
+            return WRITE_ACCESS_READ_ONLY_REASON;
+        }
+        const assetId = this._activeAssetId;
+        if (assetId && this.getCachedAssetRole(assetId) === 'viewer') {
+            return WRITE_ACCESS_READ_ONLY_REASON;
+        }
+        return null;
+    }
+
+    /**
+     * Make the connected font's engine refuse local edits while this user
+     * may not write, and accept them again when write access is back. A
+     * linked window has no session of its own: it follows main's relayed
+     * verdict (applyRelayedConnectionState).
+     */
+    private _syncEngineReadOnly(): void {
+        if (window.windowRole?.isLinkedWindow?.() === true) {
+            return;
+        }
+        this._readOnlyEngine?.setReadOnly?.(this._engineReadOnlyReason());
+    }
+
+    /** The session stopped sending edits: lock the font now, here and in linked windows. */
+    private _noteSessionReadOnly(assetId: string): void {
+        if (assetId !== this._activeAssetId) {
+            return;
+        }
+        this._syncEngineReadOnly();
+        if (window.windowRole?.isMainWindow?.()) {
+            window.windowSync?.broadcastCloudConnectionStatus?.(
+                this.getRelayConnectionState()
+            );
+        }
+    }
+
     private _cacheAssetRole(
         assetId: string,
         role: CloudAssetRole | null | undefined
     ): void {
         this._getCloudAdapter().cacheAssetRole(assetId, role);
+        if (assetId === this._activeAssetId) {
+            this._syncEngineReadOnly();
+        }
         if (
             window.windowRole?.isMainWindow?.() &&
             assetId === this._activeAssetId
@@ -1133,16 +1223,110 @@ export class CloudPlugin extends FilesystemPlugin {
         );
     }
 
+    /**
+     * Where an outbox row goes, decided synchronously when the engine
+     * hands it over, so rows reach the session's per-document write chain
+     * in the order they were made:
+     * - `direct`: the session (live or attaching; its write-ahead log
+     *   already takes rows) takes it now.
+     * - `behind-kept`: a session is there, but rows kept while there was
+     *   none are not all written yet; the row is kept behind them and
+     *   written by the same flush.
+     * - `no-session`: kept until a session is back.
+     */
+    private _outboxRowRoute():
+        | { kind: 'direct' | 'behind-kept'; session: CloudLiveSession }
+        | { kind: 'no-session' } {
+        const session = this._liveSession ?? this._attachingSession;
+        if (!session) {
+            return { kind: 'no-session' };
+        }
+        if (keptSessionRowCount(this, this._outboxAssetId()) > 0) {
+            return { kind: 'behind-kept', session };
+        }
+        return { kind: 'direct', session };
+    }
+
+    /**
+     * Keep an outbox row behind the rows kept before it. With a session
+     * there, the flush writing those rows writes it too, and the result is
+     * that write's outcome. Without one, `CloudSessionMissingError` tells
+     * the engine it is not durable yet, never that it is broken.
+     */
+    private _keepOutboxRow<T>(
+        route: ReturnType<CloudPlugin['_outboxRowRoute']>,
+        documentId: string,
+        write: (session: CloudLiveSession) => Promise<T>
+    ): Promise<T> {
+        const assetId = this._outboxAssetId();
+        const written = keepRowUntilSession<CloudLiveSession>(this, {
+            assetId,
+            documentId,
+            write
+        }) as Promise<T>;
+        if (route.kind === 'no-session') {
+            return Promise.reject(new CloudSessionMissingError(documentId));
+        }
+        if (assetId) {
+            this._writeKeptRows(route.session, assetId);
+        }
+        return written;
+    }
+
+    private _outboxAssetId(): string | null {
+        return this._activeAssetId ?? this._lastSessionAssetId ?? null;
+    }
+
+    /** Write the rows kept while there was no session into `session`. */
+    private _writeKeptRows(session: CloudLiveSession, assetId: string): void {
+        void writeKeptRowsIntoSession<CloudLiveSession>(
+            this,
+            session,
+            assetId,
+            {
+                isCurrent: () =>
+                    (this._liveSession ?? this._attachingSession) === session,
+                refused: (documentId, error) => {
+                    // The session refused the row itself (no envelope, too
+                    // large): a real refusal, not the missing session.
+                    console.error(
+                        `CloudPlugin: the kept edit to ${documentId} was refused:`,
+                        error
+                    );
+                    window.patchSyncEngine?.markDocumentBroken?.(
+                        documentId,
+                        error
+                    );
+                }
+            }
+        );
+    }
+
+    /**
+     * Write a cloud packet's device outbox row. The engine calls this only
+     * for a cloud-backed font. While a reconnect leaves no session (live or
+     * attaching) the row is kept in memory, in order, and written when the
+     * session is back; `CloudSessionMissingError` (a `CloudWalPersistError`)
+     * tells the engine it is not durable yet, never that it is broken.
+     */
     async persistOutgoingCloudUpdate(
         update: Uint8Array,
         collaborationMessage: CollaborationMessageEnvelope | null | undefined,
         documentId: string,
         dependsOn?: string[]
     ): Promise<boolean> {
-        if (!this._liveSession) {
-            return false;
+        const route = this._outboxRowRoute();
+        if (route.kind !== 'direct') {
+            return this._keepOutboxRow(route, documentId, (next) =>
+                next.persistOutgoingUpdate(
+                    update,
+                    collaborationMessage,
+                    documentId,
+                    dependsOn
+                )
+            );
         }
-        return this._liveSession.persistOutgoingUpdate(
+        return route.session.persistOutgoingUpdate(
             update,
             collaborationMessage,
             documentId,
@@ -1157,10 +1341,18 @@ export class CloudPlugin extends FilesystemPlugin {
         documentId: string,
         replaceId?: string | null
     ): Promise<boolean> {
-        if (!this._liveSession) {
-            return false;
+        const route = this._outboxRowRoute();
+        if (route.kind !== 'direct') {
+            return this._keepOutboxRow(route, documentId, (next) =>
+                next.stageHeldUpdate(
+                    update,
+                    collaborationMessage,
+                    documentId,
+                    replaceId
+                )
+            );
         }
-        return this._liveSession.stageHeldUpdate(
+        return route.session.stageHeldUpdate(
             update,
             collaborationMessage,
             documentId,
@@ -1173,10 +1365,30 @@ export class CloudPlugin extends FilesystemPlugin {
         documentId: string,
         clientTransactionId: string
     ): Promise<void> {
-        await this._liveSession?.dropStagedUpdate(
-            documentId,
-            clientTransactionId
+        const route = this._outboxRowRoute();
+        if (route.kind === 'direct') {
+            await route.session.dropStagedUpdate(
+                documentId,
+                clientTransactionId
+            );
+            return;
+        }
+        if (keptSessionRowCount(this, this._outboxAssetId()) === 0) {
+            // No session and nothing kept: the staged row is in no outbox.
+            return;
+        }
+        // Its staged row is kept too: drop it after that is written.
+        const dropped = this._keepOutboxRow(route, documentId, (next) =>
+            next
+                .dropStagedUpdate(documentId, clientTransactionId)
+                .then(() => true)
         );
+        if (route.kind === 'behind-kept') {
+            await dropped;
+        } else {
+            // Not durable yet is not an error for a drop.
+            dropped.catch(() => undefined);
+        }
     }
 
     async persistCloudMutationIntent(
@@ -1323,7 +1535,10 @@ export class CloudPlugin extends FilesystemPlugin {
                 pendingSyncCount: this.getAssetPendingSyncCount(assetId),
                 transferActivity: this.getAssetTransferActivity(assetId),
                 ...(assetId === this._activeAssetId
-                    ? { canMutate: this._sessionAllowsMutation() }
+                    ? {
+                          canMutate: this._sessionAllowsMutation(),
+                          readOnlyReason: this._engineReadOnlyReason()
+                      }
                     : {}),
                 ...(this._assetNoticeByAssetId.has(assetId)
                     ? { notice: this._assetNoticeByAssetId.get(assetId) }
@@ -1361,7 +1576,10 @@ export class CloudPlugin extends FilesystemPlugin {
                 pendingSyncCount: this.getAssetPendingSyncCount(assetId),
                 transferActivity: this.getAssetTransferActivity(assetId),
                 ...(assetId === this._activeAssetId
-                    ? { canMutate: this._sessionAllowsMutation() }
+                    ? {
+                          canMutate: this._sessionAllowsMutation(),
+                          readOnlyReason: this._engineReadOnlyReason()
+                      }
                     : {}),
                 ...(this._assetNoticeByAssetId.has(assetId)
                     ? { notice: this._assetNoticeByAssetId.get(assetId) }
@@ -1481,6 +1699,7 @@ export class CloudPlugin extends FilesystemPlugin {
         }
         this._glyphCatchUpInFlight.clear();
         this._glyphCatchUpAgain.clear();
+        window.patchSyncEngine?.clearGlyphCatchUps?.();
         this._glyphCatchUpAttempts.clear();
         this._glyphCatchUpRetryIds.clear();
         this._glyphCatchUpForceBody.clear();
@@ -1687,6 +1906,7 @@ export class CloudPlugin extends FilesystemPlugin {
         canMutate?: boolean;
         notice?: CloudAssetNotice;
         offlineLevel?: OfflineLevel;
+        readOnlyReason?: string | null;
     } {
         const detail = this._activeAssetId
             ? this.getAssetConnectionDetail(this._activeAssetId)
@@ -1706,7 +1926,8 @@ export class CloudPlugin extends FilesystemPlugin {
                           this._activeAssetId
                       ),
                       canMutate: this._sessionAllowsMutation(),
-                      offlineLevel: this._offlineEditLimit.level
+                      offlineLevel: this._offlineEditLimit.level,
+                      readOnlyReason: this._engineReadOnlyReason()
                   }
                 : {}),
             ...(notice ? { notice } : {}),
@@ -1723,9 +1944,16 @@ export class CloudPlugin extends FilesystemPlugin {
         canMutate?: boolean;
         notice?: CloudAssetNotice;
         offlineLevel?: OfflineLevel;
+        readOnlyReason?: string | null;
     }): void {
         if (window.windowRole?.isMainWindow()) {
             return;
+        }
+        // Main decides whether this user may write; this window's engine
+        // refuses local edits exactly while main's does. A message without
+        // the field carries no verdict (a status for another font).
+        if (state.readOnlyReason !== undefined) {
+            window.patchSyncEngine?.setReadOnly?.(state.readOnlyReason);
         }
         const offlineLevel: OfflineLevel =
             state.offlineLevel === 'offline' || state.offlineLevel === 'paused'
@@ -1802,6 +2030,16 @@ export class CloudPlugin extends FilesystemPlugin {
         );
     }
 
+    /**
+     * Relay a linked window's edit to the room from main. Its queue place
+     * is taken now; its outbox row is written in its document's write
+     * chain, in call order with this window's own rows. The result settles
+     * true once that row is durable on this device, and false when it is
+     * not (kept in the WAL's memory after a storage failure, refused, or
+     * there was nothing to relay: not main, or a font not in the cloud).
+     * A row kept until a session is back settles when it is written. It
+     * never rejects; failures are reported here.
+     */
     relayPeerWindowUpdateToCloud(
         update: Uint8Array,
         collaborationMessage: CloudAdapter['sendForwardedUpdate'] extends (
@@ -1812,39 +2050,117 @@ export class CloudPlugin extends FilesystemPlugin {
             : never,
         documentId?: string,
         dependsOn?: string[]
-    ): void {
+    ): Promise<boolean> {
         if (!window.windowRole?.isMainWindow()) {
-            return;
+            return Promise.resolve(false);
         }
-        if (this._liveSession) {
-            const reportFailure = (reason: string) => {
-                console.error(
-                    `Cloud durability persist failed for a linked-window edit of ${documentId || 'font-core'}: ${reason}`
+        const resolvedDocumentId = documentId || FONT_CORE_DOCUMENT_ID;
+        const report = (error: Error, refused: boolean) => {
+            console.error(
+                `Cloud durability persist failed for a linked-window edit of ${resolvedDocumentId}:`,
+                error
+            );
+            if (refused) {
+                // The edit is in no copy but the linked window’s: this
+                // document is incomplete from here on, so stop it loudly.
+                window.patchSyncEngine?.markDocumentBroken?.(
+                    resolvedDocumentId,
+                    error
                 );
-                window.dispatchEvent(
-                    new CustomEvent('cloud-persist-failed', {
-                        detail: { documentId, reason, storageFull: false }
-                    })
-                );
-            };
-            void this._liveSession
-                .relayForwardedUpdate(
-                    update,
-                    collaborationMessage,
-                    documentId,
-                    dependsOn
-                )
-                .then(
-                    (durable) => {
-                        if (!durable) {
-                            reportFailure('rejected');
-                        }
-                    },
-                    (error) => reportFailure(String(error))
-                );
-            return;
+            }
+            window.dispatchEvent(
+                new CustomEvent('cloud-persist-failed', {
+                    detail: {
+                        documentId,
+                        reason: error.message,
+                        storageFull: false
+                    }
+                })
+            );
+        };
+        // While the session attaches, its queue and write-ahead log already
+        // take edits; a relay waits in them like this window’s own edits.
+        const session = this._liveSession ?? this._attachingSession;
+        const assetId = this._outboxAssetId();
+        if (!session || keptSessionRowCount(this, assetId) > 0) {
+            if (
+                !session &&
+                window.fontManager?.currentFont?.isCloudBacked?.() !== true
+            ) {
+                // A font that is not in the cloud has no room to relay to.
+                return Promise.resolve(false);
+            }
+            // A reconnect left no session (or rows kept meanwhile still
+            // wait): the edit is kept here, in order, and relayed when the
+            // session is back. Not durable yet; never a broken document.
+            // The result settles once the kept relay is written: true when
+            // its row is durable on this device.
+            const written = keepRowUntilSession<CloudLiveSession>(this, {
+                assetId,
+                documentId: resolvedDocumentId,
+                // `false` is a row kept in the WAL's memory (storage
+                // trouble): written, only not durable yet.
+                write: (next) =>
+                    next.relayForwardedUpdate(
+                        update,
+                        collaborationMessage,
+                        documentId,
+                        dependsOn
+                    )
+            }).then(
+                (durable) => durable === true,
+                // A refused kept row is reported by `_writeKeptRows`; a
+                // storage failure leaves it in the WAL's memory.
+                () => false
+            );
+            if (session) {
+                // The connection is back: it waits only behind the rows
+                // kept before it, written by the same flush. Not a failure.
+                if (assetId) {
+                    this._writeKeptRows(session, assetId);
+                }
+                return written;
+            }
+            report(
+                new Error(
+                    `The linked-window edit of ${resolvedDocumentId} is kept in this window until the cloud connection is back; it isn’t stored on this device yet.`
+                ),
+                false
+            );
+            return written;
         }
-        this._cloudAdapter?.sendForwardedUpdate(update, collaborationMessage);
+        // The engine releases the relay's staged row once this settles
+        // true: only then is the merged row durable in the device outbox.
+        return session
+            .relayForwardedUpdate(
+                update,
+                collaborationMessage,
+                documentId,
+                dependsOn
+            )
+            .then(
+                (durable) => {
+                    if (!durable) {
+                        // Queued, and kept in memory until storage recovers.
+                        report(
+                            new Error(
+                                `The linked-window edit of ${resolvedDocumentId} is queued but could not be stored on this device yet.`
+                            ),
+                            false
+                        );
+                    }
+                    return durable;
+                },
+                (error: unknown) => {
+                    report(
+                        error instanceof Error
+                            ? error
+                            : new Error(String(error)),
+                        true
+                    );
+                    return false;
+                }
+            );
     }
 
     getId(): string {
@@ -2451,6 +2767,10 @@ export class CloudPlugin extends FilesystemPlugin {
         let credentials: Promise<{ token: string; roomUrl: string }> | null =
             null;
         const loadedNames: string[] = [];
+        // Glyphs whose hydrate named no log id; one trace after the run.
+        const loadedWithoutLogId: string[] = [];
+        // Glyphs deleted while the hydrate ran; nothing was made for them.
+        const deletedDuringHydrate = new Set<string>();
         bridge.beginDeferredAfterSync?.();
         try {
             const result = await hydrateSparseGlyphsToFixedPoint({
@@ -2464,6 +2784,22 @@ export class CloudPlugin extends FilesystemPlugin {
                             (documentId) => documentId.slice('glyph:'.length)
                         ),
                     applyGlyphUpdate: (documentId, bytes) => {
+                        // Deleted while this hydrate ran (its catalog entry
+                        // became a tombstone): its document is not made
+                        // again from what the room still holds.
+                        if (bridge.isDeletedGlyphDocument?.(documentId)) {
+                            deletedDuringHydrate.add(documentId);
+                            recordCollabTrace(
+                                'hydrate-skip',
+                                [
+                                    idToName.get(
+                                        documentId.slice('glyph:'.length)
+                                    ) ?? documentId
+                                ],
+                                { documentId, reason: 'deleted' }
+                            );
+                            return;
+                        }
                         const applied = bridge.applyDocumentCatchUp?.(
                             documentId,
                             bytes
@@ -2471,6 +2807,20 @@ export class CloudPlugin extends FilesystemPlugin {
                         if (applied === false) {
                             throw new Error(
                                 `Failed to apply hydrated shard ${documentId}`
+                            );
+                        }
+                        // The document now holds the state through the
+                        // log id its hydrate named; its next catch-up asks
+                        // only for rows after it.
+                        const logId = hydrator.hydratedLogId(documentId);
+                        if (logId === null) {
+                            loadedWithoutLogId.push(documentId);
+                        } else {
+                            rememberLoadedDocumentLogCursor(
+                                bridge,
+                                documentId,
+                                logId,
+                                'sparse-hydrate'
                             );
                         }
                     },
@@ -2488,6 +2838,9 @@ export class CloudPlugin extends FilesystemPlugin {
                         }
                         for (const glyphId of glyphIds) {
                             const documentId = glyphDocumentId(glyphId);
+                            if (deletedDuringHydrate.has(documentId)) {
+                                continue;
+                            }
                             const bytes =
                                 bridge.encodeDocumentState?.(documentId);
                             if (!bytes?.byteLength) {
@@ -2537,9 +2890,21 @@ export class CloudPlugin extends FilesystemPlugin {
                 isCurrent() &&
                 typeof bridge.unloadCleanGlyphDocuments === 'function'
             ) {
+                // The plan decided only about the glyphs in the catalog it
+                // started from. A glyph that arrived while it ran (a
+                // collaborator's new glyph, loaded by catch-up) was never
+                // planned, so it stays.
+                const plannedIds = new Set(catalogIds);
+                const arrivedIds = (bridge.listLiveGlyphDocumentIds?.() ?? [])
+                    .map((documentId) => documentId.slice('glyph:'.length))
+                    .filter((glyphId) => !plannedIds.has(glyphId));
                 bridge.unloadCleanGlyphDocuments([
                     ...result.workingIds,
-                    ...result.hiddenIds
+                    ...result.hiddenIds,
+                    ...arrivedIds,
+                    // A glyph with a catch-up in flight stays: its rows
+                    // apply to the instance its cursor was read from.
+                    ...this._glyphIdsWithCatchUpInFlight()
                 ]);
             }
             if (isCurrent()) {
@@ -2564,6 +2929,15 @@ export class CloudPlugin extends FilesystemPlugin {
             }
             return changedNames;
         } finally {
+            if (loadedWithoutLogId.length) {
+                rememberLoadedDocumentLogCursors(
+                    bridge,
+                    loadedWithoutLogId.map(
+                        (documentId) => [documentId, null] as const
+                    ),
+                    'sparse-hydrate'
+                );
+            }
             bridge.endDeferredAfterSync?.();
             hydrator.disconnect();
         }
@@ -2685,14 +3059,19 @@ export class CloudPlugin extends FilesystemPlugin {
     }
 
     private _syncCatalogFromCommittedChange: CommittedChangeListener = (
-        entries,
+        committedEntries,
         context
     ) => {
         // A linked window has no cloud session: its deletes, adds and
-        // renames reach the catalog through the main window, here.
+        // renames reach the catalog through the main window, here. So do
+        // its undos and redos.
         if (context.origin === 'remote' && !context.fromLinkedWindow) {
             return;
         }
+        // An undo of a glyph add removes the glyph, an undo of a delete
+        // brings it back: the catalog follows what the replay did, exactly
+        // as it follows a delete or an add.
+        const entries = committedEntries.map(committedEntryAsApplied);
         const fontJson = this._currentFontJson();
         if (!fontJson) {
             return;
@@ -3403,6 +3782,12 @@ export class CloudPlugin extends FilesystemPlugin {
             this._updateConnectionStatus(this._activeAssetId, 'disconnected');
         }
         this._activeAssetId = null;
+        // The font closed, another one opens, or the session is replaced:
+        // the next session decides again.
+        if (window.windowRole?.isLinkedWindow?.() !== true) {
+            this._readOnlyEngine?.setReadOnly?.(null);
+        }
+        this._readOnlyEngine = null;
         this._offlineEditLimit.reset();
         this._hydrationGeneration += 1;
         this._overviewHydrateQueued = [];
@@ -3467,14 +3852,17 @@ export class CloudPlugin extends FilesystemPlugin {
             // glyphs in the text arrive through the revision-signal catch-up;
             // a socket per text glyph kept dozens of rooms awake per viewer.
             keepRequestedGlyphSockets: false,
-            onWriteAccessLost: (discarded) => {
+            onReadOnly: () => {
+                this._noteSessionReadOnly(options.assetId);
+            },
+            onWriteAccessLost: (kept) => {
                 this._cacheAssetRole(options.assetId, 'viewer');
                 this.setAssetNotice(options.assetId, {
                     kind: WRITE_ACCESS_LOST_NOTICE,
                     tone: 'warning',
                     title:
-                        discarded > 0
-                            ? `You can only view this font now. ${discarded === 1 ? 'One edit that wasn’t saved yet was' : `${discarded} edits that weren’t saved yet were`} discarded. Reopen the font to see the saved version.`
+                        kept > 0
+                            ? `You can only view this font now. ${kept === 1 ? '1 unsent edit is' : `${kept} unsent edits are`} kept because write access was removed.`
                             : 'You can only view this font now.'
                 });
             },
@@ -3489,6 +3877,14 @@ export class CloudPlugin extends FilesystemPlugin {
             }
         });
         this._attachingSession = session;
+        this._lastSessionAssetId = options.assetId;
+        // A viewer's font refuses local edits from the moment its session
+        // opens (the room token fetched for it cached the role).
+        this._readOnlyEngine = options.bridge;
+        this._syncEngineReadOnly();
+        // Rows made while a reconnect left no session go into this one
+        // first, in order, before any later row.
+        this._writeKeptRows(session, options.assetId);
         const glyphDocumentIds = liveGlyphDocumentIdsFromSubset(
             options.bridge,
             activeEditorGlyphNames()

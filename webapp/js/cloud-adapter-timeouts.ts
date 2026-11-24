@@ -122,12 +122,19 @@ export const cloudAdapterTimeoutMethods = {
         this._setStatus('connecting', detail);
         this._markVisibleRebaselineNeeded();
         this._resetBootstrapStateForReconnect();
+        // The cursor only ever moved past pages that applied; buffered live
+        // frames and a half page are dropped and replayed after it.
+        this._abandonSocketState();
 
         const ws = this._ws;
         if (ws) {
             this._ws = null;
             this._clientId = null;
-            ws.close(CLIENT_RECONNECT_CLOSE_CODE, 'sync-timeout');
+            this._requestSocketClose(
+                ws,
+                CLIENT_RECONNECT_CLOSE_CODE,
+                'sync-timeout'
+            );
         }
         this._scheduleReconnect();
     },
@@ -171,19 +178,21 @@ export const cloudAdapterTimeoutMethods = {
         this._lastReconnectReason = 'ack-timeout';
         this._clearAuthenticationTimeout();
         this._clearOutboundAckTimeout();
-        this._resetLiveAckTracking();
-        this._requeueUnackedOutboxPackets();
         this._setStatus('connecting', detail);
         this._markVisibleRebaselineNeeded();
         this._resetBootstrapStateForReconnect();
-        this._pendingInboundUpdates = [];
-        this._inboundFlushScheduled = false;
+        // Unacknowledged packets go back to the head of the queue in order.
+        this._abandonSocketState();
 
         const ws = this._ws;
         if (ws) {
             this._ws = null;
             this._clientId = null;
-            ws.close(CLIENT_RECONNECT_CLOSE_CODE, 'ack-timeout');
+            this._requestSocketClose(
+                ws,
+                CLIENT_RECONNECT_CLOSE_CODE,
+                'ack-timeout'
+            );
         }
         this._scheduleReconnect();
     },
@@ -223,13 +232,18 @@ export const cloudAdapterTimeoutMethods = {
             this._setStatus('connecting', detail);
             this._markVisibleRebaselineNeeded();
             this._resetBootstrapStateForReconnect();
+            this._abandonSocketState();
             if (this._ws === ws) {
                 // Do not wait for a possibly delayed close event before retrying.
                 // Once auth has stalled, this socket is no longer the active path.
                 this._ws = null;
                 this._clientId = null;
             }
-            ws.close(CLIENT_RECONNECT_CLOSE_CODE, 'auth-timeout');
+            this._requestSocketClose(
+                ws,
+                CLIENT_RECONNECT_CLOSE_CODE,
+                'auth-timeout'
+            );
             this._scheduleReconnect();
         }, delayOverrideMs);
     },

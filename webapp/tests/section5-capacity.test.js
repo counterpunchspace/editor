@@ -75,9 +75,15 @@ describe('section 5 production toYType capacity samples', () => {
                 layers: [
                     {
                         id: 'layer-1',
+                        width: 600,
+                        master: {
+                            type: 'DefaultForMaster',
+                            master: 'station-regular'
+                        },
                         shapes: [
                             {
                                 id: 's1',
+                                closed: true,
                                 nodes: Array.from({ length: 50 }, (_, i) => ({
                                     id: `n${i}`,
                                     x: i,
@@ -100,6 +106,7 @@ describe('section 5 production toYType capacity samples', () => {
                 [
                     {
                         id: 's1',
+                        closed: true,
                         nodes: Array.from({ length: 50 }, (_, n) => ({
                             id: `n${n}`,
                             x: n + i,

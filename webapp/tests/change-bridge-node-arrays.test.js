@@ -175,12 +175,14 @@ describe('normalized Y.Doc path geometry', () => {
         expect(shape.id).toBeUndefined();
     });
 
-    test('applyLayerDelta does not let interpolator snapshots delete width or poison shapes', () => {
+    test('applyLayerDelta refuses an interpolator snapshot and leaves the drawing untouched', () => {
         const { fontMap } = setupYDoc(makeTestFont());
-        applyDrawingDelta(fontMap, 'A', 'layer-1', {
-            _interpolationRequestId: 4,
-            shapes: [{ id: 'ghost', transform: [1, 0, 0, 1, 10, 20] }]
-        });
+        expect(() =>
+            applyDrawingDelta(fontMap, 'A', 'layer-1', {
+                _interpolationRequestId: 4,
+                shapes: [{ id: 'ghost', transform: [1, 0, 0, 1, 10, 20] }]
+            })
+        ).toThrow(/not a Path or Component/);
 
         const drawing = yDocToJson(fontMap).glyphs[0].layers[0];
         expect(drawing.width).toBe(600);

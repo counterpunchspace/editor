@@ -28,8 +28,24 @@ import {
     buildInterpolationRustBatchOperations,
     withSuppressedModelRecording,
     withSuppressedMetricsKeyRecompute,
+    workerBatchHasEdits,
+    StationEditRefusedError,
     type ShapeZOrderCommand
 } from '../babelfont-model';
+import {
+    installReadOnlyRefusalNotices,
+    reportRefusedEdit
+} from './edit-refusal-notice';
+import type {
+    GlyphModelRebuildEvent,
+    GlyphModelRebuildSource
+} from './glyph-model-rebuild';
+import {
+    installHistoryReplayNotices,
+    showNotice
+} from '../font-windows/dialogs';
+import { drawingFingerprint, recordCollabTrace } from '../collab-trace';
+import { pushCollabIntegrityEvent } from '../cloud-collab-integrity-debug';
 import { beginLoadingCursor, endLoadingCursor } from '../loading-cursor';
 import {
     booleanResultsMatch,
@@ -1540,6 +1556,28 @@ export class OutlineEditor {
         affectedGlyphNames?: Set<string>;
     } | null = null;
     private _keyboardPreviewCommitInFlight: Promise<void> | null = null;
+    /** True while a keyboard preview commit writes to the documents. */
+    private _keyboardPreviewCommitWriting = false;
+    /**
+     * What the edited drawing looked like before the pending arrow-key
+     * edit, and what the editor shows after it, to tell a written edit
+     * from a lost one.
+     */
+    private _previewEditGuard: {
+        glyphName: string;
+        drawingId: string;
+        /** The model drawing object the edit started on. */
+        modelDrawing: object | null;
+        modelBaseline: string;
+        editorBaseline: string;
+        editorExpected: string | null;
+    } | null = null;
+    /** A reload of the edited drawing waits for the commit in flight. */
+    private _refreshAfterPreviewCommit = false;
+    private _glyphModelRebuildSubscription: {
+        engine: GlyphModelRebuildSource;
+        unsubscribe: Array<() => void>;
+    } | null = null;
     private _cachedAnchorDragScopeSourceGlyphName: string | null = null;
     private _cachedAnchorDragScopeVisibleKey: string = '';
     private _cachedAnchorDragScopeGlyphNames: Set<string> | null = null;
@@ -1763,6 +1801,11 @@ export class OutlineEditor {
         this.glyphCanvas = glyphCanvas;
         this.guidelinesVisible = this.loadGuidelinesVisible();
         this.pairedDrawingVisible = this.loadPairedDrawingVisible();
+        // An edit refused because the font is read-only shows its reason
+        // once, even when it was refused inside a key or pointer handler.
+        installReadOnlyRefusalNotices();
+        // Undo and redo the engine refused or could not finish are shown.
+        installHistoryReplayNotices();
     }
 
     getDrawingLinkGlyphName(glyphName: string | null = null): string | null {
@@ -4533,6 +4576,7 @@ export class OutlineEditor {
                 });
             }
 
+            let wrote = false;
             try {
                 const isKeyboardSidebearing =
                     committedChangeSource === 'keyboard-sidebearing';
@@ -4540,69 +4584,503 @@ export class OutlineEditor {
                     await this.refreshFinalSidebearingWorkerStateBeforeCommit();
                 }
 
-                await this.saveDrawingData(committedChangeSource);
-
-                const activeDrawingId = this.getCurrentDrawingId();
-                const glyphName =
-                    this.parseGlyphStack().slice(-1)[0]?.glyphName ??
-                    this.glyphCanvas.getCurrentGlyphName();
-                const sourceTargets =
-                    activeDrawingId && glyphName
-                        ? [{ glyphName, layerId: activeDrawingId }]
-                        : [];
-                const editKinds = this.getCurrentSelectionEditKinds();
-                if (editKinds.size === 0) {
-                    editKinds.add('outline');
-                }
-                const pendingSidebearingSync = isKeyboardSidebearing
-                    ? this._pendingSidebearingCommitSync
-                    : null;
-                const { changedDrawingTargets, workerReplayTargets } =
-                    pendingSidebearingSync ??
-                    resolveDrawingSyncTargetsFromClosure(
-                        this.computeRecompositionClosure({
-                            sourceTargets,
-                            editKinds,
-                            scope: 'all',
-                            activeDrawingId
-                        }),
-                        sourceTargets
+                const guard = this._previewEditGuard;
+                if (guard && this.previewEditConflicts(guard)) {
+                    // The documents changed this drawing under the pending
+                    // edit; writing the editor's drawing would undo that.
+                    this.reportPreviewEditLost(
+                        guard,
+                        'conflict',
+                        'debounced-commit'
                     );
+                    return;
+                }
 
-                this._syncCurrentGlyphToYDoc(
-                    'Arrow key',
-                    pendingCommit.preMoveDesc,
-                    this.getCurrentKeyboardSelectionHistoryDesc(),
-                    this.selectedSidebearingHandle?.side ??
-                        this._metricsKeyEditedSide ??
-                        this._metricsKeyInteractionSide ??
-                        null,
-                    {
-                        changedDrawingTargets,
-                        workerReplayTargets,
-                        sourceDrawingIsRecomposed: !!pendingSidebearingSync
-                    },
-                    this.getCommittedCompileMetadata(committedChangeSource)
+                // No await between saving and the document write: every
+                // write of saveDrawingData happens before its first await,
+                // so a model rebuild cannot land between the two and leave
+                // the edit on a detached model object.
+                const saved = this.saveDrawingData(committedChangeSource);
+                this.writeKeyboardPreviewCommit(
+                    pendingCommit,
+                    committedChangeSource
                 );
+                wrote = true;
+                await saved;
             } finally {
                 if (hasTransaction) {
                     bridge.endTransaction();
                 }
-                this._pendingKeyboardPreviewCommit = null;
-                this._metricsKeyEditedSide = null;
-                this._metricsKeyInteractionSide = null;
-                // Preserve the compile-facing overlay across the logical Yjs
-                // commit. It is replaced by the next preview generation and
-                // never mutates either Yjs document.
-                this._keyboardPreviewCommitInFlight = null;
-                this._keyboardSidebearingPreviewActive = false;
-                this._pendingSidebearingBboxCenterAnchorScreen = null;
-                this.activeSidebearingDragLayout = null;
+                if (wrote) {
+                    this.verifyPreviewEditCommitted('debounced-commit');
+                }
+                this.finishKeyboardPreviewCommit();
             }
         })();
 
         this._keyboardPreviewCommitInFlight = commitPromise;
         await commitPromise;
+    }
+
+    /**
+     * Write the pending keyboard preview edit to the documents now, without
+     * waiting: before the engine replaces the edited glyph's model objects,
+     * and before the editor reloads the edited drawing. Returns true when
+     * the edit was written.
+     *
+     * The sidebearing worker refresh the debounced commit awaits is
+     * skipped; the commit uses the closure the preview prepared.
+     */
+    private commitPendingKeyboardPreviewNow(reason: string): boolean {
+        const pendingCommit = this._pendingKeyboardPreviewCommit;
+        if (
+            !pendingCommit ||
+            this._keyboardPreviewCommitInFlight ||
+            this._keyboardPreviewCommitWriting
+        ) {
+            return false;
+        }
+
+        const guard = this._previewEditGuard;
+        if (guard && !this.isPreviewEditTargetCurrent(guard)) {
+            // The selection moved to another drawing without the flush
+            // every selection change does first. Writing the editor's data
+            // now would put it into the wrong drawing.
+            console.warn(
+                `[OutlineEditor] Pending arrow-key edit of ${guard.glyphName}/${guard.drawingId} not written early (${reason}): another drawing is selected`
+            );
+            return false;
+        }
+        if (guard && this.previewEditConflicts(guard)) {
+            this.reportPreviewEditLost(guard, 'conflict', reason);
+            this.abandonPendingKeyboardPreviewCommit();
+            return false;
+        }
+
+        this.keyboardPreviewEditFunnel.cancelPendingCommit();
+        const committedChangeSource =
+            this.getCommittedKeyboardSelectionChangeSource();
+        const bridge = window.patchSyncEngine;
+        const hasTransaction =
+            committedChangeSource === 'keyboard-sidebearing' &&
+            typeof bridge?.beginTransaction === 'function';
+        if (hasTransaction) {
+            bridge.beginTransaction('Arrow key', null, {
+                compileChangeSource: 'keyboard-outline',
+                compileEditType: null
+            });
+        }
+
+        let wrote = false;
+        try {
+            // Every write of saveDrawingData happens before its first await
+            // (the dirty indicator), so the stored font and the model hold
+            // the edit when this call returns.
+            this.saveDrawingData(committedChangeSource).catch((error) => {
+                console.error(
+                    '[OutlineEditor] Saving the arrow-key edit failed:',
+                    error
+                );
+            });
+            this.writeKeyboardPreviewCommit(
+                pendingCommit,
+                committedChangeSource
+            );
+            wrote = true;
+        } finally {
+            if (hasTransaction) {
+                bridge.endTransaction();
+            }
+            if (wrote) {
+                this.verifyPreviewEditCommitted(reason);
+            }
+            this.finishKeyboardPreviewCommit();
+        }
+        return wrote;
+    }
+
+    /** The synchronous part of a keyboard preview commit. */
+    private writeKeyboardPreviewCommit(
+        pendingCommit: {
+            preMoveDesc?: string;
+            affectedGlyphNames?: Set<string>;
+        },
+        committedChangeSource: string
+    ): void {
+        const isKeyboardSidebearing =
+            committedChangeSource === 'keyboard-sidebearing';
+        const activeDrawingId = this.getCurrentDrawingId();
+        const glyphName =
+            this.parseGlyphStack().slice(-1)[0]?.glyphName ??
+            this.glyphCanvas.getCurrentGlyphName();
+        const sourceTargets =
+            activeDrawingId && glyphName
+                ? [{ glyphName, layerId: activeDrawingId }]
+                : [];
+        const editKinds = this.getCurrentSelectionEditKinds();
+        if (editKinds.size === 0) {
+            editKinds.add('outline');
+        }
+        const pendingSidebearingSync = isKeyboardSidebearing
+            ? this._pendingSidebearingCommitSync
+            : null;
+        const { changedDrawingTargets, workerReplayTargets } =
+            pendingSidebearingSync ??
+            resolveDrawingSyncTargetsFromClosure(
+                this.computeRecompositionClosure({
+                    sourceTargets,
+                    editKinds,
+                    scope: 'all',
+                    activeDrawingId
+                }),
+                sourceTargets
+            );
+
+        this._keyboardPreviewCommitWriting = true;
+        try {
+            this._syncCurrentGlyphToYDoc(
+                'Arrow key',
+                pendingCommit.preMoveDesc,
+                this.getCurrentKeyboardSelectionHistoryDesc(),
+                this.selectedSidebearingHandle?.side ??
+                    this._metricsKeyEditedSide ??
+                    this._metricsKeyInteractionSide ??
+                    null,
+                {
+                    changedDrawingTargets,
+                    workerReplayTargets,
+                    sourceDrawingIsRecomposed: !!pendingSidebearingSync
+                },
+                this.getCommittedCompileMetadata(committedChangeSource)
+            );
+        } finally {
+            this._keyboardPreviewCommitWriting = false;
+        }
+    }
+
+    /** Clear the keyboard preview state after a commit, written or not. */
+    private finishKeyboardPreviewCommit(): void {
+        this._pendingKeyboardPreviewCommit = null;
+        this._previewEditGuard = null;
+        this._metricsKeyEditedSide = null;
+        this._metricsKeyInteractionSide = null;
+        // Preserve the compile-facing overlay across the logical Yjs
+        // commit. It is replaced by the next preview generation and
+        // never mutates either Yjs document.
+        this._keyboardPreviewCommitInFlight = null;
+        this._keyboardSidebearingPreviewActive = false;
+        this._pendingSidebearingBboxCenterAnchorScreen = null;
+        this.activeSidebearingDragLayout = null;
+        if (this._refreshAfterPreviewCommit) {
+            // A reload of the edited drawing waited for this commit.
+            this._refreshAfterPreviewCommit = false;
+            this.requestEditedDrawingReload();
+        }
+    }
+
+    /** Reload the edited drawing from the model, the way remote changes do. */
+    requestEditedDrawingReload(): void {
+        void queueCanvasRefreshFromCommittedModel();
+    }
+
+    /** Drop a pending edit that cannot be written (already reported). */
+    private abandonPendingKeyboardPreviewCommit(): void {
+        this.keyboardPreviewEditFunnel.cancelPendingCommit();
+        this.finishKeyboardPreviewCommit();
+    }
+
+    private previewEditModelDrawing(): object | null {
+        const drawing: unknown = this.getCurrentDrawingModel();
+        return drawing && typeof drawing === 'object' ? drawing : null;
+    }
+
+    /**
+     * Before the first arrow key of a burst: remember the edited drawing as
+     * the model and the editor show it, so the commit can prove the edit
+     * was written.
+     */
+    private capturePreviewEditBaseline(): void {
+        if (
+            this._pendingKeyboardPreviewCommit ||
+            this._keyboardPreviewCommitInFlight
+        ) {
+            return;
+        }
+        const drawingId = this.getCurrentDrawingId();
+        const glyphName = this.getCurrentGlyphModel()?.name;
+        const editorDrawing = this.getCurrentDrawingDataFromStack();
+        if (!drawingId || typeof glyphName !== 'string' || !editorDrawing) {
+            this._previewEditGuard = null;
+            return;
+        }
+        const modelDrawing = this.previewEditModelDrawing();
+        this._previewEditGuard = {
+            glyphName,
+            drawingId,
+            modelDrawing,
+            modelBaseline: drawingFingerprint(modelDrawing),
+            editorBaseline: drawingFingerprint(editorDrawing),
+            editorExpected: null
+        };
+    }
+
+    /** After an arrow key moved something: what the editor now shows. */
+    private notePreviewEditApplied(): void {
+        const guard = this._previewEditGuard;
+        if (!guard || !this.isPreviewEditTargetCurrent(guard)) {
+            return;
+        }
+        guard.editorExpected = drawingFingerprint(
+            this.getCurrentDrawingDataFromStack()
+        );
+    }
+
+    private isPreviewEditTargetCurrent(guard: {
+        glyphName: string;
+        drawingId: string;
+    }): boolean {
+        return (
+            this.getCurrentDrawingId() === guard.drawingId &&
+            this.getCurrentGlyphModel()?.name === guard.glyphName
+        );
+    }
+
+    /**
+     * True when the model drawing the edit started on was replaced by one
+     * that differs from it: the documents changed under the pending edit,
+     * and writing the editor's drawing would undo that change.
+     */
+    private previewEditConflicts(guard: {
+        modelDrawing: object | null;
+        modelBaseline: string;
+        editorExpected: string | null;
+    }): boolean {
+        const current = this.previewEditModelDrawing();
+        if (current === guard.modelDrawing) {
+            return false;
+        }
+        if (!current) {
+            return true;
+        }
+        // A rebuilt model drawing still at the edit's starting point, or
+        // already carrying the editor's own preview, is not a conflict: the
+        // live preview writes the move into whichever model drawing is
+        // current. Only a drawing that is neither changed under the edit.
+        const fingerprint = drawingFingerprint(current);
+        return (
+            fingerprint !== guard.modelBaseline &&
+            fingerprint !== guard.editorExpected
+        );
+    }
+
+    /**
+     * After a keyboard preview commit: an edit that changed what the editor
+     * shows must have changed the model drawing, and the model must match
+     * the glyph's document. Anything else is a lost edit; it is recorded
+     * and shown, never dropped silently.
+     */
+    private verifyPreviewEditCommitted(reason: string): void {
+        const guard = this._previewEditGuard;
+        if (
+            !guard ||
+            guard.editorExpected === null ||
+            guard.editorExpected === guard.editorBaseline
+        ) {
+            return;
+        }
+        const committed = drawingFingerprint(this.previewEditModelDrawing());
+        if (committed === guard.modelBaseline) {
+            this.reportPreviewEditLost(guard, 'not-written', reason, {
+                committed
+            });
+            return;
+        }
+        const engine = window.patchSyncEngine as unknown as
+            | {
+                  livePreviewDrawingDiffers?: (target: {
+                      glyphName: string;
+                      layerId: string;
+                  }) => boolean;
+              }
+            | undefined;
+        if (
+            typeof engine?.livePreviewDrawingDiffers === 'function' &&
+            engine.livePreviewDrawingDiffers({
+                glyphName: guard.glyphName,
+                layerId: guard.drawingId
+            })
+        ) {
+            this.reportPreviewEditLost(
+                guard,
+                'model-differs-from-document',
+                reason,
+                { committed }
+            );
+        }
+    }
+
+    private reportPreviewEditLost(
+        guard: {
+            glyphName: string;
+            drawingId: string;
+            modelBaseline: string;
+            editorExpected: string | null;
+        },
+        cause:
+            | 'not-written'
+            | 'conflict'
+            | 'drawing-removed'
+            | 'model-differs-from-document',
+        reason: string,
+        extra: Record<string, unknown> = {}
+    ): void {
+        const detail = {
+            glyphName: guard.glyphName,
+            drawingId: guard.drawingId,
+            cause,
+            reason,
+            modelBaseline: guard.modelBaseline,
+            editorExpected: guard.editorExpected,
+            ...extra
+        };
+        pushCollabIntegrityEvent('preview-edit-lost', detail);
+        recordCollabTrace('preview-edit-lost', [guard.glyphName], detail);
+        console.error(
+            `[OutlineEditor] Arrow-key edit of ${guard.glyphName}/${guard.drawingId} lost (${cause}, ${reason})`,
+            detail
+        );
+        const glyph = `“${guard.glyphName}”`;
+        showNotice(
+            cause === 'conflict'
+                ? `Your arrow-key change to ${glyph} wasn’t saved: a collaborator changed the same drawing at the same time. Their change was kept, so please make yours again.`
+                : cause === 'drawing-removed'
+                  ? `Your arrow-key change to ${glyph} wasn’t saved: the drawing was removed.`
+                  : `Your arrow-key change to ${glyph} wasn’t saved: the glyph was reloaded before the change was written. Please make it again.`
+        );
+    }
+
+    /**
+     * Call before the edited drawing is reloaded from the model. A pending
+     * arrow-key edit is written first; while a commit is writing or in
+     * flight the reload waits for it ('deferred').
+     */
+    private protectPendingPreviewBeforeReload(
+        reason: string
+    ): 'proceed' | 'deferred' {
+        if (
+            this._keyboardPreviewCommitInFlight ||
+            this._keyboardPreviewCommitWriting
+        ) {
+            this._refreshAfterPreviewCommit = true;
+            return 'deferred';
+        }
+        if (this._pendingKeyboardPreviewCommit) {
+            this.commitPendingKeyboardPreviewNow(reason);
+        }
+        return 'proceed';
+    }
+
+    /** Listen for glyph model rebuilds of the current engine. */
+    private ensureGlyphModelRebuildSubscription(): void {
+        const engine = window.patchSyncEngine as unknown as
+            GlyphModelRebuildSource | undefined;
+        const current = this._glyphModelRebuildSubscription;
+        if (current?.engine === engine) {
+            return;
+        }
+        for (const unsubscribe of current?.unsubscribe ?? []) {
+            unsubscribe();
+        }
+        this._glyphModelRebuildSubscription = null;
+        if (!engine) {
+            return;
+        }
+        const unsubscribe: Array<() => void> = [];
+        if (typeof engine.onBeforeGlyphModelRebuild === 'function') {
+            unsubscribe.push(
+                engine.onBeforeGlyphModelRebuild((event) =>
+                    this.beforeGlyphModelRebuild(event)
+                )
+            );
+        }
+        if (typeof engine.onGlyphModelRebuilt === 'function') {
+            unsubscribe.push(
+                engine.onGlyphModelRebuilt((event) =>
+                    this.onGlyphModelRebuilt(event)
+                )
+            );
+        }
+        this._glyphModelRebuildSubscription = { engine, unsubscribe };
+    }
+
+    /** Glyphs whose rebuild replaces what the editor is editing. */
+    private glyphModelRebuildTouchesEdit(
+        event: GlyphModelRebuildEvent
+    ): boolean {
+        if (event.glyphs === null) {
+            // Any glyph may have been replaced.
+            return true;
+        }
+        const rebuilt = new Set(event.glyphs);
+        const parsed = this.parseGlyphStack();
+        const edited = [
+            this._previewEditGuard?.glyphName,
+            this.getCurrentGlyphModel()?.name,
+            parsed[0]?.glyphName,
+            this.glyphCanvas.getCurrentGlyphName()
+        ];
+        return edited.some(
+            (name) => typeof name === 'string' && rebuilt.has(name)
+        );
+    }
+
+    /** The engine is about to replace the model objects of these glyphs. */
+    beforeGlyphModelRebuild(event: GlyphModelRebuildEvent): void {
+        if (
+            !this._pendingKeyboardPreviewCommit ||
+            !this.glyphModelRebuildTouchesEdit(event)
+        ) {
+            return;
+        }
+        if (
+            this._keyboardPreviewCommitInFlight ||
+            this._keyboardPreviewCommitWriting
+        ) {
+            // The editor still holds the edit, and the commit in flight
+            // writes it into whatever model drawing exists then. The reload
+            // after the rebuild waits for it.
+            this._refreshAfterPreviewCommit = true;
+            return;
+        }
+        this.commitPendingKeyboardPreviewNow(
+            `before-glyph-model-rebuild:${event.cause}`
+        );
+    }
+
+    /** The engine replaced the model objects of these glyphs. */
+    onGlyphModelRebuilt(event: GlyphModelRebuildEvent): void {
+        if (!this.active || !this.glyphModelRebuildTouchesEdit(event)) {
+            return;
+        }
+        if (this.draggingSomething) {
+            // The drag's commit looks the model drawing up when it writes.
+            this.pendingRemoteRefreshAfterDrag = true;
+            return;
+        }
+        if (
+            this._keyboardPreviewCommitInFlight ||
+            this._keyboardPreviewCommitWriting
+        ) {
+            // The commit writes the editor's drawing into whatever model
+            // drawing exists when it writes; reload after it.
+            this._refreshAfterPreviewCommit = true;
+            return;
+        }
+        // This can run inside an engine commit or remote apply, where a
+        // commit cannot be made. The queued reload re-resolves the edited
+        // drawing from the rebuilt model, and writes a pending arrow-key
+        // edit first (protectPendingPreviewBeforeReload).
+        this.requestEditedDrawingReload();
     }
 
     public async flushPendingKeyboardPreviewCommit(): Promise<void> {
@@ -8483,6 +8961,13 @@ export class OutlineEditor {
         if (!this.active || !selectedDrawingId) {
             return false;
         }
+        if (
+            this.protectPendingPreviewBeforeReload(
+                'refresh-selected-drawing'
+            ) === 'deferred'
+        ) {
+            return false;
+        }
 
         const parsedStack = this.parseGlyphStack();
         const selectionGlyphName =
@@ -9049,6 +9534,11 @@ export class OutlineEditor {
         return true;
     }
 
+    /**
+     * Reinterpolate one drawing from the glyph's other drawings. A refusal
+     * (the font worker refusing the edit, a read-only font) is shown to the
+     * user and resolves to null with the font unchanged.
+     */
     async reinterpolateDrawingById(
         drawingId: string,
         options?: {
@@ -9057,6 +9547,25 @@ export class OutlineEditor {
             selectNewDrawing?: boolean;
         }
     ): Promise<any | null> {
+        try {
+            return await this.reinterpolateDrawingByIdOrThrow(
+                drawingId,
+                options
+            );
+        } catch (error) {
+            reportRefusedEdit(error);
+            return null;
+        }
+    }
+
+    private async reinterpolateDrawingByIdOrThrow(
+        drawingId: string,
+        options?: {
+            glyphName?: string | null;
+            changeSource?: string;
+            selectNewDrawing?: boolean;
+        }
+    ) {
         const glyphName = options?.glyphName || this.getDrawingListGlyphName();
         const sourceGlyphName = this.getAuthoringGlyphName(glyphName);
         const glyph = this.getGlyphViewByName(glyphName);
@@ -9086,12 +9595,24 @@ export class OutlineEditor {
 
         if (bridge?.applyLocalGeneratedYjsUpdate) {
             this.prepareStructuralOutlineCompile('keyboard-outline');
-            const batchResult =
-                await fontManager.buildWorkerReinterpolateDrawingBatch(
-                    sourceGlyphName,
-                    drawingId
+            let batchResult: Awaited<
+                ReturnType<
+                    typeof fontManager.buildWorkerReinterpolateDrawingBatch
+                >
+            >;
+            try {
+                batchResult =
+                    await fontManager.buildWorkerReinterpolateDrawingBatch(
+                        sourceGlyphName,
+                        drawingId
+                    );
+            } catch (error) {
+                throw new StationEditRefusedError(
+                    'reinterpolate the drawing',
+                    error
                 );
-            if (batchResult.update.length || batchResult.updates?.length) {
+            }
+            if (workerBatchHasEdits(batchResult)) {
                 applyWorkerGeneratedYjsUpdate(
                     bridge,
                     batchResult.update,
@@ -9294,50 +9815,45 @@ export class OutlineEditor {
     }
 
     /**
-     * Batch-reinterpolates all glyph drawings bound to `stationId` in parallel.
-     *
-     * All interpolation requests are fired concurrently (one worker round-trip
-     * covers all glyphs), then all model writes and Yjs syncs happen in a
-     * single synchronous pass with one `prepareCommittedStructuralOutlineChange`
-     * call at the end.  This is O(1) worker latency instead of O(N).
-     *
+     * Reinterpolates every drawing bound to `stationId` in one font worker
+     * batch: the worker works out every drawing before it writes any, so the
+     * edit is all or nothing. A refusal throws a
+     * {@link StationEditRefusedError} with the font unchanged; the caller
+     * (Font Info, a Python script) shows or handles it.
      */
     async reinterpolateAllDrawingsForStation(stationId: string): Promise<void> {
         const bridge = window.patchSyncEngine as PatchSyncEngine | undefined;
         if (!bridge?.applyLocalGeneratedYjsUpdate) {
-            const fontModel = fontManager.currentFont?.fontModel;
-            const targets = (fontModel?.glyphs ?? []).flatMap((glyph: any) =>
-                (glyph.drawings ?? [])
-                    .filter(
-                        (drawing: any) => drawing?.station?.master === stationId
-                    )
-                    .map((drawing: any) => ({
-                        glyphName: glyph.name,
-                        layerId: drawing.id || drawing?.station?.master
-                    }))
+            // Reinterpolating drawing by drawing could fail halfway and leave
+            // the station half done, so without the font’s change engine
+            // (no font open) nothing is reinterpolated.
+            throw new StationEditRefusedError(
+                'reinterpolate the station’s drawings',
+                new Error('the font isn’t open for editing.')
             );
-            for (const target of targets) {
-                if (!target.glyphName || !target.layerId) {
-                    continue;
-                }
-                await this.reinterpolateDrawingById(target.layerId, {
-                    glyphName: target.glyphName,
-                    changeSource: 'station-reinterpolate-batch',
-                    selectNewDrawing: false
-                });
-            }
-            return;
         }
 
         this.prepareStructuralOutlineCompile('keyboard-outline');
         beginLoadingCursor();
         beginStartupInteractionLock();
         try {
-            const batchResult =
-                await fontManager.buildWorkerReinterpolateStationDrawingsBatch(
-                    stationId
+            let batchResult: Awaited<
+                ReturnType<
+                    typeof fontManager.buildWorkerReinterpolateStationDrawingsBatch
+                >
+            >;
+            try {
+                batchResult =
+                    await fontManager.buildWorkerReinterpolateStationDrawingsBatch(
+                        stationId
+                    );
+            } catch (error) {
+                throw new StationEditRefusedError(
+                    'reinterpolate the station’s drawings',
+                    error
                 );
-            if (!batchResult.update.length && !batchResult.updates?.length) {
+            }
+            if (!workerBatchHasEdits(batchResult)) {
                 return;
             }
 
@@ -9907,6 +10423,22 @@ export class OutlineEditor {
                     item.componentIndex !== undefined
             )
             .map((item) => item.componentIndex);
+
+        const pendingGuard = this._previewEditGuard;
+        if (
+            this._pendingKeyboardPreviewCommit &&
+            pendingGuard &&
+            !this._keyboardPreviewCommitInFlight &&
+            !this._keyboardPreviewCommitWriting
+        ) {
+            // The drawing the pending arrow-key edit belongs to is gone.
+            this.reportPreviewEditLost(
+                pendingGuard,
+                'drawing-removed',
+                'reconcile-selection'
+            );
+            this.abandonPendingKeyboardPreviewCommit();
+        }
 
         this.selectedDrawingId = null;
         this.drawingData = null;
@@ -20548,6 +21080,8 @@ export class OutlineEditor {
             const preMoveDesc = this.getCurrentKeyboardSelectionHistoryDesc();
             if (nudge) {
                 e.preventDefault();
+                this.ensureGlyphModelRebuildSubscription();
+                this.capturePreviewEditBaseline();
                 this.queueKeyboardPreviewMovement(() => {
                     const dx = nudge.dx;
                     const dy = nudge.dy;
@@ -20601,6 +21135,7 @@ export class OutlineEditor {
                             ? outlineAffectedGlyphNames
                             : undefined
                     );
+                    this.notePreviewEditApplied();
 
                     if (sidebearingMoved) {
                         return {
@@ -21475,6 +22010,13 @@ export class OutlineEditor {
         rootGlyphName?: string,
         retryCount: number = 0
     ): Promise<void> {
+        if (
+            this.protectPendingPreviewBeforeReload('fetch-drawing-data') ===
+            'deferred'
+        ) {
+            return;
+        }
+        this.ensureGlyphModelRebuildSubscription();
         const fetchGeneration = ++this._drawingDataFetchGeneration;
         const isCurrentFetch = () =>
             fetchGeneration === this._drawingDataFetchGeneration;

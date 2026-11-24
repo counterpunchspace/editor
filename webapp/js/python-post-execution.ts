@@ -8,17 +8,7 @@
 
 import { Logger } from './logger';
 import type { WorkerReplayTarget } from './change-log';
-import {
-    deriveGlyphNameFromPath,
-    deriveDrawingIdFromPath,
-    normalizeWorkerReplayTargets
-} from './change-log';
-import {
-    createNamedChangePairFromJsonPatchPair,
-    createSyntheticChangeOperationsFromNamedChangePairs,
-    type JsonPatchOperation,
-    type NamedChangePair
-} from './collaboration-message';
+import { normalizeWorkerReplayTargets } from './change-log';
 import { getCommittedChangeRefreshPromise } from './change-bridge-init';
 import {
     isAssistantPythonExecutionActive,
@@ -33,6 +23,8 @@ type SyntheticChangeOperation = {
     path: (string | number)[];
     oldValue: unknown;
     newValue: unknown;
+    replayOldValue?: unknown;
+    replayNewValue?: unknown;
     editSource?: string | null;
     workerReplayTargets?: WorkerReplayTarget[];
 };
@@ -69,91 +61,52 @@ export type PythonExecutionOutcome = {
     succeeded: boolean;
 };
 
-type JsonPatchPair = {
-    forward: JsonPatchOperation;
-    inverse: JsonPatchOperation;
-};
-
-function toJsonPointerPath(path: (string | number)[]): string {
-    if (!path.length) {
-        return '';
-    }
-
-    return `/${path
-        .map((segment) =>
-            String(segment).replaceAll('~', '~0').replaceAll('/', '~1')
-        )
-        .join('/')}`;
-}
-
-function diffFontDataToJsonPatchPairs(
-    beforeValue: unknown,
-    afterValue: unknown
-): JsonPatchPair[] {
-    return diffFontDataToPatchPairs(beforeValue, afterValue).map(
-        ({ forward, inverse }) => ({
-            forward: {
-                op: forward.op,
-                path: toJsonPointerPath(forward.path),
-                value: forward.value
-            },
-            inverse: {
-                op: inverse.op,
-                path: toJsonPointerPath(inverse.path),
-                value: inverse.value
-            }
-        })
-    );
-}
-
-function createNamedPatchPairsFromJsonSnapshots(
+/**
+ * Turn the snapshot diff into bridge operations. The diff already names
+ * glyphs and drawings (`['glyphs', name, 'layers', id, …]`), so its paths
+ * are used as they are. They never pass through a JSON pointer, whose
+ * segments read back as array indices: a glyph named “1” would become the
+ * second glyph of the snapshot.
+ */
+function createSyntheticOperationsFromJsonSnapshots(
     beforeSnapshot: Record<string, unknown>,
-    afterSnapshot: Record<string, unknown>,
-    workerReplayTargets: WorkerReplayTarget[]
-): NamedChangePair[] {
-    const jsonPatchPairs = diffFontDataToJsonPatchPairs(
-        beforeSnapshot,
-        afterSnapshot
+    afterSnapshot: Record<string, unknown>
+): SyntheticChangeOperation[] {
+    return diffFontDataToPatchPairs(beforeSnapshot, afterSnapshot).map(
+        ({ forward, inverse }) => {
+            const path = [...forward.path];
+            const oldValue =
+                inverse.op === 'remove' ? undefined : inverse.value;
+            const newValue =
+                forward.op === 'remove' ? undefined : forward.value;
+            const glyphName =
+                path[0] === 'glyphs' && path.length >= 2
+                    ? String(path[1])
+                    : null;
+            const drawingId =
+                glyphName !== null && path[2] === 'layers' && path.length >= 4
+                    ? String(path[3])
+                    : null;
+            return {
+                op:
+                    forward.op === 'replace'
+                        ? 'set'
+                        : forward.op === 'add'
+                          ? 'add'
+                          : 'remove',
+                path,
+                oldValue,
+                newValue,
+                replayOldValue: oldValue,
+                replayNewValue: newValue,
+                workerReplayTargets: normalizeWorkerReplayTargets(
+                    glyphName !== null && drawingId !== null
+                        ? [{ glyphName, layerId: drawingId }]
+                        : []
+                )
+            };
+        }
     );
-
-    return jsonPatchPairs.map((patchPair) => {
-        const namedPair = createNamedChangePairFromJsonPatchPair(
-            patchPair.forward,
-            patchPair.inverse,
-            {
-                forwardSnapshot:
-                    patchPair.forward.op === 'remove'
-                        ? beforeSnapshot
-                        : afterSnapshot,
-                inverseSnapshot:
-                    patchPair.inverse.op === 'remove'
-                        ? afterSnapshot
-                        : beforeSnapshot,
-                replayOldValue:
-                    patchPair.inverse.op === 'remove'
-                        ? undefined
-                        : patchPair.inverse.value,
-                replayNewValue:
-                    patchPair.forward.op === 'remove'
-                        ? undefined
-                        : patchPair.forward.value,
-                workerReplayTargets
-            }
-        );
-        const inferredGlyph = deriveGlyphNameFromPath(namedPair.forward.path);
-        const inferredDrawing = deriveDrawingIdFromPath(namedPair.forward.path);
-        const inferredTargets = normalizeWorkerReplayTargets(
-            workerReplayTargets.length > 0
-                ? workerReplayTargets
-                : inferredGlyph && inferredDrawing
-                  ? [{ glyphName: inferredGlyph, layerId: inferredDrawing }]
-                  : []
-        );
-        return {
-            ...namedPair,
-            workerReplayTargets: inferredTargets
-        };
-    });
 }
 
 function createCanonicalSerializedFontSnapshot(
@@ -205,14 +158,10 @@ export function commitPythonExecutionSyntheticChanges(
             string,
             unknown
         >;
-        const directOperations =
-            createSyntheticChangeOperationsFromNamedChangePairs(
-                createNamedPatchPairsFromJsonSnapshots(
-                    beforeSnapshot,
-                    afterSnapshot,
-                    []
-                )
-            );
+        const directOperations = createSyntheticOperationsFromJsonSnapshots(
+            beforeSnapshot,
+            afterSnapshot
+        );
 
         const readOnly =
             window.cloudPlugin?.canMutateCurrentAsset?.() === false;

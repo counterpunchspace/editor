@@ -200,9 +200,9 @@ function makeAutomaticAnchorCascadeFont() {
                         shapes: [
                             {
                                 nodes: [
-                                    { type: 'l', x: 100, y: 0 },
-                                    { type: 'l', x: 300, y: 500 },
-                                    { type: 'l', x: 500, y: 0 }
+                                    { nodetype: 'Line', x: 100, y: 0 },
+                                    { nodetype: 'Line', x: 300, y: 500 },
+                                    { nodetype: 'Line', x: 500, y: 0 }
                                 ],
                                 closed: true
                             }
@@ -231,9 +231,9 @@ function makeAutomaticAnchorCascadeFont() {
                         shapes: [
                             {
                                 nodes: [
-                                    { type: 'l', x: 80, y: 0 },
-                                    { type: 'l', x: 150, y: 80 },
-                                    { type: 'l', x: 220, y: 0 }
+                                    { nodetype: 'Line', x: 80, y: 0 },
+                                    { nodetype: 'Line', x: 150, y: 80 },
+                                    { nodetype: 'Line', x: 220, y: 0 }
                                 ],
                                 closed: true
                             }
@@ -1866,8 +1866,10 @@ describe('GlyphCanvas onMouseUp', () => {
                 editable: true
             };
             canvas.outlineEditor.drawingData = {
+                id: 'layer-1',
+                master: { type: 'DefaultForMaster', master: 'layer-1' },
                 width: 520,
-                shapes: [{ nodes: [{ x: 40, y: 0, type: 'l' }] }],
+                shapes: [{ closed: true, nodes: [{ x: 40, y: 0, type: 'l' }] }],
                 anchors: []
             };
 
@@ -2883,6 +2885,7 @@ describe('GlyphCanvas onMouseUp', () => {
             canvas.outlineEditor.drawingData = {
                 id: 'layer-1',
                 width: 520,
+                master: { type: 'DefaultForMaster', master: 'layer-1' },
                 shapes: [
                     {
                         nodes: [
@@ -14343,6 +14346,10 @@ describe('GlyphCanvas anchor movement', () => {
                                 {
                                     id: 'layer-1',
                                     width: 500,
+                                    master: {
+                                        type: 'DefaultForMaster',
+                                        master: 'layer-1'
+                                    },
                                     shapes: [],
                                     anchors: []
                                 }
@@ -14354,6 +14361,10 @@ describe('GlyphCanvas anchor movement', () => {
                                 {
                                     id: 'layer-1',
                                     width: 610,
+                                    master: {
+                                        type: 'DefaultForMaster',
+                                        master: 'layer-1'
+                                    },
                                     shapes: [],
                                     anchors: []
                                 }
@@ -14371,6 +14382,10 @@ describe('GlyphCanvas anchor movement', () => {
                                                 toJSON: jest.fn(() => ({
                                                     id: 'layer-1',
                                                     width: 500,
+                                                    master: {
+                                                        type: 'DefaultForMaster',
+                                                        master: 'layer-1'
+                                                    },
                                                     shapes: [],
                                                     anchors: []
                                                 }))
@@ -14400,6 +14415,7 @@ describe('GlyphCanvas anchor movement', () => {
         canvas.outlineEditor.drawingData = {
             id: 'layer-1',
             width: 500,
+            master: { type: 'DefaultForMaster', master: 'layer-1' },
             shapes: [],
             anchors: []
         };
@@ -14434,6 +14450,10 @@ describe('GlyphCanvas anchor movement', () => {
                         drawingJson: expect.objectContaining({
                             id: 'layer-1',
                             width: 500,
+                            master: {
+                                type: 'DefaultForMaster',
+                                master: 'layer-1'
+                            },
                             shapes: [],
                             anchors: []
                         })
@@ -14554,6 +14574,10 @@ describe('GlyphCanvas anchor movement', () => {
                                 {
                                     id: 'layer-1',
                                     width: 500,
+                                    master: {
+                                        type: 'DefaultForMaster',
+                                        master: 'layer-1'
+                                    },
                                     shapes: [],
                                     anchors: []
                                 }
@@ -14565,6 +14589,10 @@ describe('GlyphCanvas anchor movement', () => {
                                 {
                                     id: 'layer-1',
                                     width: 600,
+                                    master: {
+                                        type: 'DefaultForMaster',
+                                        master: 'layer-1'
+                                    },
                                     shapes: [],
                                     anchors: []
                                 }
@@ -14576,6 +14604,10 @@ describe('GlyphCanvas anchor movement', () => {
                                 {
                                     id: 'layer-1',
                                     width: 610,
+                                    master: {
+                                        type: 'DefaultForMaster',
+                                        master: 'layer-1'
+                                    },
                                     shapes: [],
                                     anchors: []
                                 }
@@ -14629,6 +14661,7 @@ describe('GlyphCanvas anchor movement', () => {
         canvas.outlineEditor.drawingData = {
             id: 'layer-1',
             width: 500,
+            master: { type: 'DefaultForMaster', master: 'layer-1' },
             shapes: [],
             anchors: []
         };
@@ -20912,6 +20945,115 @@ describe('OutlineEditor exact selected layers', () => {
             window.patchSyncEngine = originalPatchSyncEngine;
             rustBatchSpy.mockRestore();
             dirtySpy.mockRestore();
+        }
+    });
+
+    test('reinterpolateAllDrawingsForStation turns a worker refusal into “nothing was changed” and writes nothing', async () => {
+        const font = makeComponentFont();
+        const originalFontModel = window.currentFontModel;
+        const originalPatchSyncEngine = window.patchSyncEngine;
+        const applyLocalGeneratedYjsUpdateSpy = jest.fn();
+        const rustBatchSpy = jest
+            .spyOn(fontManager, 'buildWorkerReinterpolateStationDrawingsBatch')
+            .mockRejectedValue(new Error('drawing A/master-layer failed'));
+        window.currentFontModel = font;
+        window.patchSyncEngine = {
+            applyLocalGeneratedYjsUpdate: applyLocalGeneratedYjsUpdateSpy
+        };
+        const before = JSON.stringify(font.findGlyph('A').toJSON());
+
+        try {
+            await expect(
+                canvas.outlineEditor.reinterpolateAllDrawingsForStation(
+                    'master-1'
+                )
+            ).rejects.toThrow(
+                'Couldn’t reinterpolate the station’s drawings, so nothing was changed: drawing A/master-layer failed'
+            );
+            expect(applyLocalGeneratedYjsUpdateSpy).not.toHaveBeenCalled();
+            expect(JSON.stringify(font.findGlyph('A').toJSON())).toBe(before);
+        } finally {
+            window.currentFontModel = originalFontModel;
+            window.patchSyncEngine = originalPatchSyncEngine;
+            rustBatchSpy.mockRestore();
+        }
+    });
+
+    test('reinterpolateAllDrawingsForStation without the change engine refuses instead of going drawing by drawing', async () => {
+        const font = makeComponentFont();
+        const originalPatchSyncEngine = window.patchSyncEngine;
+        const singleSpy = jest.spyOn(
+            canvas.outlineEditor,
+            'reinterpolateDrawingById'
+        );
+        window.patchSyncEngine = undefined;
+        currentFontSpy.mockReturnValue({ fontModel: font });
+
+        try {
+            await expect(
+                canvas.outlineEditor.reinterpolateAllDrawingsForStation(
+                    'master-1'
+                )
+            ).rejects.toThrow(/so nothing was changed/);
+            expect(singleSpy).not.toHaveBeenCalled();
+        } finally {
+            window.patchSyncEngine = originalPatchSyncEngine;
+            singleSpy.mockRestore();
+        }
+    });
+
+    test('reinterpolateDrawingById shows a worker refusal and leaves the drawing as it was', async () => {
+        const font = makeComponentFont();
+        const currentFont = {
+            fontModel: font,
+            markDirty: jest.fn(),
+            syncJsonFromModel: jest.fn()
+        };
+        const originalFontModel = window.currentFontModel;
+        const originalPatchSyncEngine = window.patchSyncEngine;
+        const errorSpy = jest
+            .spyOn(console, 'error')
+            .mockImplementation(() => {});
+        const rustBatchSpy = jest
+            .spyOn(fontManager, 'buildWorkerReinterpolateDrawingBatch')
+            .mockRejectedValue(new Error('the font has no such drawing'));
+        const applyLocalGeneratedYjsUpdateSpy = jest.fn();
+        window.currentFontModel = font;
+        window.patchSyncEngine = {
+            applyLocalGeneratedYjsUpdate: applyLocalGeneratedYjsUpdateSpy,
+            recordChange: jest.fn()
+        };
+        currentFontSpy.mockReturnValue(currentFont);
+        const before = JSON.stringify(
+            font.findGlyph('A').findDrawingById('brace-layer').toJSON()
+        );
+
+        try {
+            await expect(
+                canvas.outlineEditor.reinterpolateDrawingById('brace-layer', {
+                    glyphName: 'A',
+                    selectNewDrawing: false
+                })
+            ).resolves.toBeNull();
+            expect(applyLocalGeneratedYjsUpdateSpy).not.toHaveBeenCalled();
+            expect(
+                JSON.stringify(
+                    font.findGlyph('A').findDrawingById('brace-layer').toJSON()
+                )
+            ).toBe(before);
+            const shown = [
+                ...document.querySelectorAll(
+                    '.font-window-notice > span:first-child'
+                )
+            ].map((span) => span.textContent);
+            expect(shown).toContain(
+                'Couldn’t reinterpolate the drawing, so nothing was changed: the font has no such drawing'
+            );
+        } finally {
+            window.currentFontModel = originalFontModel;
+            window.patchSyncEngine = originalPatchSyncEngine;
+            rustBatchSpy.mockRestore();
+            errorSpy.mockRestore();
         }
     });
 

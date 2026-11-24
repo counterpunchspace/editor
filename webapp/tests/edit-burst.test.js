@@ -229,6 +229,29 @@ describe('CloudSendHold', () => {
         expect(flushed[0].map((held) => held.update[0])).toEqual([98, 99]);
     });
 
+    it('announces each packet it keeps, but not one flushed in the same call', () => {
+        const time = fakeClock();
+        const flushed = [];
+        const announced = [];
+        const hold = new CloudSendHold({
+            minGapMs: 200,
+            trailingMs: 250,
+            clock: time.clock,
+            flush: (packets) => flushed.push(packets),
+            onHeld: (held) => announced.push(held.update[0])
+        });
+        hold.submit(packet('a', 'k'), 1);
+        hold.submit(packet('b', 'k'), 2);
+        // Closes the burst's run: it goes out with the burst at once.
+        expect(hold.submit(packet('c'), 3)).toBe('held');
+        expect(flushed).toHaveLength(1);
+        expect(announced).toEqual(['a'.charCodeAt(0), 'b'.charCodeAt(0)]);
+        // Rate limited: kept until the trailing send, and announced.
+        time.advance(10);
+        expect(hold.submit(packet('d'), 4)).toBe('held');
+        expect(announced.at(-1)).toBe('d'.charCodeAt(0));
+    });
+
     it('does not count an empty flush as a send', () => {
         const { hold, time } = makeHold();
         time.advance(1000);
@@ -280,7 +303,7 @@ function makeFont() {
                                     {
                                         x: 10,
                                         y: 20,
-                                        type: 'line',
+                                        nodetype: 'Line',
                                         smooth: false
                                     }
                                 ],
@@ -610,6 +633,113 @@ describe('PatchSyncEngine edit bursts', () => {
 
         await bridge.flushPendingCloudSends();
         expect(plugin.relayPeerWindowUpdateToCloud).toHaveBeenCalledTimes(2);
+    });
+
+    function linkedTick(source, value) {
+        const before = Y.encodeStateVector(source);
+        source.getMap('glyph').set('k', value);
+        return Y.encodeStateAsUpdate(source, before);
+    }
+
+    function linkedMessage(sequence) {
+        return {
+            windowId: 'linked',
+            transactionId: `tx-linked-${sequence}`,
+            timestamp: sequence,
+            localSequence: sequence,
+            changes: [],
+            metadata: {
+                historyAction: 'change',
+                historyItemId: 'history-linked'
+            }
+        };
+    }
+
+    /** What reached the room for `documentId`, in order: relays and own packets. */
+    function roomOrder(documentId) {
+        const order = [];
+        window.cloudPlugin.relayPeerWindowUpdateToCloud = jest.fn(
+            (_update, _message, relayDocumentId) => {
+                if (relayDocumentId === documentId) order.push('relay');
+            }
+        );
+        bridge.onLocalUpdate(
+            (_update, _message, _entries, packetDocumentId) => {
+                if (packetDocumentId === documentId) order.push('own');
+            },
+            { cloud: true }
+        );
+        return order;
+    }
+
+    it('sends an own edit made on top of a held linked-window burst after it', async () => {
+        const glyphDoc = glyphDocumentId('id-a');
+        nudge(11, 10);
+        await settle();
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        const order = roomOrder(glyphDoc);
+        const source = new Y.Doc();
+        bridge.relayPeerPacketToCloud(
+            linkedTick(source, 1),
+            linkedMessage(1),
+            glyphDoc,
+            'drag'
+        );
+        bridge.relayPeerPacketToCloud(
+            linkedTick(source, 2),
+            linkedMessage(2),
+            glyphDoc,
+            'drag'
+        );
+        const persistedBefore = persisted.length;
+        // An edit here while the linked burst is held flushes it.
+        nudge(12, 11);
+        await settle();
+        expect(order).toEqual(['relay', 'own']);
+        // The own row was written once the relay had taken its place.
+        const relayCall =
+            window.cloudPlugin.relayPeerWindowUpdateToCloud.mock
+                .invocationCallOrder[0];
+        const ownRows = window.cloudPlugin.persistOutgoingCloudUpdate.mock;
+        const ownGlyphRow = ownRows.calls.findIndex(
+            (call, index) => index >= persistedBefore && call[2] === glyphDoc
+        );
+        expect(ownGlyphRow).toBeGreaterThanOrEqual(0);
+        expect(ownRows.invocationCallOrder[ownGlyphRow]).toBeGreaterThan(
+            relayCall
+        );
+        expect(bridge.hasCloudPersistInFlight).toBe(false);
+    });
+
+    it('keeps one document’s relayed and own held runs in arrival order', async () => {
+        const glyphDoc = glyphDocumentId('id-a');
+        nudge(11, 10);
+        await settle();
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        const order = roomOrder(glyphDoc);
+        const source = new Y.Doc();
+        bridge.relayPeerPacketToCloud(
+            linkedTick(source, 1),
+            linkedMessage(1),
+            glyphDoc,
+            'drag'
+        );
+        bridge.runInEditBurst('nudge', () => nudge(12, 11));
+        bridge.relayPeerPacketToCloud(
+            linkedTick(source, 2),
+            linkedMessage(2),
+            glyphDoc,
+            'drag'
+        );
+        // Each run is staged in the device outbox on its own.
+        await settle();
+        expect(stagedRows(glyphDoc)).toHaveLength(3);
+        await bridge.flushPendingCloudSends();
+        await settle();
+        expect(order).toEqual(['relay', 'own', 'relay']);
+        expect(
+            window.cloudPlugin.relayPeerWindowUpdateToCloud
+        ).toHaveBeenCalledTimes(2);
     });
 
     it('relays at once for a font that is not in the cloud', () => {

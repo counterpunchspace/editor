@@ -180,7 +180,7 @@ function concatBytes(parts) {
     return out;
 }
 
-function framedLiveResponse(bytes, { omitTerminal = false } = {}) {
+function framedLiveResponse(bytes, { omitTerminal = false, logId = 1 } = {}) {
     const checkpoint = encodeCollabFrame(
         1,
         0,
@@ -188,17 +188,17 @@ function framedLiveResponse(bytes, { omitTerminal = false } = {}) {
             Buffer.from(
                 JSON.stringify({
                     hasMore: false,
-                    throughLogId: 1,
-                    lastLogId: 1,
+                    throughLogId: logId,
+                    lastLogId: logId,
                     collaborationMessageHistory: []
                 })
             )
         )
     );
-    const tail = encodeTailChunkFrame(1, bytes);
+    const tail = encodeTailChunkFrame(logId, bytes);
     const parts = omitTerminal
         ? [checkpoint, tail]
-        : [checkpoint, tail, encodeCollabFrame(3, 1, new Uint8Array())];
+        : [checkpoint, tail, encodeCollabFrame(3, logId, new Uint8Array())];
     const body = concatBytes(parts);
     return {
         ok: true,
@@ -1098,9 +1098,15 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         const previousRole = window.windowRole;
         const previousSync = window.windowSync;
         const relay = jest.fn();
+        // A complete state: linked windows refuse anything with a hole.
+        const mainState = (() => {
+            const doc = new Y.Doc();
+            doc.getMap('glyph').set('name', 'b');
+            return Y.encodeStateAsUpdate(doc);
+        })();
         const bridge = {
             applyDocumentCatchUp: jest.fn(() => true),
-            encodeDocumentState: jest.fn(() => new Uint8Array([9, 9]))
+            encodeDocumentState: jest.fn(() => mainState)
         };
         window.windowRole = { isMainWindow: () => true };
         window.windowSync = { broadcastCloudRelayUpdate: relay };
@@ -1128,8 +1134,8 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
             expect(bridge.encodeDocumentState).toHaveBeenCalledWith(
                 glyphDocumentId('id-b')
             );
-            expect(relay.mock.calls.map(([bytes]) => [...bytes])).toEqual([
-                [9, 9]
+            expect(relay.mock.calls.map(([bytes]) => bytes)).toEqual([
+                mainState
             ]);
         } finally {
             global.fetch = originalFetch;
@@ -1138,14 +1144,165 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         }
     });
 
+    test.each([
+        [
+            'a clock gap',
+            () => {
+                const { ClockGapError } = require('../js/yjs-update-integrity');
+                return new ClockGapError('glyph:id-b', 'test gap', 5, 3, 1);
+            }
+        ],
+        [
+            'a drawing that breaks its invariants',
+            () => {
+                const error = new Error('drawing width is missing');
+                error.name = 'DrawingInvariantError';
+                return error;
+            }
+        ]
+    ])(
+        'a catch-up that meets %s throws at once, never retries',
+        async (_label, makeError) => {
+            const bridge = {
+                applyDocumentCatchUp: jest.fn(() => {
+                    throw makeError();
+                })
+            };
+            const originalFetch = global.fetch;
+            global.fetch = jest.fn(async () =>
+                framedLiveResponseWithTails([new Uint8Array([1, 2, 3])])
+            );
+            try {
+                await expect(
+                    catchUpCloudDocument({
+                        bridge,
+                        token: 'token',
+                        roomUrl: 'wss://rooms.example/room/asset-1',
+                        websiteBaseUrl: 'https://editor.example',
+                        assetId: 'asset-1',
+                        documentId: glyphDocumentId('id-b'),
+                        maxAttempts: 4,
+                        wait: async () => {}
+                    })
+                ).rejects.toThrow(makeError().message);
+                expect(global.fetch).toHaveBeenCalledTimes(1);
+            } finally {
+                global.fetch = originalFetch;
+            }
+        }
+    );
+
+    test('a catch-up page with a hole after the cursor throws and applies nothing', async () => {
+        const docInstance = {};
+        const bridge = {
+            getDocumentInstance: () => docInstance,
+            hasResidentGlyphDocument: () => true,
+            applyDocumentCatchUp: jest.fn(() => true)
+        };
+        const originalFetch = global.fetch;
+        const catchUp = () =>
+            catchUpCloudDocument({
+                bridge,
+                token: 'token',
+                roomUrl: 'wss://rooms.example/room/asset-1',
+                websiteBaseUrl: 'https://editor.example',
+                assetId: 'asset-1',
+                documentId: glyphDocumentId('id-b'),
+                maxAttempts: 4,
+                wait: async () => {}
+            });
+        try {
+            global.fetch = jest.fn(async () =>
+                framedLiveResponse(new Uint8Array([1]), { logId: 1 })
+            );
+            await expect(catchUp()).resolves.toBe(true);
+            // Row 2 is missing: row 3 must not apply.
+            global.fetch = jest.fn(async () =>
+                framedLiveResponse(new Uint8Array([3]), { logId: 3 })
+            );
+            await expect(catchUp()).rejects.toThrow(/does not follow 1/);
+            expect(global.fetch).toHaveBeenCalledTimes(1);
+            expect(bridge.applyDocumentCatchUp).toHaveBeenCalledTimes(1);
+        } finally {
+            global.fetch = originalFetch;
+        }
+    });
+
+    test.each([
+        ['unloaded', () => null],
+        ['replaced by a new hydrate', () => ({})]
+    ])(
+        'rows after a cursor never apply to a document %s while the fetch ran',
+        async (_label, nextInstance) => {
+            let docInstance = {};
+            const applied = [];
+            const bridge = {
+                getDocumentInstance: () => docInstance,
+                hasResidentGlyphDocument: () => true,
+                applyDocumentCatchUp: jest.fn((_id, bytes) => {
+                    applied.push(Array.from(bytes));
+                    return true;
+                })
+            };
+            const originalFetch = global.fetch;
+            const urls = [];
+            const catchUp = () =>
+                catchUpCloudDocument({
+                    bridge,
+                    token: 'token',
+                    roomUrl: 'wss://rooms.example/room/asset-1',
+                    websiteBaseUrl: 'https://editor.example',
+                    assetId: 'asset-1',
+                    documentId: glyphDocumentId('id-b'),
+                    maxAttempts: 2,
+                    wait: async () => {}
+                });
+            try {
+                global.fetch = jest.fn(async () =>
+                    framedLiveResponse(new Uint8Array([1]), { logId: 5 })
+                );
+                await expect(catchUp()).resolves.toBe(true);
+                applied.length = 0;
+                global.fetch = jest.fn(async (input) => {
+                    urls.push(
+                        new URL(String(input)).searchParams.get('afterLogId')
+                    );
+                    if (urls.length === 1) {
+                        // The glyph goes (or comes back as a new document)
+                        // while the request for rows after 5 is out.
+                        docInstance = nextInstance();
+                        return framedLiveResponse(new Uint8Array([6]), {
+                            logId: 6
+                        });
+                    }
+                    return framedLiveResponse(new Uint8Array([9, 9]), {
+                        logId: 6
+                    });
+                });
+                await expect(catchUp()).resolves.toBe(true);
+                // The first answer is thrown away; the second asks from the
+                // current instance (which holds no cursor) for the state.
+                expect(urls).toEqual(['5', '0']);
+                expect(applied).toEqual([[9, 9]]);
+            } finally {
+                global.fetch = originalFetch;
+            }
+        }
+    );
+
     test('relays what main applied, and is done at the room tail whatever stamp won', async () => {
         const previousRole = window.windowRole;
         const previousSync = window.windowSync;
         const relay = jest.fn();
+        const mainState = (() => {
+            const doc = new Y.Doc();
+            doc.getMap('glyph').set('name', 'b');
+            return Y.encodeStateAsUpdate(doc);
+        })();
         const bridge = {
             applyDocumentCatchUp: jest.fn(() => true),
             glyphHasCatchUpRevision: jest.fn(() => false),
-            encodeDocumentState: jest.fn(() => new Uint8Array([7]))
+            encodeDocumentState: jest.fn(() => mainState)
         };
         window.windowRole = { isMainWindow: () => true };
         window.windowSync = { broadcastCloudRelayUpdate: relay };
@@ -1171,8 +1328,8 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
             // tail holds it, even when a concurrent writer's stamp won, so
             // one fetch is enough.
             expect(global.fetch).toHaveBeenCalledTimes(1);
-            expect(relay.mock.calls.map(([bytes]) => [...bytes])).toEqual([
-                [7]
+            expect(relay.mock.calls.map(([bytes]) => bytes)).toEqual([
+                mainState
             ]);
         } finally {
             global.fetch = originalFetch;
@@ -1237,9 +1394,13 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
             let state = writer.bridge.encodeDocumentState(
                 glyphDocumentId('id-b')
             );
+            // The room answers with the row after the cursor.
             global.fetch = jest.fn(async (input) => {
                 urls.push(String(input));
-                return framedLiveResponse(state);
+                const after = Number(
+                    new URL(String(input)).searchParams.get('afterLogId')
+                );
+                return framedLiveResponse(state, { logId: after + 1 });
             });
             await catchUp();
             writer.font.findGlyph('B').drawings[0].width = 702;

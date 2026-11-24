@@ -176,7 +176,7 @@ function makeFont() {
                                     {
                                         x: 10,
                                         y: 20,
-                                        type: 'line',
+                                        nodetype: 'Line',
                                         smooth: false
                                     }
                                 ],

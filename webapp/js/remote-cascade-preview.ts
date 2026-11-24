@@ -32,10 +32,7 @@ import {
     deriveDrawingIdFromPath,
     getPathSegments
 } from './change-log';
-import { Logger } from './logger';
 import { recordCollabTrace } from './collab-trace';
-
-const console = new Logger('RemoteCascadePreview');
 
 export type CascadeDrawingTarget = { glyphName: string; layerId: string };
 
@@ -353,15 +350,9 @@ export class RemoteCascadePreview {
             editKinds: new Set(entry.source.editKinds)
         }));
         if (sources.length) {
-            try {
-                changed = this.host.recompose(sources);
-            } catch (error) {
-                console.warn(
-                    'Could not recompose the collaborator’s edit:',
-                    error
-                );
-                changed = [];
-            }
+            // A cascade that cannot be recomposed throws: it means a drawing
+            // it reads is incomplete, which no preview may hide.
+            changed = this.host.recompose(sources);
         }
         const expiresAt = now + REMOTE_CASCADE_PREVIEW_MAX_MS;
         for (const target of changed) {
@@ -374,26 +365,18 @@ export class RemoteCascadePreview {
         const targets = this.pendingTargets;
         const glyphNames = [...new Set(targets.map((t) => t.glyphName))];
         this.host.repaint(glyphNames);
-        void this.host
-            .stageOverlay(targets)
-            .then((staged) => {
-                recordCollabTrace('cascade-staged', glyphNames, {
-                    staged,
-                    targets: targets.map((t) => `${t.glyphName}/${t.layerId}`)
-                });
-                if (staged && !this.destroyed && this.pending.size) {
-                    // Views that read the worker (overview tiles) may have
-                    // fetched while the overlay waited for worker updates.
-                    this.host.repaint(glyphNames);
-                    this.host.requestCompile();
-                }
-            })
-            .catch((error) => {
-                console.warn(
-                    'Could not stage the collaborator’s cascade:',
-                    error
-                );
+        void this.host.stageOverlay(targets).then((staged) => {
+            recordCollabTrace('cascade-staged', glyphNames, {
+                staged,
+                targets: targets.map((t) => `${t.glyphName}/${t.layerId}`)
             });
+            if (staged && !this.destroyed && this.pending.size) {
+                // Views that read the worker (overview tiles) may have
+                // fetched while the overlay waited for worker updates.
+                this.host.repaint(glyphNames);
+                this.host.requestCompile();
+            }
+        });
     }
 
     private armTimer(): void {
@@ -473,19 +456,14 @@ export class RemoteCascadePreview {
         const unsettled = [...groups.values()];
         for (const [sources, targets] of groups) {
             unsettled.shift();
-            try {
-                written.push(
-                    ...this.host.settle(targets, sources, [
-                        ...this.pendingTargets,
-                        ...unsettled.flat()
-                    ])
-                );
-            } catch (error) {
-                console.warn(
-                    'Could not settle the collaborator’s cascade:',
-                    error
-                );
-            }
+            // A failed settle throws; the preview is not left standing in
+            // for drawings that could not be recomposed.
+            written.push(
+                ...this.host.settle(targets, sources, [
+                    ...this.pendingTargets,
+                    ...unsettled.flat()
+                ])
+            );
         }
         if (expired.length) {
             recordCollabTrace(
@@ -502,15 +480,10 @@ export class RemoteCascadePreview {
             this.toCheck.clear();
             this.checkDueAt = Number.POSITIVE_INFINITY;
             this.firstUncheckedAt = Number.POSITIVE_INFINITY;
-            let repaired: CascadeDrawingTarget[] = [];
-            try {
-                repaired = this.host.repairComposites(
-                    glyphNames,
-                    this.pendingTargets
-                );
-            } catch (error) {
-                console.warn('Could not check composites:', error);
-            }
+            const repaired = this.host.repairComposites(
+                glyphNames,
+                this.pendingTargets
+            );
             recordCollabTrace('cascade-repair', glyphNames, {
                 checked: glyphNames,
                 written: repaired.map((t) => `${t.glyphName}/${t.layerId}`)

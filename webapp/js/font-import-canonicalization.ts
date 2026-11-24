@@ -51,12 +51,33 @@ function normalizeImportedDrawingStations(fontData: Babelfont.Font): void {
                 typeof drawing.id === 'string' ? drawing.id : null;
             const stationValue = drawing.master;
 
+            const namesItsStation =
+                drawing.is_background !== true &&
+                drawingId !== null &&
+                knownStationIds.has(drawingId);
+            if (stationValue === undefined) {
+                if (namesItsStation) {
+                    drawing.master = {
+                        type: 'DefaultForMaster',
+                        master: drawingId
+                    };
+                } else {
+                    // Babelfont leaves `master` out for its default,
+                    // FreeFloating (`skip_serializing_if = "is_default"`):
+                    // a UFO `public.background` layer from a designspace,
+                    // and the free layers of other formats, come in so.
+                    // This reads that encoding; it fills nothing in.
+                    drawing.master = { type: 'FreeFloating' };
+                }
+                continue;
+            }
+
             if (!stationValue) {
-                if (
-                    drawing.is_background !== true &&
-                    drawingId &&
-                    knownStationIds.has(drawingId)
-                ) {
+                // A present but empty link (null, '') is not Babelfont's
+                // encoding of anything; it stays as it is and the Y.Doc
+                // write gate refuses it, unless the drawing is its station's
+                // own drawing.
+                if (namesItsStation) {
                     drawing.master = {
                         type: 'DefaultForMaster',
                         master: drawingId

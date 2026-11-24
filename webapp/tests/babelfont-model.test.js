@@ -2791,7 +2791,10 @@ describe('Babelfont Object Model', () => {
 
         test('should return empty filtered views for layers without shapes', () => {
             const testGlyph = font.addGlyph('FilteredEmptyGlyph', 'Base');
-            const testDrawing = testGlyph.addDrawing(500);
+            const testDrawing = testGlyph.addDrawing(500, {
+                type: 'DefaultForMaster',
+                master: font.stations[0].id
+            });
 
             expect(testDrawing.shapes).toEqual([]);
             expect(testDrawing.paths).toEqual([]);
@@ -2800,9 +2803,27 @@ describe('Babelfont Object Model', () => {
             font.removeGlyph('FilteredEmptyGlyph');
         });
 
+        test('addDrawing refuses a station the font does not have, and adds nothing', () => {
+            const glyph = font.addGlyph('UnknownStationGlyph', 'Base');
+            const before = glyph.drawings.length;
+            expect(() =>
+                glyph.addDrawing(500, {
+                    type: 'DefaultForMaster',
+                    master: 'no-such-station'
+                })
+            ).toThrow('the font has no such station');
+            expect(glyph.drawings).toHaveLength(before);
+            const free = glyph.addDrawing(500, { type: 'FreeFloating' });
+            expect(free.width).toBe(500);
+            font.removeGlyph('UnknownStationGlyph');
+        });
+
         test('findAnchor returns the matching anchor by name', () => {
             const glyph = font.addGlyph('AnchorLookupGlyph', 'Base');
-            const testDrawing = glyph.addDrawing(500);
+            const testDrawing = glyph.addDrawing(500, {
+                type: 'DefaultForMaster',
+                master: font.stations[0].id
+            });
             testDrawing.addAnchor(250, 700, 'top');
             testDrawing.addAnchor(250, 0, 'bottom');
             const foundAnchor = testDrawing.findAnchor('top');
@@ -5447,7 +5468,10 @@ describe('Babelfont Object Model', () => {
             while (testGlyph.drawings.length > 0) {
                 testGlyph.removeDrawing(0);
             }
-            const testDrawing = testGlyph.addDrawing(500);
+            const testDrawing = testGlyph.addDrawing(500, {
+                type: 'DefaultForMaster',
+                master: font.stations[0].id
+            });
             testDrawing.station = {
                 type: 'DefaultForMaster',
                 master: 'non-existent-master-id'
@@ -5580,7 +5604,10 @@ describe('Babelfont Object Model', () => {
         test('should return empty array for layer with no shapes', () => {
             // Create a test glyph with empty layer
             const testGlyph = font.addGlyph('EmptyGlyph', 'Base');
-            const testDrawing = testGlyph.addDrawing(500);
+            const testDrawing = testGlyph.addDrawing(500, {
+                type: 'DefaultForMaster',
+                master: font.stations[0].id
+            });
 
             // Layer has no shapes
             expect(testDrawing.shapes).toEqual([]);
@@ -7136,6 +7163,10 @@ describe('Babelfont Object Model', () => {
                                 width: 500,
                                 id: 'layer-ad-bg',
                                 is_background: true,
+                                master: {
+                                    type: 'DefaultForMaster',
+                                    master: ''
+                                },
                                 background_layer_id: 'layer-ad',
                                 shapes: [
                                     {
@@ -7741,6 +7772,71 @@ describe('Babelfont Object Model', () => {
     });
 });
 
+describe('drawing metrics refuse invalid values', () => {
+    const makeFont = (drawing) =>
+        Font.fromData({
+            glyphs: [{ name: 'a', layers: [drawing] }],
+            masters: [{ id: 'm1', name: { dflt: 'Regular' }, location: {} }],
+            axes: []
+        });
+    const station = { type: 'DefaultForMaster', master: 'm1' };
+
+    test('width, LSB and RSB setters throw on non-finite values', () => {
+        const drawing = makeFont({
+            id: 'm1',
+            width: 500,
+            master: station,
+            shapes: []
+        }).findGlyph('a').drawings[0];
+        for (const bad of [Number.NaN, Infinity, undefined, '600']) {
+            expect(() => {
+                drawing.width = bad;
+            }).toThrow(/width must be a finite number/);
+            expect(() => {
+                drawing.lsb = bad;
+            }).toThrow(/left sidebearing must be a finite number/);
+            expect(() => {
+                drawing.rsb = bad;
+            }).toThrow(/right sidebearing must be a finite number/);
+        }
+        expect(drawing.width).toBe(500);
+    });
+
+    test('a drawing without a width is not given one', () => {
+        const drawing = makeFont({
+            id: 'm1',
+            master: station,
+            shapes: []
+        }).findGlyph('a').drawings[0];
+        expect(() => drawing.getBoundingBox(false)).toThrow(
+            /width must be a finite number/
+        );
+    });
+
+    test('a zero width stays zero', () => {
+        const drawing = makeFont({
+            id: 'm1',
+            width: 0,
+            master: station,
+            shapes: []
+        }).findGlyph('a').drawings[0];
+        expect(drawing.getBoundingBox(false).maxX).toBe(0);
+    });
+
+    test('addDrawing needs a finite width and a station', () => {
+        const glyph = makeFont({
+            id: 'm1',
+            width: 500,
+            master: station,
+            shapes: []
+        }).findGlyph('a');
+        expect(() => glyph.addDrawing(Number.NaN, station)).toThrow(
+            /width must be a finite number/
+        );
+        expect(() => glyph.addDrawing(500)).toThrow(/needs a station/);
+    });
+});
+
 describe('Font.findGlyph name index', () => {
     const makeFont = (names) =>
         Font.fromData({
@@ -7915,5 +8011,53 @@ describe('variation drawings', () => {
             glyph.featureVariations[0].drawings[0].isVariationDrawing()
         ).toBe(true);
         expect(glyph.drawings[0].isVariationDrawing()).toBe(false);
+    });
+});
+
+describe('worker batch edit detection', () => {
+    const { workerBatchHasEdits } = require('../js/babelfont-model');
+
+    test('a batch of empty [0, 0] packets has no edits', () => {
+        expect(
+            workerBatchHasEdits({
+                update: new Uint8Array([0, 0]),
+                updates: [
+                    { documentId: 'font-core', update: new Uint8Array([0, 0]) }
+                ]
+            })
+        ).toBe(false);
+    });
+
+    test('one non-empty per-document packet is an edit', () => {
+        expect(
+            workerBatchHasEdits({
+                update: new Uint8Array([0, 0]),
+                updates: [
+                    { documentId: 'glyph:1', update: new Uint8Array([1, 0, 0]) }
+                ]
+            })
+        ).toBe(true);
+    });
+});
+
+describe('adding drawings refuses missing identity', () => {
+    const { Font } = require('../js/babelfont-model');
+
+    test('a background drawing for a drawing without a station link is refused', () => {
+        const font = Font.fromData({
+            glyphs: [
+                {
+                    name: 'a',
+                    layers: [{ id: 'd1', width: 500, shapes: [] }]
+                }
+            ],
+            masters: [],
+            axes: []
+        });
+        const glyph = font.findGlyph('a');
+        expect(() =>
+            glyph.addBackgroundDrawing(glyph.findDrawingById('d1'))
+        ).toThrow();
+        expect(glyph.drawings).toHaveLength(1);
     });
 });

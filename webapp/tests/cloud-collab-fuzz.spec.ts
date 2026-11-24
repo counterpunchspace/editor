@@ -580,6 +580,26 @@ test.describe('cloud collaboration fuzz', () => {
                             );
                         }
                     }
+                    // A document that refused an update stays refused until
+                    // reload, so a broken one fails the run at once.
+                    for (const window of windows) {
+                        const broken = await window.page.evaluate(() =>
+                            (
+                                (window as any).__collabBrokenDocuments?.() ??
+                                []
+                            ).map(
+                                (entry: {
+                                    documentId: string;
+                                    error: string;
+                                }) => `${entry.documentId}: ${entry.error}`
+                            )
+                        );
+                        if (broken.length) {
+                            throw new Error(
+                                `${label}: ${window.name} has broken documents\n${broken.join('\n')}\n${(consoleTails.get(window.page) ?? []).join('\n')}`
+                            );
+                        }
+                    }
                     // A collaborator cascade this window still shows as a
                     // preview: its model may agree while its documents lag.
                     for (const window of windows) {
@@ -1709,14 +1729,43 @@ test.describe('cloud collaboration fuzz', () => {
                 keys: string[];
                 by: HistoryItem | null;
             }> = [];
-            // Clean: since the edit, only its own undo and redo changed its data.
-            const isClean = (item: HistoryItem) =>
-                changeLog.every(
+            // Glyphs whose drawings an edit changed together (a contour,
+            // node, shape or component change made in every drawing so they
+            // stay compatible): `<glyph>/<layer>` keys, two or more per glyph.
+            const structurallyEditedGlyphs = (item: HistoryItem) => {
+                const counts = new Map<string, number>();
+                for (const key of item.changed) {
+                    const slash = key.indexOf('/');
+                    if (slash <= 0 || key.includes(':')) continue;
+                    const glyph = key.slice(0, slash);
+                    counts.set(glyph, (counts.get(glyph) ?? 0) + 1);
+                }
+                return new Set(
+                    [...counts].filter(([, n]) => n >= 2).map(([g]) => g)
+                );
+            };
+            // Clean: since the edit, only its own undo and redo changed its
+            // data. An edit that changed a glyph's drawings together is not
+            // clean once another change touched a different drawing of that
+            // glyph (a collaborator added or removed one): the editor then
+            // refuses its undo, which would leave the drawings incompatible.
+            const isClean = (item: HistoryItem) => {
+                const structural = structurallyEditedGlyphs(item);
+                return changeLog.every(
                     (change) =>
                         change.step <= item.step ||
                         change.by === item ||
-                        !change.keys.some((key) => item.changed.includes(key))
+                        (!change.keys.some((key) =>
+                            item.changed.includes(key)
+                        ) &&
+                            !change.keys.some(
+                                (key) =>
+                                    !item.changed.includes(key) &&
+                                    !key.includes(':') &&
+                                    structural.has(key.split('/')[0])
+                            ))
                 );
+            };
             // Kerning, groups and Unicode are font-wide: an undo in any
             // glyph can reach them. Feature code has its own history target.
             const historyGlyphOf = (edit: FuzzEdit): string | null =>

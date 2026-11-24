@@ -1,7 +1,10 @@
 // @ts-nocheck
 /** CloudPlugin openAsset / hydrate pipeline. */
-import { sha256Hex } from '../../cloud-adapter-support';
-import { fetchCloudDocumentState } from '../../cloud-adapter-bootstrap';
+import {
+    rememberLoadedDocumentLogCursors,
+    sha256Hex
+} from '../../cloud-adapter-support';
+import { fetchCloudDocumentStateWithLogId } from '../../cloud-adapter-bootstrap';
 import { beginLoadingCursor, endLoadingCursor } from '../../loading-cursor';
 import { readUrlState } from '../../url-state';
 import { CloudAdapter } from '../../cloud-adapter';
@@ -213,6 +216,21 @@ export const cloudPluginOpenMethods = {
         let hydratedFontJson: Record<string, unknown> | null = null;
         let sparseWorkingGlyphIds: string[] = [];
         let usedSparseHydration = options?.sparseHydration === true;
+        // The log id each loaded room state holds every row through (null
+        // when its load path named none), recorded as the document's
+        // catch-up cursor once the bridge holds the state.
+        const loadedLogIds = new Map<string, number | null>();
+        const noteHydratedLogIds = (
+            loaded: Map<string, Uint8Array>
+        ): Map<string, Uint8Array> => {
+            for (const documentId of loaded.keys()) {
+                loadedLogIds.set(
+                    documentId,
+                    hydrator.hydratedLogId(documentId)
+                );
+            }
+            return loaded;
+        };
         try {
             await loadDocumentSetWithProgress({
                 total: 2,
@@ -220,12 +238,14 @@ export const cloudPluginOpenMethods = {
                     const io = shardIoOptionsFromSession(session, {
                         progressTotal: 2
                     });
-                    const coreAndDeps = await this._hydrateCoreDepsConsistent(
-                        hydrator,
-                        token,
-                        roomUrl,
-                        assetId,
-                        io
+                    const coreAndDeps = noteHydratedLogIds(
+                        await this._hydrateCoreDepsConsistent(
+                            hydrator,
+                            token,
+                            roomUrl,
+                            assetId,
+                            io
+                        )
                     );
                     const coreBytes = coreAndDeps.get(FONT_CORE_DOCUMENT_ID);
                     if (!coreBytes?.byteLength) {
@@ -252,31 +272,35 @@ export const cloudPluginOpenMethods = {
                             total: 2 + layoutDocumentIds.length,
                             message: 'Loading font…'
                         });
-                        layoutBytes = await hydrator.hydrateDocumentSet(
-                            token,
-                            roomUrl,
-                            layoutDocumentIds,
-                            shardIoOptionsFromSession(session, {
-                                progressOffset: session.completed,
-                                progressTotal: session.total
-                            })
+                        layoutBytes = noteHydratedLogIds(
+                            await hydrator.hydrateDocumentSet(
+                                token,
+                                roomUrl,
+                                layoutDocumentIds,
+                                shardIoOptionsFromSession(session, {
+                                    progressOffset: session.completed,
+                                    progressTotal: session.total
+                                })
+                            )
                         );
                         for (const documentId of layoutDocumentIds) {
                             if (layoutBytes.get(documentId)?.byteLength) {
                                 continue;
                             }
-                            const state = await fetchCloudDocumentState({
-                                token,
-                                roomUrl,
-                                websiteBaseUrl: this._websiteBaseUrl,
-                                assetId,
-                                documentId
-                            });
+                            const state =
+                                await fetchCloudDocumentStateWithLogId({
+                                    token,
+                                    roomUrl,
+                                    websiteBaseUrl: this._websiteBaseUrl,
+                                    assetId,
+                                    documentId
+                                });
                             if (state) {
                                 console.warn(
                                     `Cloud: the pack left out layout room ${documentId}; loaded it from its state`
                                 );
-                                layoutBytes.set(documentId, state);
+                                layoutBytes.set(documentId, state.bytes);
+                                loadedLogIds.set(documentId, state.logId);
                             }
                         }
                         for (const [documentId, bytes] of layoutBytes) {
@@ -291,15 +315,17 @@ export const cloudPluginOpenMethods = {
                         shouldAutoSparseHydrate(catalogIds.length);
                     usedSparseHydration = useSparse;
                     let glyphBytes = new Map<string, Uint8Array>();
-                    const fetchGlyphs = (documentIds: string[]) =>
-                        hydrator.hydrateDocumentSet(
-                            token,
-                            roomUrl,
-                            documentIds,
-                            shardIoOptionsFromSession(session, {
-                                progressOffset: session.completed,
-                                progressTotal: session.total
-                            })
+                    const fetchGlyphs = async (documentIds: string[]) =>
+                        noteHydratedLogIds(
+                            await hydrator.hydrateDocumentSet(
+                                token,
+                                roomUrl,
+                                documentIds,
+                                shardIoOptionsFromSession(session, {
+                                    progressOffset: session.completed,
+                                    progressTotal: session.total
+                                })
+                            )
                         );
                     if (options?.deferGlyphHydration) {
                         // Linked windows take glyph residency from the main
@@ -465,6 +491,27 @@ export const cloudPluginOpenMethods = {
                             resolve();
                             return;
                         }
+                        // A viewer's new font refuses local edits from
+                        // now on, not only once the session attaches after
+                        // the token fetch below (the open's token cached
+                        // the role).
+                        this._readOnlyEngine = liveBridge;
+                        this._syncEngineReadOnly();
+                        // The bridge was built from these states: later
+                        // catch-ups (each reconnect) ask only for rows after
+                        // them instead of every room's whole log.
+                        rememberLoadedDocumentLogCursors(
+                            liveBridge,
+                            openedShards.map(
+                                (shard) =>
+                                    [
+                                        shard.documentId,
+                                        loadedLogIds.get(shard.documentId) ??
+                                            null
+                                    ] as const
+                            ),
+                            'open-hydrate'
+                        );
                         const liveTokenResponse =
                             await this._fetchRoomToken(assetId);
                         await this._attachLiveSession({
