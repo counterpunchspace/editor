@@ -1,5 +1,9 @@
 # Unreleased
 
+- **Add items here** for the next release (Replace this comment)
+
+# v0.4.5
+
 - **Collaborators’ accented and keyed glyphs stay in sync**: When a collaborator changed a glyph that others are built on, such as moving an anchor of **a** or a sidebearing of **l**, your window could keep showing an accented glyph like **ä**, or a glyph whose sidebearings follow another, the way it was before, until you reloaded. Glyph overview tiles of such glyphs could also show the old outline.
 
 - **Variations keep compiling**: A font with a variation could stop compiling in a window that opened it later, with “unknown axis” in the console, because the feature check didn’t know the font’s axes. Editing a glyph that has a variation could leave the variation’s compiled outline behind, or stop the preview with “UnableToProceed”.
