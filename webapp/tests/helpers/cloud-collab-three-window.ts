@@ -339,7 +339,10 @@ export async function waitForLiveAccess(
     while (!snapshot || !predicate(snapshot)) {
         if (Date.now() >= deadline) {
             expect(snapshot, 'live access snapshot').toBeTruthy();
-            expect(predicate(snapshot)).toBe(true);
+            expect(
+                predicate(snapshot),
+                `live access snapshot: ${JSON.stringify(snapshot)}`
+            ).toBe(true);
             return snapshot;
         }
         await expect
