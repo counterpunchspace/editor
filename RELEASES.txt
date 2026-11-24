@@ -1,4 +1,4 @@
-# v0.4.4
+# v0.4.5
 
 Counterpunch moves from alpha to early beta. The main features are in place; some still need finishing, and the interface still needs polish.
 
