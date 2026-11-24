@@ -1543,18 +1543,24 @@ export class CloudLiveSession {
             ) {
                 continue;
             }
+            const joinedLayoutRoom =
+                infrastructureAlreadyLive && isLayoutDocumentId(documentId);
             if (isLayoutDocumentId(documentId)) {
                 joinedLayoutRooms.push(documentId);
             }
-            pending.push(this._connectDocument(documentId));
+            pending.push(
+                this._connectDocument(documentId, {
+                    loadRoomState: joinedLayoutRoom
+                })
+            );
         }
         await Promise.all(pending);
         this._options.onSocketsReady?.();
         if (infrastructureAlreadyLive) {
             this._clearNonCoreRebaselineFlags();
             // A layout room joined mid-session (a peer upgraded the font)
-            // syncs its socket from font-core's checkpoint position; load
-            // its state over HTTP.
+            // loaded its checkpoint before its socket opened; its state over
+            // HTTP brings the rest of what the room holds.
             if (joinedLayoutRooms.length) {
                 this._catchUpJoinedLayoutRooms(joinedLayoutRooms);
             }
@@ -2281,7 +2287,9 @@ export class CloudLiveSession {
             ) {
                 return;
             }
-            void this._connectDocument(documentId).then(() => {
+            void this._connectDocument(documentId, {
+                loadRoomState: isLayoutDocumentId(documentId)
+            }).then(() => {
                 if (
                     isLayoutDocumentId(documentId) &&
                     this._adapters.has(documentId)
@@ -2295,7 +2303,16 @@ export class CloudLiveSession {
         }
     }
 
-    private async _connectDocument(documentId: string): Promise<void> {
+    /**
+     * Open `documentId`'s room socket. `loadRoomState` loads the room's own
+     * checkpoint first, as a reconnect without a cursor does: a layout room
+     * joined mid-session has nothing of it yet, and its socket replays only
+     * the rows after the room's checkpoint.
+     */
+    private async _connectDocument(
+        documentId: string,
+        { loadRoomState = false }: { loadRoomState?: boolean } = {}
+    ): Promise<void> {
         const retries = retriesConnect(documentId);
         if (retries && this._connectInFlight.has(documentId)) {
             return;
@@ -2380,7 +2397,11 @@ export class CloudLiveSession {
             assetId,
             documentId
         );
-        const shardBootstrap = isCore ? (bootstrapMode ?? 'skip') : 'skip';
+        const shardBootstrap = isCore
+            ? (bootstrapMode ?? 'skip')
+            : loadRoomState
+              ? 'required'
+              : 'skip';
         const connectOptions: {
             bootstrapMode: 'required' | 'skip';
             checkpointLogId?: number | null;

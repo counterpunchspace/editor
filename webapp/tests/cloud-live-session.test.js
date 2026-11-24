@@ -563,6 +563,53 @@ describe('CloudLiveSession', () => {
         }
     });
 
+    test('a layout room that joins mid-session loads its own checkpoint before its socket', async () => {
+        const originalFetch = global.fetch;
+        jest.useFakeTimers();
+        let layoutRooms = [];
+        const bridge = {
+            layoutDocumentIds: () => layoutRooms,
+            applyDocumentCatchUp: jest.fn(() => true)
+        };
+        const session = new CloudLiveSession({
+            assetId: 'asset-1',
+            websiteBaseUrl: 'https://editor.example',
+            token: 'token',
+            roomUrl: 'wss://rooms.example/room/asset-1',
+            bridge,
+            bootstrapMode: 'skip'
+        });
+        const bootstrapFor = (documentId) =>
+            mockConnectWithCredentials.mock.calls
+                .filter(
+                    ([, , , , options]) => options.documentId === documentId
+                )
+                .map(([, , , connectOptions]) => connectOptions.bootstrapMode);
+        try {
+            let pending = session.syncLiveDocumentIds([]);
+            await jest.advanceTimersByTimeAsync(500);
+            await pending;
+            expect(bootstrapFor('font-deps')).toEqual(['skip']);
+            global.fetch = jest.fn(async () => ({
+                ok: true,
+                status: 200,
+                headers: new Headers({ 'X-Checkpoint-Log-Id': '12' }),
+                arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer
+            }));
+            // A peer moved the font to more rooms: kerning:3 joins now. Its
+            // socket replays only the rows after the room's checkpoint.
+            layoutRooms = ['kerning:3'];
+            pending = session.syncLiveDocumentIds([]);
+            await jest.advanceTimersByTimeAsync(10);
+            await pending;
+            expect(bootstrapFor('kerning:3')).toEqual(['required']);
+        } finally {
+            session.disconnect();
+            jest.useRealTimers();
+            global.fetch = originalFetch;
+        }
+    });
+
     test('does not retry a glyph room the editor has left', async () => {
         glyphConnectControl.failuresRemaining = 4;
         const random = jest.spyOn(Math, 'random').mockReturnValue(0);
