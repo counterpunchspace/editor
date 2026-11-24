@@ -363,6 +363,21 @@ async function expectSameLayoutState(
                 )
             );
             const states = await Promise.all(pages.map(layoutState));
+            // Each window's collaboration integrity record (broken
+            // documents, refusals, held state), to see why one differs.
+            for (const [index, page] of pages.entries()) {
+                const integrity = await page
+                    .evaluate(() =>
+                        JSON.stringify(
+                            (window as any).__collabIntegrity?.snapshot?.() ??
+                                null
+                        )
+                    )
+                    .catch((reason: unknown) => String(reason));
+                console.log(
+                    `[integrity] ${label} window ${index}: ${String(integrity).slice(0, 6000)}`
+                );
+            }
             const names = states.map((state) =>
                 state.glyphs.map(([name]: [string, number[]]) => name)
             );
