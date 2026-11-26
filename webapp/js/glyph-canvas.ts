@@ -13421,6 +13421,15 @@ function setupFontLoadingListener() {
                             if (deferredIdleViewLock && didReshapeOutlineOnly) {
                                 gc.consumeIdleViewLockAfterReshape();
                             }
+                            if (isLivePreview) {
+                                // Apply deferred cascading outline advance
+                                // deltas atomically right after swapFontBlob
+                                // and before painting, so outlines and advances
+                                // never tear across frames.
+                                gc.outlineEditor.applyPendingLiveOutlineAdvanceSync();
+                            } else {
+                                gc.outlineEditor.clearPendingLiveOutlineAdvanceSync();
+                            }
                             gc.requestRepaintAfterCompile({
                                 immediate: isLivePreview
                             });
@@ -13502,6 +13511,7 @@ function setupFontLoadingListener() {
                         gc.fontBytes = fontBytesArray;
                         gc.axesManager!.fontBytes = fontBytesArray;
                         gc.textRunEditor!.swapFontBlob(fontBytesArray);
+                        gc.outlineEditor.clearPendingLiveOutlineAdvanceSync();
                         timelineSpanEnd(setFontSpanId);
 
                         const forceShapeTextSpanId = timelineSpanStart(

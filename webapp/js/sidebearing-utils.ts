@@ -141,17 +141,20 @@ export function applyLiveSidebearingVisualSync(
     }
 
     const widthDelta = nextWidth - previousWidth;
-    if (Math.abs(widthDelta) <= 0.01) {
+    const hasDependentAdvanceDeltas =
+        !!options.glyphAdvanceDeltas &&
+        Object.values(options.glyphAdvanceDeltas).some(
+            (delta) => Number.isFinite(delta) && Math.abs(delta) > 0.01
+        );
+    if (Math.abs(widthDelta) <= 0.01 && !hasDependentAdvanceDeltas) {
         return { widthDelta, advancesRefreshed: false };
     }
 
-    const liveGlyphAdvanceDeltas =
-        options.glyphAdvanceDeltas &&
-        Object.keys(options.glyphAdvanceDeltas).length > 0
-            ? options.glyphAdvanceDeltas
-            : options.glyphName
-              ? { [options.glyphName]: widthDelta }
-              : null;
+    const liveGlyphAdvanceDeltas = hasDependentAdvanceDeltas
+        ? options.glyphAdvanceDeltas!
+        : Math.abs(widthDelta) > 0.01 && options.glyphName
+          ? { [options.glyphName]: widthDelta }
+          : null;
 
     const advancesRefreshed =
         !!liveGlyphAdvanceDeltas &&

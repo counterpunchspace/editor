@@ -19,6 +19,7 @@ const { open_font_file } = require('../wasm-dist/babelfont_fontc_web');
 const { Font } = require('../js/babelfont-model');
 const {
     jsonToYDoc,
+    applyDrawingDelta,
     ensureCoreUpdateHasGlyphsMap
 } = require('../js/change-bridge-ydoc');
 const {
@@ -91,21 +92,37 @@ function buildCommittedYDocState(fontData) {
     return ensureCoreUpdateHasGlyphsMap(Y.encodeStateAsUpdate(doc));
 }
 
+function buildIncrementalLayerCommitUpdate(baseState, fontModel, targets) {
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, baseState);
+    const beforeVector = Y.encodeStateVector(doc);
+    doc.transact(() => {
+        const fontMap = doc.getMap('font');
+        for (const { glyphName, layerId } of targets) {
+            const drawing = fontModel
+                .findGlyph(glyphName)
+                .findDrawingById(layerId);
+            applyDrawingDelta(fontMap, glyphName, layerId, drawing.toJSON());
+        }
+    });
+    return {
+        update: Y.encodeStateAsUpdate(doc, beforeVector),
+        metadata: {
+            changedGlyphs: Array.from(new Set(targets.map((t) => t.glyphName))),
+            layerTargets: targets
+        }
+    };
+}
+
 function runParityScenarios(scenarios) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'overlay-parity-'));
     try {
         const manifestScenarios = scenarios.map((scenario, idx) => {
             const stateFile = `s${idx}-base.bin`;
             fs.writeFileSync(path.join(dir, stateFile), scenario.baseState);
-            const committedStateFile = `s${idx}-committed.bin`;
-            fs.writeFileSync(
-                path.join(dir, committedStateFile),
-                scenario.committedState
-            );
-            return {
+            const entry = {
                 name: scenario.name,
                 stateFile,
-                committedStateFile,
                 subsetGlyphs: scenario.subsetGlyphs,
                 selectedFeatures: scenario.selectedFeatures || [],
                 baseOptions: scenario.baseOptions || {
@@ -129,6 +146,29 @@ function runParityScenarios(scenarios) {
                 overlay: scenario.overlay,
                 shape: scenario.shape
             };
+            if (scenario.commitYjsUpdates?.length) {
+                entry.commitYjsUpdates = scenario.commitYjsUpdates.map(
+                    (commitUpdate, uIdx) => {
+                        const file = `s${idx}-commit-${uIdx}.bin`;
+                        fs.writeFileSync(
+                            path.join(dir, file),
+                            commitUpdate.update
+                        );
+                        return {
+                            file,
+                            metadata: commitUpdate.metadata || {}
+                        };
+                    }
+                );
+            } else {
+                const committedStateFile = `s${idx}-committed.bin`;
+                fs.writeFileSync(
+                    path.join(dir, committedStateFile),
+                    scenario.committedState
+                );
+                entry.committedStateFile = committedStateFile;
+            }
+            return entry;
         });
         const manifestPath = path.join(dir, 'manifest.json');
         const outputPath = path.join(dir, 'output.json');
@@ -166,11 +206,33 @@ describe('Overlay-to-Full-Compile 100% Point-Identity', () => {
         expect(firstPath?.nodes?.length).toBeGreaterThan(0);
         firstPath.nodes[0].x += 45;
         firstPath.nodes[0].y += 25;
-        const outlineOverlayLayer = outlineDrawingA.toCompileJSON();
+        const outlineClosure = computeDrawingRecompositionClosure({
+            fontModel: outlineModel,
+            sourceTargets: [{ glyphName: 'a', layerId: outlineDrawingA.id }],
+            activeDrawingId: outlineDrawingA.id,
+            editKinds: new Set(['outline']),
+            scope: 'all'
+        });
+        const outlineLayerUpdates = outlineClosure.allTargets.map(
+            ({ glyphName, layerId }) => ({
+                glyphName,
+                layerId,
+                layerData: outlineModel
+                    .findGlyph(glyphName)
+                    .findDrawingById(layerId)
+                    .toCompileJSON()
+            })
+        );
         const outlineScenario = {
             name: '1-outline-edit-wght400',
             baseState,
-            committedState: buildCommittedYDocState(outlineModel.toJSON()),
+            commitYjsUpdates: [
+                buildIncrementalLayerCommitUpdate(
+                    baseState,
+                    outlineModel,
+                    outlineClosure.allTargets
+                )
+            ],
             subsetGlyphs: ['l', 'a', 'n', 'adieresis', 'dieresiscomb'],
             overlayOptions: {
                 skip_kerning: true,
@@ -179,18 +241,12 @@ describe('Overlay-to-Full-Compile 100% Point-Identity', () => {
                 produce_varc_table: false
             },
             overlay: {
-                layerUpdates: [
-                    {
-                        glyphName: 'a',
-                        layerId: outlineDrawingA.id,
-                        layerData: outlineOverlayLayer
-                    }
-                ],
+                layerUpdates: outlineLayerUpdates,
                 metadata: {
-                    changedGlyphs: ['a'],
-                    layerTargets: [
-                        { glyphName: 'a', layerId: outlineDrawingA.id }
-                    ]
+                    changedGlyphs: Array.from(
+                        outlineClosure.affectedGlyphNames
+                    ),
+                    layerTargets: outlineClosure.allTargets
                 }
             },
             shape: {
@@ -231,7 +287,13 @@ describe('Overlay-to-Full-Compile 100% Point-Identity', () => {
         const sidebearingScenario = {
             name: '2-sidebearing-cascade-lana-hvar-wght400',
             baseState,
-            committedState: buildCommittedYDocState(sbModel.toJSON()),
+            commitYjsUpdates: [
+                buildIncrementalLayerCommitUpdate(
+                    baseState,
+                    sbModel,
+                    sbClosure.allTargets
+                )
+            ],
             subsetGlyphs: ['l', 'a', 'n', 'adieresis', 'dieresiscomb'],
             overlayOptions: {
                 skip_kerning: true,
@@ -305,7 +367,13 @@ describe('Overlay-to-Full-Compile 100% Point-Identity', () => {
         const anchorScenario = {
             name: '3-anchor-cascade-adieresis-wght400',
             baseState: anchorBaseState,
-            committedState: buildCommittedYDocState(anchorModel.toJSON()),
+            commitYjsUpdates: [
+                buildIncrementalLayerCommitUpdate(
+                    anchorBaseState,
+                    anchorModel,
+                    anchorClosure.allTargets
+                )
+            ],
             subsetGlyphs: ['l', 'a', 'n', 'adieresis', 'dieresiscomb'],
             overlayOptions: {
                 skip_kerning: false,
@@ -423,12 +491,183 @@ describe('Overlay-to-Full-Compile 100% Point-Identity', () => {
             }
         };
 
+        // --- 6. Outline leftmost-node move on `l` -> LSB contour-shift cascade (`l` -> `n`) in "lanä" at wght:400 ---
+        const lsbModel = Font.fromData(
+            JSON.parse(JSON.stringify(anchorBaseJson))
+        );
+        const lsbMaster = findRegularMaster(lsbModel);
+        const lsbDrawingL = findDrawingForMaster(lsbModel, 'l', lsbMaster.id);
+        let lsbMinX = Infinity;
+        for (const p of lsbDrawingL.paths || []) {
+            for (const node of p.nodes || []) {
+                if (node.x < lsbMinX) lsbMinX = node.x;
+            }
+        }
+        expect(Number.isFinite(lsbMinX)).toBe(true);
+        for (const p of lsbDrawingL.paths || []) {
+            for (const node of p.nodes || []) {
+                if (Math.abs(node.x - lsbMinX) <= 0.5) {
+                    node.data.x -= 30;
+                }
+            }
+        }
+        const lanaSubset = ['l', 'a', 'n', 'adieresis', 'dieresiscomb'];
+        const lsbLiveClosure = computeDrawingRecompositionClosure({
+            fontModel: lsbModel,
+            sourceTargets: [{ glyphName: 'l', layerId: lsbDrawingL.id }],
+            activeDrawingId: lsbDrawingL.id,
+            editKinds: new Set(['outline']),
+            scope: 'visible',
+            visibleGlyphNames: new Set(lanaSubset)
+        });
+        const lsbCommitClosure = computeDrawingRecompositionClosure({
+            fontModel: lsbModel,
+            sourceTargets: [{ glyphName: 'l', layerId: lsbDrawingL.id }],
+            activeDrawingId: lsbDrawingL.id,
+            editKinds: new Set(['outline']),
+            scope: 'all'
+        });
+        expect(Array.from(lsbLiveClosure.affectedGlyphNames)).toEqual(
+            expect.arrayContaining(['l', 'n'])
+        );
+        expect(Array.from(lsbCommitClosure.affectedGlyphNames)).toEqual(
+            expect.arrayContaining(['l', 'n'])
+        );
+        const lsbLayerUpdates = lsbLiveClosure.allTargets.map(
+            ({ glyphName, layerId }) => ({
+                glyphName,
+                layerId,
+                layerData: lsbModel
+                    .findGlyph(glyphName)
+                    .findDrawingById(layerId)
+                    .toCompileJSON()
+            })
+        );
+        const lsbOutlineScenario = {
+            name: '6-outline-leftmost-node-lsb-cascade-lana-wght400',
+            baseState: anchorBaseState,
+            commitYjsUpdates: [
+                buildIncrementalLayerCommitUpdate(
+                    anchorBaseState,
+                    lsbModel,
+                    lsbCommitClosure.allTargets
+                )
+            ],
+            subsetGlyphs: lanaSubset,
+            overlayOptions: {
+                skip_kerning: true,
+                skip_features: true,
+                skip_outlines: false,
+                produce_varc_table: false
+            },
+            overlay: {
+                layerUpdates: lsbLayerUpdates,
+                metadata: {
+                    changedGlyphs: Array.from(
+                        lsbLiveClosure.affectedGlyphNames
+                    ),
+                    layerTargets: lsbLiveClosure.allTargets
+                }
+            },
+            shape: {
+                text: 'lanä',
+                direction: 'ltr',
+                variationsList: VARIATION_LOCATIONS
+            }
+        };
+
+        // --- 7. Outline rightmost-node move on `l` -> RSB transitive cascade (`l` -> `n` -> `a` -> `adieresis`) after live-drag convergence ---
+        const rsbModel = Font.fromData(
+            JSON.parse(JSON.stringify(anchorBaseJson))
+        );
+        const rsbMaster = findRegularMaster(rsbModel);
+        const rsbDrawingL = findDrawingForMaster(rsbModel, 'l', rsbMaster.id);
+        let rsbMaxX = -Infinity;
+        for (const p of rsbDrawingL.paths || []) {
+            for (const node of p.nodes || []) {
+                if (node.x > rsbMaxX) rsbMaxX = node.x;
+            }
+        }
+        expect(Number.isFinite(rsbMaxX)).toBe(true);
+        for (const p of rsbDrawingL.paths || []) {
+            for (const node of p.nodes || []) {
+                if (Math.abs(node.x - rsbMaxX) <= 0.5) {
+                    node.data.x += 35;
+                }
+            }
+        }
+        const rsbLiveClosure = computeDrawingRecompositionClosure({
+            fontModel: rsbModel,
+            sourceTargets: [{ glyphName: 'l', layerId: rsbDrawingL.id }],
+            activeDrawingId: rsbDrawingL.id,
+            editKinds: new Set(['outline']),
+            scope: 'visible',
+            visibleGlyphNames: new Set(lanaSubset)
+        });
+        const rsbCommitClosure = computeDrawingRecompositionClosure({
+            fontModel: rsbModel,
+            sourceTargets: [{ glyphName: 'l', layerId: rsbDrawingL.id }],
+            activeDrawingId: rsbDrawingL.id,
+            editKinds: new Set(['outline']),
+            scope: 'all'
+        });
+        expect(Array.from(rsbLiveClosure.affectedGlyphNames)).toEqual(
+            expect.arrayContaining(['l', 'n', 'a', 'adieresis'])
+        );
+        expect(Array.from(rsbCommitClosure.affectedGlyphNames)).toEqual(
+            expect.arrayContaining(['l', 'n', 'a', 'adieresis'])
+        );
+        const rsbLayerUpdates = rsbLiveClosure.allTargets.map(
+            ({ glyphName, layerId }) => ({
+                glyphName,
+                layerId,
+                layerData: rsbModel
+                    .findGlyph(glyphName)
+                    .findDrawingById(layerId)
+                    .toCompileJSON()
+            })
+        );
+        const rsbOutlineScenario = {
+            name: '7-outline-rightmost-node-rsb-cascade-lana-wght400',
+            baseState: anchorBaseState,
+            commitYjsUpdates: [
+                buildIncrementalLayerCommitUpdate(
+                    anchorBaseState,
+                    rsbModel,
+                    rsbCommitClosure.allTargets
+                )
+            ],
+            subsetGlyphs: lanaSubset,
+            overlayOptions: {
+                skip_kerning: true,
+                skip_features: true,
+                skip_outlines: false,
+                produce_varc_table: false
+            },
+            overlay: {
+                layerUpdates: rsbLayerUpdates,
+                metadata: {
+                    changedGlyphs: Array.from(
+                        rsbLiveClosure.affectedGlyphNames
+                    ),
+                    layerTargets: rsbLiveClosure.allTargets
+                }
+            },
+            shape: {
+                text: 'lanä',
+                direction: 'ltr',
+                variationsList: VARIATION_LOCATIONS
+            }
+        };
+
         const results = runParityScenarios([
             outlineScenario,
             sidebearingScenario,
             anchorScenario,
             ltrKerningScenario,
-            rtlKerningScenario
+            rtlKerningScenario,
+            lsbOutlineScenario,
+            rsbOutlineScenario
         ]);
         resultsByName = new Map(results.map((r) => [r.name, r]));
     });
@@ -438,7 +677,9 @@ describe('Overlay-to-Full-Compile 100% Point-Identity', () => {
         '2-sidebearing-cascade-lana-hvar-wght400',
         '3-anchor-cascade-adieresis-wght400',
         '4-ltr-group-kerning-TATAVAVA-wght400',
-        '5-rtl-group-kerning-arabic-wght400'
+        '5-rtl-group-kerning-arabic-wght400',
+        '6-outline-leftmost-node-lsb-cascade-lana-wght400',
+        '7-outline-rightmost-node-rsb-cascade-lana-wght400'
     ])(
         '%s matches authoritative full fontc catch-up compile 100% point-for-point across wght 200/300/400/600/800',
         (name) => {

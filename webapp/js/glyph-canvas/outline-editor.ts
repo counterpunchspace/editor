@@ -1528,6 +1528,18 @@ export class OutlineEditor {
     private _anchorPreviewFallbackTimer: number | null = null;
     /** True while a cascading outline/component preview compile is in flight. */
     private _outlinePreviewPending: boolean = false;
+    /**
+     * Live advance deltas deferred until the matching `outline-only` preview
+     * blob swaps into HarfBuzz, so outlines and advances present atomically.
+     */
+    private _pendingLiveOutlineAdvanceSync: {
+        glyphName: string;
+        glyphAdvanceDeltas: Record<string, number>;
+        editedSide: SidebearingSide | null;
+        previousWidth: number;
+        nextWidth: number;
+        rightEdgeAnchorScreen: { x: number; y: number } | null;
+    } | null = null;
     /** Cached per-drag check for whether the edited glyph has visible cascade dependents. */
     private _outlineDragHasCascadeDependents: boolean | null = null;
     /** True when a pointer sample arrived while an outline cascade compile was in flight. */
@@ -3764,6 +3776,7 @@ export class OutlineEditor {
         options?: {
             useVisibleDragScope?: boolean;
             rebuildAutomaticComposites?: boolean;
+            deferAdvanceRefreshUntilCompile?: boolean;
         }
     ): {
         glyphName: string;
@@ -4032,8 +4045,19 @@ export class OutlineEditor {
         const adjacentSnapCandidateWidthDeltas =
             this._getAdjacentSnapCandidateWidthDeltas(glyphAdvances);
 
-        const advancesRefreshed = refreshGlyphAdvances
-            ? editedSide
+        let advancesRefreshed = false;
+        if (refreshGlyphAdvances && options?.deferAdvanceRefreshUntilCompile) {
+            this.queuePendingLiveOutlineAdvanceSync({
+                glyphName,
+                glyphAdvanceDeltas,
+                editedSide,
+                previousWidth,
+                nextWidth,
+                rightEdgeAnchorScreen:
+                    editedSide === 'left' ? rightEdgeAnchorScreen : null
+            });
+        } else if (refreshGlyphAdvances) {
+            advancesRefreshed = editedSide
                 ? applyLiveSidebearingVisualSync(this.glyphCanvas, {
                       glyphName,
                       glyphAdvanceDeltas,
@@ -4047,11 +4071,11 @@ export class OutlineEditor {
                       this.glyphCanvas,
                       glyphAdvanceDeltas,
                       { render: false }
-                  )
-            : false;
+                  );
 
-        if (editedSide === 'left') {
-            this.applyAdvanceRightEdgeScreenAnchor(rightEdgeAnchorScreen);
+            if (editedSide === 'left') {
+                this.applyAdvanceRightEdgeScreenAnchor(rightEdgeAnchorScreen);
+            }
         }
 
         if (editedSide === 'left') {
@@ -4138,9 +4162,15 @@ export class OutlineEditor {
             this.isResizingSelection ||
             (this.isDraggingPoint && !this.isSlidingSmoothPointAlongCurve)
         ) {
+            const deferAdvanceRefreshUntilCompile =
+                !persistDrawingData &&
+                !forceMetricsRecompute &&
+                this.hasVisibleOutlineCascadeDependents() &&
+                Boolean(window.fontCompilation?.isInitialized);
             metricsUpdate = this.applyMetricsKeysToCurrentEditedDrawing(true, {
                 useVisibleDragScope: !forceMetricsRecompute,
-                rebuildAutomaticComposites: true
+                rebuildAutomaticComposites: true,
+                deferAdvanceRefreshUntilCompile
             });
 
             if (this._metricsKeyEditedSide !== null) {
@@ -4181,6 +4211,7 @@ export class OutlineEditor {
         this._liveOutlineRefreshGlyphNames = new Set();
         this._liveOutlineRefreshChangeSource = null;
         this._outlinePreviewPending = false;
+        this._pendingLiveOutlineAdvanceSync = null;
         this._outlineDragHasCascadeDependents = null;
         this._outlineDragDirtyWhilePending = false;
         this._outlineDragLatestEvent = null;
@@ -4188,6 +4219,93 @@ export class OutlineEditor {
             window.clearTimeout(this._outlinePreviewFallbackTimer);
             this._outlinePreviewFallbackTimer = null;
         }
+    }
+
+    private queuePendingLiveOutlineAdvanceSync(entry: {
+        glyphName: string;
+        glyphAdvanceDeltas: Record<string, number>;
+        editedSide: SidebearingSide | null;
+        previousWidth: number;
+        nextWidth: number;
+        rightEdgeAnchorScreen: { x: number; y: number } | null;
+    }): void {
+        const hasDeltas = Object.values(entry.glyphAdvanceDeltas).some(
+            (delta) => Number.isFinite(delta) && Math.abs(delta) > 0.01
+        );
+        const hasWidthDelta =
+            Math.abs(entry.nextWidth - entry.previousWidth) > 0.01;
+        if (!hasDeltas && !hasWidthDelta) {
+            return;
+        }
+        if (!this._pendingLiveOutlineAdvanceSync) {
+            this._pendingLiveOutlineAdvanceSync = {
+                glyphName: entry.glyphName,
+                glyphAdvanceDeltas: { ...entry.glyphAdvanceDeltas },
+                editedSide: entry.editedSide,
+                previousWidth: entry.previousWidth,
+                nextWidth: entry.nextWidth,
+                rightEdgeAnchorScreen: entry.rightEdgeAnchorScreen
+            };
+            return;
+        }
+        const merged = this._pendingLiveOutlineAdvanceSync;
+        for (const [name, delta] of Object.entries(entry.glyphAdvanceDeltas)) {
+            if (!Number.isFinite(delta)) {
+                continue;
+            }
+            const next = (merged.glyphAdvanceDeltas[name] ?? 0) + delta;
+            if (Math.abs(next) <= 0.01) {
+                delete merged.glyphAdvanceDeltas[name];
+            } else {
+                merged.glyphAdvanceDeltas[name] = next;
+            }
+        }
+        merged.nextWidth = entry.nextWidth;
+        if (entry.editedSide) {
+            merged.editedSide = entry.editedSide;
+        }
+        if (
+            merged.rightEdgeAnchorScreen === null &&
+            entry.rightEdgeAnchorScreen !== null
+        ) {
+            merged.rightEdgeAnchorScreen = entry.rightEdgeAnchorScreen;
+        }
+    }
+
+    applyPendingLiveOutlineAdvanceSync(): boolean {
+        const pending = this._pendingLiveOutlineAdvanceSync;
+        if (!pending) {
+            return false;
+        }
+        this._pendingLiveOutlineAdvanceSync = null;
+        const refreshed = pending.editedSide
+            ? applyLiveSidebearingVisualSync(this.glyphCanvas, {
+                  glyphName: pending.glyphName,
+                  glyphAdvanceDeltas: pending.glyphAdvanceDeltas,
+                  side: pending.editedSide,
+                  previousWidth: pending.previousWidth,
+                  nextWidth: pending.nextWidth,
+                  render: false
+              }).advancesRefreshed
+            : Object.keys(pending.glyphAdvanceDeltas).length > 0 &&
+              refreshLiveGlyphAdvancesWithSelectedGlyphAnchor(
+                  this.glyphCanvas,
+                  pending.glyphAdvanceDeltas,
+                  { render: false }
+              );
+        if (
+            pending.editedSide === 'left' &&
+            pending.rightEdgeAnchorScreen !== null
+        ) {
+            this.applyAdvanceRightEdgeScreenAnchor(
+                pending.rightEdgeAnchorScreen
+            );
+        }
+        return refreshed;
+    }
+
+    clearPendingLiveOutlineAdvanceSync(): void {
+        this._pendingLiveOutlineAdvanceSync = null;
     }
 
     private hasVisibleOutlineCascadeDependents(): boolean {
@@ -4245,6 +4363,7 @@ export class OutlineEditor {
                 return;
             }
             this._outlinePreviewPending = false;
+            this.applyPendingLiveOutlineAdvanceSync();
             this.glyphCanvas.render();
             this.drainCoalescedOutlineDragEvent();
         }, OutlineEditor.CASCADE_PREVIEW_FALLBACK_TIMEOUT_MS);
@@ -14206,8 +14325,12 @@ export class OutlineEditor {
             (this.isDraggingPoint && !this.isSlidingSmoothPointAlongCurve) ||
             this.isDraggingAnchor
         ) {
+            const hasOutlineDragDelta = this.isDraggingComponent
+                ? deltaX !== 0 || deltaY !== 0
+                : effectiveDeltaX !== 0 || effectiveDeltaY !== 0;
             if (
                 !this.isDraggingAnchor &&
+                hasOutlineDragDelta &&
                 this.hasVisibleOutlineCascadeDependents() &&
                 window.fontCompilation?.isInitialized
             ) {
@@ -14226,7 +14349,7 @@ export class OutlineEditor {
                 }
                 this._outlinePreviewPending = true;
                 this.armOutlinePreviewFallbackTimer();
-            } else {
+            } else if (this.isDraggingAnchor || hasOutlineDragDelta) {
                 this.schedulePendingDragMetricsUpdate();
             }
         }
@@ -19648,7 +19771,11 @@ export class OutlineEditor {
     moveSelectedPoints(
         deltaX: number,
         deltaY: number,
-        preserveHandlePositions: boolean = false
+        preserveHandlePositions: boolean = false,
+        options?: {
+            deferRender?: boolean;
+            deferAdvanceRefreshUntilCompile?: boolean;
+        }
     ): Set<string> | null {
         // Move all selected points by the given delta
         const currentDrawingData = this.getCurrentDrawingDataFromStack();
@@ -19670,11 +19797,15 @@ export class OutlineEditor {
         const metricsUpdate = this.applyMetricsKeysToCurrentEditedDrawing(
             true,
             {
-                rebuildAutomaticComposites: true
+                rebuildAutomaticComposites: true,
+                deferAdvanceRefreshUntilCompile:
+                    options?.deferAdvanceRefreshUntilCompile === true
             }
         );
         this.glyphCanvas.updatePropertyPanel();
-        this.glyphCanvas.render();
+        if (!options?.deferRender) {
+            this.glyphCanvas.render();
+        }
         return (
             metricsUpdate?.affectedGlyphNames ||
             new Set(
@@ -19714,7 +19845,14 @@ export class OutlineEditor {
         return true;
     }
 
-    moveSelectedComponents(deltaX: number, deltaY: number): Set<string> | null {
+    moveSelectedComponents(
+        deltaX: number,
+        deltaY: number,
+        options?: {
+            deferRender?: boolean;
+            deferAdvanceRefreshUntilCompile?: boolean;
+        }
+    ): Set<string> | null {
         // Move all selected components by the given delta.
         // Use the stacked nested drawing (same as mouse drag), not root drawingData.
         const currentDrawingData = this.getCurrentDrawingDataFromStack();
@@ -19730,7 +19868,9 @@ export class OutlineEditor {
         // non-auto nested glyph from an auto-composed base must still nudge.
         if (this.isAutomaticComposedDrawing()) {
             this.glyphCanvas.updatePropertyPanel();
-            this.glyphCanvas.render();
+            if (!options?.deferRender) {
+                this.glyphCanvas.render();
+            }
             return null;
         }
 
@@ -19756,12 +19896,16 @@ export class OutlineEditor {
         const metricsUpdate = this.applyMetricsKeysToCurrentEditedDrawing(
             true,
             {
-                rebuildAutomaticComposites: true
+                rebuildAutomaticComposites: true,
+                deferAdvanceRefreshUntilCompile:
+                    options?.deferAdvanceRefreshUntilCompile === true
             }
         );
 
         this.glyphCanvas.updatePropertyPanel();
-        this.glyphCanvas.render();
+        if (!options?.deferRender) {
+            this.glyphCanvas.render();
+        }
         return (
             metricsUpdate?.affectedGlyphNames ||
             new Set(
@@ -21416,10 +21560,19 @@ export class OutlineEditor {
                     let sidebearingMoved = false;
                     const outlineAffectedGlyphNames = new Set<string>();
 
+                    const deferCascadingOutlinePresentation =
+                        Boolean(window.fontCompilation?.isInitialized) &&
+                        this.hasVisibleOutlineCascadeDependents();
+
                     if (this.selectedPoints.length > 0) {
                         this.mergeGlyphNames(
                             outlineAffectedGlyphNames,
-                            this.moveSelectedPoints(dx, dy, e.altKey)
+                            deferCascadingOutlinePresentation
+                                ? this.moveSelectedPoints(dx, dy, e.altKey, {
+                                      deferRender: true,
+                                      deferAdvanceRefreshUntilCompile: true
+                                  })
+                                : this.moveSelectedPoints(dx, dy, e.altKey)
                         );
                     }
                     if (this.selectedAnchors.length > 0) {
@@ -21429,7 +21582,12 @@ export class OutlineEditor {
                     if (this.selectedComponents.length > 0) {
                         this.mergeGlyphNames(
                             outlineAffectedGlyphNames,
-                            this.moveSelectedComponents(dx, dy)
+                            deferCascadingOutlinePresentation
+                                ? this.moveSelectedComponents(dx, dy, {
+                                      deferRender: true,
+                                      deferAdvanceRefreshUntilCompile: true
+                                  })
+                                : this.moveSelectedComponents(dx, dy)
                         );
                     }
                     if (

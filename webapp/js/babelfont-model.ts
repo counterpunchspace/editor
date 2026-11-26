@@ -14638,35 +14638,93 @@ export class Font extends ModelBase {
 
         const reverseComponentIndex = this._ensureReverseComponentIndex();
         const dependencyEntries = this.collectMetricsKeyDependencyEntries();
+        const fullLookup =
+            this._getFullMetricsKeyDependencyLookup(dependencyEntries);
+        const automaticOffsetEntriesByGlyph = new Map<
+            string,
+            MetricsKeyDependencyEntry[]
+        >();
         for (const entry of dependencyEntries) {
             if (entry.parsed.kind === 'automatic-offset') {
-                const liveDrawing = this.rebindMetricsKeyDependencyEntry(entry);
-                if (!liveDrawing?.isAutomaticAlignedDrawing()) {
-                    continue;
-                }
-                let dependsOnSource = sources.has(entry.glyphName);
-                if (!dependsOnSource) {
-                    for (const sourceGlyphName of sources) {
-                        const dependents =
-                            reverseComponentIndex.get(sourceGlyphName);
-                        if (dependents?.has(entry.glyphName)) {
-                            dependsOnSource = true;
-                            break;
-                        }
-                    }
-                }
-                if (dependsOnSource) {
-                    dependentGlyphNames.add(entry.glyphName);
-                }
-                continue;
+                appendMapArrayValue(
+                    automaticOffsetEntriesByGlyph,
+                    entry.glyphName,
+                    entry
+                );
             }
+        }
 
+        const hasLiveAutomaticAlignedDrawing = (glyphName: string): boolean => {
+            const autoEntries = automaticOffsetEntriesByGlyph.get(glyphName);
             if (
-                entry.parsed.referencedGlyphNames.some((referencedGlyphName) =>
-                    sources.has(referencedGlyphName)
+                autoEntries?.some((entry) =>
+                    this.rebindMetricsKeyDependencyEntry(
+                        entry
+                    )?.isAutomaticAlignedDrawing()
                 )
             ) {
-                dependentGlyphNames.add(entry.glyphName);
+                return true;
+            }
+            const glyph = this.findGlyph(glyphName);
+            return Boolean(
+                glyph?.drawings?.some(
+                    (drawing) =>
+                        !drawing.is_background &&
+                        drawing.isAutomaticAlignedDrawing()
+                )
+            );
+        };
+
+        const visited = new Set<string>(sources);
+        const queue: string[] = Array.from(sources);
+
+        // Include any source glyph that itself has an active automatic-offset
+        // dependency entry (matches prior direct-source behavior).
+        for (const sourceGlyphName of sources) {
+            const autoEntries =
+                automaticOffsetEntriesByGlyph.get(sourceGlyphName);
+            if (
+                autoEntries?.some((entry) =>
+                    this.rebindMetricsKeyDependencyEntry(
+                        entry
+                    )?.isAutomaticAlignedDrawing()
+                )
+            ) {
+                dependentGlyphNames.add(sourceGlyphName);
+            }
+        }
+
+        while (queue.length > 0) {
+            const current = queue.shift() as string;
+
+            // 1. Direct metrics-key references (e.g. n =l-5, a =n).
+            const referencingEntries =
+                fullLookup.referencedEntriesByGlyph.get(current);
+            if (referencingEntries) {
+                for (const entry of referencingEntries) {
+                    if (!visited.has(entry.glyphName)) {
+                        visited.add(entry.glyphName);
+                        dependentGlyphNames.add(entry.glyphName);
+                        queue.push(entry.glyphName);
+                    }
+                }
+            }
+
+            // 2. Automatic-aligned / automatic-offset component dependents
+            //    (e.g. a -> adieresis, so multi-hop chains l -> n -> a -> adieresis
+            //    and anything referencing adieresis are discovered transitively).
+            const componentDependents = reverseComponentIndex.get(current);
+            if (componentDependents) {
+                for (const compGlyphName of componentDependents) {
+                    if (
+                        !visited.has(compGlyphName) &&
+                        hasLiveAutomaticAlignedDrawing(compGlyphName)
+                    ) {
+                        visited.add(compGlyphName);
+                        dependentGlyphNames.add(compGlyphName);
+                        queue.push(compGlyphName);
+                    }
+                }
             }
         }
 

@@ -6050,6 +6050,82 @@ describe('GlyphCanvas property panel metrics edits', () => {
         expect(canvas.hasPendingIdleViewLock()).toBe(false);
     });
 
+    test('applyLiveSidebearingVisualSync refreshes dependent glyph advances even when edited glyph widthDelta is 0', () => {
+        const {
+            applyLiveSidebearingVisualSync
+        } = require('../js/sidebearing-utils');
+        const refreshGlyphAdvanceDeltasLive = jest.fn(() => true);
+        const target = {
+            viewportManager: { scale: 1, panX: 0 },
+            textRunEditor: {
+                getPrecedingGlyphAdvanceDeltaForSelectedGlyph: () => 0,
+                refreshGlyphAdvanceDeltasLive
+            }
+        };
+
+        const result = applyLiveSidebearingVisualSync(target, {
+            glyphName: 'l',
+            glyphAdvanceDeltas: { n: -19, a: -19 },
+            side: 'left',
+            previousWidth: 225,
+            nextWidth: 225,
+            render: false
+        });
+
+        expect(result).toEqual({ widthDelta: 0, advancesRefreshed: true });
+        expect(refreshGlyphAdvanceDeltasLive).toHaveBeenCalledWith(
+            { n: -19, a: -19 },
+            { render: false }
+        );
+    });
+
+    test('live outline-only preview swaps font blob and applies deferred dependent advance deltas atomically before painting', async () => {
+        const { setupFontLoadingListener } = require('../js/glyph-canvas');
+        setupFontLoadingListener();
+
+        const callOrder = [];
+        canvas.axesManager = { fontBytes: null };
+        canvas.textRunEditor.swapFontBlob = jest.fn(() => {
+            callOrder.push('swapFontBlob');
+        });
+        canvas.outlineEditor.isLiveSidebearingInteractionActive = jest.fn(
+            () => false
+        );
+        canvas.outlineEditor.applyPendingLiveOutlineAdvanceSync = jest.fn(
+            () => {
+                callOrder.push('applyPendingLiveOutlineAdvanceSync');
+                return true;
+            }
+        );
+        canvas.outlineEditor.markLiveOutlinePreviewPresented = jest.fn(() => {
+            callOrder.push('markLiveOutlinePreviewPresented');
+        });
+        canvas.requestRepaintAfterCompile = jest.fn(() => {
+            callOrder.push('requestRepaintAfterCompile');
+        });
+
+        window.dispatchEvent(
+            new CustomEvent('editingFontCompiled', {
+                detail: {
+                    fontBytes: new Uint8Array([1, 2, 3]),
+                    fontRevisionKey: '100',
+                    compilationMode: 'outline-only',
+                    dataFreshnessMode: 'live-drag-worker-preview'
+                }
+            })
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(callOrder).toEqual([
+            'swapFontBlob',
+            'applyPendingLiveOutlineAdvanceSync',
+            'requestRepaintAfterCompile',
+            'markLiveOutlinePreviewPresented'
+        ]);
+    });
+
     test('anchor-only consume keeps the text-mode caret locked', async () => {
         const { setupFontLoadingListener } = require('../js/glyph-canvas');
         setupFontLoadingListener();

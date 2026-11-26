@@ -1205,4 +1205,143 @@ describe('undo/redo derived-layer resettle helpers', () => {
             )
         ).toBe(false);
     });
+
+    test('multi-hop metrics-key + automatic composite chain (l -> n -> a -> adieresis) persists all dependents on commit after live-drag convergence', () => {
+        const font = Font.fromData({
+            upm: 1000,
+            version: [1, 0],
+            axes: [],
+            instances: [],
+            masters: [makeStation()],
+            glyphs: [
+                {
+                    name: 'l',
+                    layers: [
+                        {
+                            id: 'l0',
+                            width: 225,
+                            master: { type: 'DefaultForMaster', master: 'M0' },
+                            shapes: [makeRectPath(75, 0, 150, 700)],
+                            anchors: [],
+                            guides: [],
+                            format_specific: {}
+                        }
+                    ]
+                },
+                {
+                    name: 'n',
+                    format_specific: {
+                        metric_left: '=l-5',
+                        metric_right: '=l-10'
+                    },
+                    layers: [
+                        {
+                            id: 'n0',
+                            width: 571,
+                            master: { type: 'DefaultForMaster', master: 'M0' },
+                            shapes: [makeRectPath(70, 0, 506, 500)],
+                            anchors: [],
+                            guides: [],
+                            format_specific: {}
+                        }
+                    ]
+                },
+                {
+                    name: 'a',
+                    format_specific: {
+                        metric_right: 'n'
+                    },
+                    layers: [
+                        {
+                            id: 'a0',
+                            width: 542,
+                            master: { type: 'DefaultForMaster', master: 'M0' },
+                            shapes: [makeRectPath(50, 0, 477, 500)],
+                            anchors: [{ name: 'top', x: 260, y: 500 }],
+                            guides: [],
+                            format_specific: {}
+                        }
+                    ]
+                },
+                {
+                    name: 'dieresiscomb',
+                    layers: [
+                        {
+                            id: 'd0',
+                            width: 0,
+                            master: { type: 'DefaultForMaster', master: 'M0' },
+                            shapes: [makeRectPath(-50, 550, 50, 650)],
+                            anchors: [{ name: '_top', x: 0, y: 500 }],
+                            guides: [],
+                            format_specific: {}
+                        }
+                    ]
+                },
+                {
+                    name: 'adieresis',
+                    layers: [
+                        {
+                            id: 'ad0',
+                            width: 542,
+                            master: { type: 'DefaultForMaster', master: 'M0' },
+                            shapes: [
+                                makeComponent('a'),
+                                makeComponent('dieresiscomb')
+                            ],
+                            anchors: [],
+                            guides: [],
+                            format_specific: {}
+                        }
+                    ]
+                }
+            ]
+        });
+
+        // 1. Transitive collectMetricsKeyDependentGlyphs finds all 3 hops from `l`.
+        const transitiveDeps = font.collectMetricsKeyDependentGlyphs(
+            new Set(['l'])
+        );
+        expect([...transitiveDeps].sort()).toEqual(['a', 'adieresis', 'n']);
+
+        // 2. Drag `l`'s rightmost edge +61u (RSB 75 -> 14) and converge via live `scope: 'visible'`.
+        const lDrawing = font.findGlyph('l').findDrawingById('l0');
+        lDrawing.syncFromEditorDrawingData({
+            width: lDrawing.width,
+            shapes: [makeRectPath(75, 0, 211, 700)]
+        });
+        lDrawing.invalidateShapeCache();
+
+        const liveClosure = computeDrawingRecompositionClosure({
+            sourceTargets: [{ glyphName: 'l', layerId: 'l0' }],
+            editKinds: new Set(['outline']),
+            scope: 'visible',
+            fontModel: font,
+            activeDrawingId: 'l0',
+            sourceGlyphName: 'l',
+            visibleGlyphNames: ['l', 'a', 'n', 'adieresis']
+        });
+        expect(liveClosure.recomposeGlyphNames.has('n')).toBe(true);
+        expect(liveClosure.recomposeGlyphNames.has('a')).toBe(true);
+        expect(liveClosure.recomposeGlyphNames.has('adieresis')).toBe(true);
+        expect(font.findGlyph('a').findDrawingById('a0').rsb).toBe(4);
+        expect(font.findGlyph('adieresis').findDrawingById('ad0').rsb).toBe(4);
+
+        // 3. Now simulate commit (`scope: 'all'`) on the already-converged fontModel:
+        //    recomputeMetricsKeys is a no-op, yet ALL 4 drawings must be in changedDrawingTargets.
+        const commitClosure = computeDrawingRecompositionClosure({
+            sourceTargets: [{ glyphName: 'l', layerId: 'l0' }],
+            editKinds: new Set(['outline']),
+            scope: 'all',
+            fontModel: font,
+            activeDrawingId: 'l0',
+            sourceGlyphName: 'l'
+        });
+        const { changedDrawingTargets } = resolveDrawingSyncTargetsFromClosure(
+            commitClosure,
+            [{ glyphName: 'l', layerId: 'l0' }]
+        );
+        expect(
+            changedDrawingTargets.map((target) => target.glyphName).sort()
+        ).toEqual(['a', 'adieresis', 'l', 'n']);
+    });
 });

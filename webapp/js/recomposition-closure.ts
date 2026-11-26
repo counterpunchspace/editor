@@ -747,10 +747,29 @@ export function computeDrawingRecompositionClosure(options: {
                   ?.findDrawingById?.(activeDrawingId) ?? null)
             : null;
 
-    // Persist automatic composites / metrics-key dependents on commit (`scope === 'all'`)
-    // even when the rebuild/metrics pass is a no-op. Live drag (`scope === 'visible'`)
-    // only needs drawings that actually mutated on that frame, keeping preview
-    // overlays lean and `fast_ttf_patch` hot.
+    // Persist transitive metrics-key dependents and automatic composites on
+    // commit (`scope === 'all'`) even when the rebuild/metrics pass is a no-op
+    // because live drag already converged `fontModel`. Run metrics-key
+    // dependents FIRST so automatic composites of multi-hop keyed glyphs
+    // (e.g. `l -> n -> a -> adieresis`) are always included in the persistence
+    // closure. Live drag (`scope === 'visible'`) only needs drawings that
+    // actually mutated on that frame, keeping preview overlays lean.
+    if (
+        scope === 'all' &&
+        (editKinds.has('sidebearing') ||
+            editKinds.has('outline') ||
+            editKinds.has('component')) &&
+        typeof fontModel.collectMetricsKeyDependentGlyphs === 'function'
+    ) {
+        for (const glyphName of fontModel.collectMetricsKeyDependentGlyphs(
+            sourceGlyphNames
+        )) {
+            if (allowedGlyphNames && !allowedGlyphNames.has(glyphName)) {
+                continue;
+            }
+            recomposeGlyphNames.add(glyphName);
+        }
+    }
     const shouldPersistAutomaticDependents =
         scope === 'all' &&
         (editKinds.has('sidebearing') ||
@@ -761,24 +780,29 @@ export function computeDrawingRecompositionClosure(options: {
                 (glyphName) => !sourceGlyphNames.has(glyphName)
             ));
     if (shouldPersistAutomaticDependents) {
+        const automaticCandidateSeed = new Set<string>([
+            ...sourceGlyphNames,
+            ...invalidateGlyphNames,
+            ...recomposeGlyphNames
+        ]);
+        const automaticCandidates = new Set<string>([
+            ...invalidateGlyphNames,
+            ...recomposeGlyphNames
+        ]);
+        if (typeof fontModel.collectComponentDependentGlyphs === 'function') {
+            for (const depGlyphName of fontModel.collectComponentDependentGlyphs(
+                automaticCandidateSeed
+            )) {
+                if (!sourceGlyphNames.has(depGlyphName)) {
+                    automaticCandidates.add(depGlyphName);
+                }
+            }
+        }
         for (const glyphName of collectAutomaticAlignedDependentGlyphNames(
             fontModel,
-            invalidateGlyphNames,
+            automaticCandidates,
             activeDrawingId,
             sourceDrawing
-        )) {
-            recomposeGlyphNames.add(glyphName);
-        }
-    }
-    if (
-        scope === 'all' &&
-        (editKinds.has('sidebearing') ||
-            editKinds.has('outline') ||
-            editKinds.has('component')) &&
-        typeof fontModel.collectMetricsKeyDependentGlyphs === 'function'
-    ) {
-        for (const glyphName of fontModel.collectMetricsKeyDependentGlyphs(
-            sourceGlyphNames
         )) {
             if (allowedGlyphNames && !allowedGlyphNames.has(glyphName)) {
                 continue;

@@ -16565,6 +16565,193 @@ mod tests {
     }
 
     #[test]
+    fn fast_ttf_patch_leftmost_node_lsb_contour_shift_cascade_fustat_wght200_and_400() {
+        use read_fonts::{
+            types::{F2Dot14, GlyphId},
+            FontRef, TableProvider,
+        };
+
+        clear_font_cache();
+
+        let fustat_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../webapp/examples/Fustat.glyphs");
+        let mut subset_font = babelfont::load(&fustat_path).expect("load Fustat.glyphs");
+        let keep: Vec<String> = [
+            ".notdef",
+            "l",
+            "a",
+            "n",
+            "adieresis",
+            "dieresiscomb",
+            "space",
+            "A",
+            "H",
+            "O",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        RetainGlyphs::new(keep)
+            .apply(&mut subset_font)
+            .expect("retain lanä subset");
+
+        let full_opts = CompilationOptions {
+            drop_incompatible_paths: true,
+            produce_varc_table: true,
+            dont_use_production_names: true,
+            ..Default::default()
+        };
+        let outline_opts = CompilationOptions {
+            skip_features: true,
+            skip_kerning: true,
+            produce_varc_table: false,
+            drop_incompatible_paths: true,
+            dont_use_production_names: true,
+            ..Default::default()
+        };
+
+        let filtered_base =
+            apply_filter_pipeline_owned(subset_font.clone(), &full_opts, false).unwrap();
+        let base_ttf = compile_filtered_with_feature_debug_context(
+            filtered_base,
+            &full_opts,
+            "lana_lsb_base",
+        )
+        .unwrap();
+        let base_order = fast_ttf_patch::extract_ttf_glyph_order(&base_ttf).unwrap();
+
+        // Test both default master (layer 0 = wght:200) and non-default master (layer 1 = wght:400).
+        for (layer_idx, label) in [(0usize, "wght200_default"), (1usize, "wght400_nondefault")] {
+            let mut edited_font = subset_font.clone();
+            let dx = -25.0_f64;
+
+            // 1) Move the leftmost node(s) of `l` horizontally by dx (changes l's LSB without changing l's width).
+            {
+                let glyph_l = edited_font.glyphs.get_mut("l").expect("l");
+                let layer = &mut glyph_l.layers[layer_idx];
+                let mut min_x = f64::INFINITY;
+                for shape in &layer.shapes {
+                    if let babelfont::Shape::Path(path) = shape {
+                        for node in &path.nodes {
+                            if node.x < min_x {
+                                min_x = node.x;
+                            }
+                        }
+                    }
+                }
+                assert!(min_x.is_finite(), "l must have path nodes");
+                for shape in &mut layer.shapes {
+                    if let babelfont::Shape::Path(path) = shape {
+                        for node in &mut path.nodes {
+                            if (node.x - min_x).abs() <= 0.5 {
+                                node.x += dx;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2) Cascade to `n` (metricLeft = "=l-5"): shift all contours by dx and adjust width by dx
+            //    so n's LSB tracks l's new LSB while keeping n's RSB unchanged.
+            {
+                let glyph_n = edited_font.glyphs.get_mut("n").expect("n");
+                let layer = &mut glyph_n.layers[layer_idx];
+                for shape in &mut layer.shapes {
+                    if let babelfont::Shape::Path(path) = shape {
+                        for node in &mut path.nodes {
+                            node.x += dx;
+                        }
+                    }
+                }
+                layer.width += dx as f32;
+            }
+
+            let dirty: Vec<SmolStr> = ["l", "n"].into_iter().map(SmolStr::from).collect();
+            let patched_ttf = try_fast_patch_compiled_ttf(
+                &edited_font,
+                &dirty,
+                &outline_opts,
+                &base_ttf,
+                &base_order,
+            )
+            .unwrap_or_else(|| {
+                panic!("fast_ttf_patch must succeed on l->n LSB contour-shift cascade ({label})")
+            });
+
+            let filtered_expected =
+                apply_filter_pipeline_owned(edited_font, &full_opts, false).unwrap();
+            let expected_ttf = compile_filtered_with_feature_debug_context(
+                filtered_expected,
+                &full_opts,
+                "lana_lsb_expected",
+            )
+            .unwrap();
+
+            let patched_ref = FontRef::new(&patched_ttf).unwrap();
+            let expected_ref = FontRef::new(&expected_ttf).unwrap();
+            let patched_hmtx = patched_ref.hmtx().unwrap();
+            let expected_hmtx = expected_ref.hmtx().unwrap();
+            let patched_hvar = patched_ref.hvar().unwrap();
+            let expected_hvar = expected_ref.hvar().unwrap();
+            let patched_loca = patched_ref.loca(None).unwrap();
+            let expected_loca = expected_ref.loca(None).unwrap();
+            let patched_glyf = patched_ref.glyf().unwrap();
+            let expected_glyf = expected_ref.glyf().unwrap();
+            let expected_order = fast_ttf_patch::extract_ttf_glyph_order(&expected_ttf).unwrap();
+
+            for (patched_gid, name) in base_order.iter().enumerate() {
+                let expected_gid = expected_order.iter().position(|n| n == name).unwrap();
+                let p_gid = GlyphId::new(patched_gid as u32);
+                let e_gid = GlyphId::new(expected_gid as u32);
+
+                // Verify hmtx advance + LSB match verbatim (catches default-master LSB/width drift).
+                assert_eq!(
+                    patched_hmtx.advance(p_gid),
+                    expected_hmtx.advance(e_gid),
+                    "hmtx advance mismatch for {name} ({label})"
+                );
+                assert_eq!(
+                    patched_hmtx.side_bearing(p_gid),
+                    expected_hmtx.side_bearing(e_gid),
+                    "hmtx lsb mismatch for {name} ({label})"
+                );
+
+                // Verify HVAR advance width deltas across the full weight axis.
+                for coord in [0.0f32, 0.25, 0.5, 1.0] {
+                    let coords = [F2Dot14::from_f32(coord)];
+                    assert_eq!(
+                        patched_hvar.advance_width_delta(p_gid, &coords).unwrap(),
+                        expected_hvar.advance_width_delta(e_gid, &coords).unwrap(),
+                        "HVAR delta mismatch for {name} at coord {coord} ({label})"
+                    );
+                }
+
+                // Verify glyf bounding boxes match for simple glyphs.
+                let p_glyf = patched_loca.get_glyf(p_gid, &patched_glyf).unwrap();
+                let e_glyf = expected_loca.get_glyf(e_gid, &expected_glyf).unwrap();
+                assert_eq!(
+                    p_glyf.as_ref().map(|g| (g.x_min(), g.y_min(), g.x_max(), g.y_max())),
+                    e_glyf.as_ref().map(|g| (g.x_min(), g.y_min(), g.x_max(), g.y_max())),
+                    "glyf bbox mismatch for {name} ({label})"
+                );
+
+                // Verify gvar table presence & glyph variation tuple counts match.
+                let p_gvar = patched_ref.gvar().unwrap();
+                let e_gvar = expected_ref.gvar().unwrap();
+                let p_gvd = p_gvar.glyph_variation_data(p_gid).unwrap();
+                let e_gvd = e_gvar.glyph_variation_data(e_gid).unwrap();
+                assert_eq!(
+                    p_gvd.is_some(),
+                    e_gvd.is_some(),
+                    "gvar presence mismatch for {name} ({label})"
+                );
+            }
+        }
+
+        clear_font_cache();
+    }
+
+    #[test]
     fn fast_ttf_patch_gpos_kerning_overlay_matches_full_fontc_ltr_and_rtl() {
         use read_fonts::{types::Tag, FontRef};
 
