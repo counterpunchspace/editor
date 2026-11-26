@@ -12,6 +12,7 @@
         "tests/helpers/call-wasm-export.mjs",
         "tests/helpers/roundtrip-boolean-glyphs.mjs",
         "tests/helpers/compile-worker-seed.mjs",
+        "tests/helpers/overlay-parity-runner.mjs",
         "tests/fustat-binary-font-compile.mjs"
     ],
     "project": [

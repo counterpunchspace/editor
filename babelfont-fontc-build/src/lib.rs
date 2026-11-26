@@ -182,8 +182,24 @@ static KERNING_DOCS: LazyLock<Mutex<BTreeMap<u32, yrs::Doc>>> =
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 static PREVIEW_OVERLAY: Mutex<Option<PreviewOverlay>> = Mutex::new(None);
+static PREVIEW_KERNING_OVERLAY: Mutex<Option<PreviewKerningOverlay>> = Mutex::new(None);
 static COMPILE_FEATURE_OVERLAY: Mutex<String> = Mutex::new(String::new());
 static LAST_PREVIEW_LAYOUT_CLOSURE_CACHE_KEY: Mutex<Option<String>> = Mutex::new(None);
+
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewKerningOverlayEntry {
+    master_id: String,
+    is_rtl: bool,
+    first_key: String,
+    second_key: String,
+    value: Option<i16>,
+}
+
+struct PreviewKerningOverlay {
+    base_font_cache_epoch: u64,
+    entries: Vec<PreviewKerningOverlayEntry>,
+}
 
 struct PreviewOverlay {
     base_font_cache_epoch: u64,
@@ -314,6 +330,7 @@ struct GlyphRename {
 
 fn clear_preview_overlay_internal() {
     *PREVIEW_OVERLAY.lock().unwrap() = None;
+    *PREVIEW_KERNING_OVERLAY.lock().unwrap() = None;
     *LAST_PREVIEW_LAYOUT_CLOSURE_CACHE_KEY.lock().unwrap() = None;
 }
 
@@ -6205,8 +6222,6 @@ fn refresh_kerning_related_caches_from_ydoc<T: ReadTxn>(
     if !patched_font_cache && !LOCAL_SPARSE_BACKED_FONT.load(Ordering::Relaxed) {
         *FONT_CACHE.lock().unwrap() = None;
     }
-    *SUBSET_FONT_CACHE.lock().unwrap() = None;
-    *FILTERED_FONT_CACHE.lock().unwrap() = None;
     invalidate_last_compiled_ttf();
 
     let next_epoch = FONT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed) + 1;
@@ -6214,8 +6229,80 @@ fn refresh_kerning_related_caches_from_ydoc<T: ReadTxn>(
         if patched_font_cache { next_epoch } else { 0 },
         Ordering::Relaxed,
     );
-    SUBSET_FONT_CACHE_BUILT_AT_EPOCH.store(0, Ordering::Relaxed);
-    FILTER_EPOCH.fetch_add(1, Ordering::Relaxed);
+    let next_filter_epoch = FILTER_EPOCH.fetch_add(1, Ordering::Relaxed) + 1;
+
+    // Kerning changes never alter outlines, glyph order, or filter output:
+    // patch SUBSET_FONT_CACHE and FILTERED_FONT_CACHE in-place from FONT_CACHE
+    // so committed kerning catch-up compiles skip rebuilding both caches and
+    // skip all 7 filters + FEA re-parses while still running full fontc.
+    let mut patched_subset_font_cache = false;
+    if patched_font_cache {
+        let font_snapshot = FONT_CACHE.lock().unwrap().as_ref().map(|f| {
+            (
+                f.masters
+                    .iter()
+                    .map(|m| (m.id.clone(), m.kerning.clone(), m.kerning_rtl.clone()))
+                    .collect::<Vec<_>>(),
+                f.format_specific.clone(),
+                f.first_kern_groups.clone(),
+                f.second_kern_groups.clone(),
+            )
+        });
+        if let Some((master_kerns, format_specific, first_groups, second_groups)) = font_snapshot {
+            let apply_to_font = |target: &mut babelfont::Font| -> bool {
+                if target.masters.len() != master_kerns.len() {
+                    return false;
+                }
+                for (m, (id, kern, kern_rtl)) in target.masters.iter_mut().zip(master_kerns.iter())
+                {
+                    if m.id != *id {
+                        return false;
+                    }
+                    if refresh_master_kerning {
+                        m.kerning = kern.clone();
+                        m.kerning_rtl = kern_rtl.clone();
+                    }
+                }
+                if refresh_master_kerning {
+                    target.format_specific = format_specific.clone();
+                }
+                if refresh_kern_groups {
+                    target.first_kern_groups = first_groups.clone();
+                    target.second_kern_groups = second_groups.clone();
+                }
+                true
+            };
+            {
+                let mut subset_guard = SUBSET_FONT_CACHE.lock().unwrap();
+                if let Some((_, ref mut sub_epoch, ref mut sub_font)) = *subset_guard {
+                    if apply_to_font(sub_font) {
+                        *sub_epoch = SUBSET_CACHE_EPOCH.load(Ordering::Relaxed);
+                        patched_subset_font_cache = true;
+                    } else {
+                        *subset_guard = None;
+                    }
+                }
+            }
+            {
+                let mut filtered_guard = FILTERED_FONT_CACHE.lock().unwrap();
+                if let Some(ref mut entry) = *filtered_guard {
+                    let mut cloned = (*entry.font).clone();
+                    if apply_to_font(&mut cloned) {
+                        entry.font = Arc::new(cloned);
+                        entry.cache_epoch = next_epoch;
+                        entry.filter_epoch = next_filter_epoch;
+                    } else {
+                        *filtered_guard = None;
+                    }
+                }
+            }
+        }
+    }
+    if !patched_subset_font_cache {
+        *SUBSET_FONT_CACHE.lock().unwrap() = None;
+        *FILTERED_FONT_CACHE.lock().unwrap() = None;
+        SUBSET_FONT_CACHE_BUILT_AT_EPOCH.store(0, Ordering::Relaxed);
+    }
 
     Ok(())
 }
@@ -9117,9 +9204,23 @@ pub fn compile_preview_cached_font_from_last_layout_closure(
     let compilation_options = parse_compilation_options(options);
 
     let current_base_epoch = FONT_CACHE_EPOCH.load(Ordering::Relaxed);
+    let current_filter_epoch = FILTER_EPOCH.load(Ordering::Relaxed);
+    let kerning_overlay_entries: Vec<PreviewKerningOverlayEntry> = {
+        let mut kern_lock = PREVIEW_KERNING_OVERLAY.lock().unwrap();
+        if kern_lock
+            .as_ref()
+            .is_some_and(|overlay| overlay.base_font_cache_epoch != current_base_epoch)
+        {
+            *kern_lock = None;
+        }
+        kern_lock
+            .as_ref()
+            .map(|overlay| overlay.entries.clone())
+            .unwrap_or_default()
+    };
 
     let mut preview_dirty_glyphs_for_cache: Option<Vec<SmolStr>> = None;
-    let filtered_font = {
+    let mut filtered_font = {
         let mut preview_lock = PREVIEW_OVERLAY.lock().unwrap();
         if preview_lock
             .as_ref()
@@ -9128,7 +9229,10 @@ pub fn compile_preview_cached_font_from_last_layout_closure(
             *preview_lock = None;
         }
 
-        if let Some(overlay) = preview_lock.as_mut() {
+        if let Some(overlay) = preview_lock
+            .as_mut()
+            .filter(|o| !o.layer_overrides.is_empty())
+        {
             let overlay_layers: Vec<(LayerTarget, serde_json::Value)> = overlay
                 .layer_overrides
                 .iter()
@@ -9182,9 +9286,8 @@ pub fn compile_preview_cached_font_from_last_layout_closure(
             };
 
             // P2 Fast Path: if we have a cached compiled TTF matching this subset,
-            // base epoch, and compile options, try surgical glyf/gvar/hmtx patching
-            // of ONLY the 1–6 dirty preview glyphs (reusing GSUB/GPOS/cmap/fvar/STAT
-            // verbatim — drops 18-station Truculenta drag frames by ~3x!).
+            // base epoch, and compile options, try surgical glyf/gvar/hmtx/HVAR patching
+            // of ONLY the dirty preview glyphs (reusing GSUB/GPOS/cmap/fvar/STAT verbatim).
             let dirty_glyph_names: Vec<SmolStr> = {
                 let mut seen = HashSet::new();
                 let mut names = Vec::new();
@@ -9195,10 +9298,11 @@ pub fn compile_preview_cached_font_from_last_layout_closure(
                 }
                 names
             };
-            let anchors_changed_by_overlay = overlay_layers_change_anchors_in_subset_cache(
-                &prepared_subset_key,
-                &overlay_layers,
-            );
+            let anchors_changed_by_overlay = !kerning_overlay_entries.is_empty()
+                || overlay_layers_change_anchors_in_subset_cache(
+                    &prepared_subset_key,
+                    &overlay_layers,
+                );
             let current_compile_fp = options_compile_fingerprint(&compilation_options);
             let cached_base_ttf = if anchors_changed_by_overlay {
                 None
@@ -9223,8 +9327,6 @@ pub fn compile_preview_cached_font_from_last_layout_closure(
                     }
                 })
             };
-            // Every overlay update starts a new generation, so a filtered
-            // font is never reused; it goes straight to the compiler.
             // Overlay layers are already physical; bake remaining logical autos.
             let mut compile_font = subset_font;
             bake_automatic_sidebearing_offsets_in_font(&mut compile_font, &skip_layers);
@@ -9240,7 +9342,6 @@ pub fn compile_preview_cached_font_from_last_layout_closure(
                 }
             }
             preview_dirty_glyphs_for_cache = Some(dirty_glyph_names);
-            let current_filter_epoch = FILTER_EPOCH.load(Ordering::Relaxed);
             match try_build_filtered_preview_from_cache(
                 &prepared_subset_key,
                 current_filter_epoch,
@@ -9253,6 +9354,50 @@ pub fn compile_preview_cached_font_from_last_layout_closure(
                 Some(patched_filtered) => patched_filtered,
                 None => apply_filter_pipeline_owned(compile_font, &compilation_options, false)?,
             }
+        } else if !kerning_overlay_entries.is_empty() {
+            // Fast kerning preview path (LTR + RTL + all group members):
+            // reuse FILTERED_FONT_CACHE, apply transient kerning overrides,
+            // compile GPOS-only (`skip_outlines = true`), and splice GPOS
+            // verbatim into LAST_COMPILED_TTF_CACHE!
+            let base_filtered_arc = get_or_populate_filtered_base_font(
+                &prepared_subset_key,
+                current_filter_epoch,
+                current_base_epoch,
+                &compilation_options,
+                &closure_subset,
+            )?;
+            let mut kerning_font = (*base_filtered_arc).clone();
+            apply_kerning_overlay_entries_to_font(&mut kerning_font, &kerning_overlay_entries);
+            let current_compile_fp = options_compile_fingerprint(&compilation_options);
+            let cached_base_ttf = {
+                let ttf_guard = LAST_COMPILED_TTF_CACHE.lock().unwrap();
+                ttf_guard.as_ref().and_then(|entry| {
+                    if entry.patchable
+                        && entry.overlay_dirty_glyphs.is_empty()
+                        && entry.subset_key == prepared_subset_key
+                        && entry.base_font_cache_epoch == current_base_epoch
+                        && compiled_ttf_options_compatible(
+                            entry.options_compile_fp,
+                            current_compile_fp,
+                        )
+                    {
+                        Some((entry.ttf_bytes.clone(), entry.glyph_order.clone()))
+                    } else {
+                        None
+                    }
+                })
+            };
+            if let Some((base_ttf, base_glyph_order)) = cached_base_ttf {
+                if let Some(patched) = try_fast_patch_kerning_gpos(
+                    &kerning_font,
+                    &compilation_options,
+                    &base_ttf,
+                    &base_glyph_order,
+                ) {
+                    return Ok(patched);
+                }
+            }
+            kerning_font
         } else {
             let subset_font = match get_or_rebuild_subset_font_cache(&prepared_subset_key)? {
                 Some(cached) => cached,
@@ -9262,6 +9407,9 @@ pub fn compile_preview_cached_font_from_last_layout_closure(
             apply_filter_pipeline_owned(compile_font, &compilation_options, false)?
         }
     };
+    if !kerning_overlay_entries.is_empty() && preview_dirty_glyphs_for_cache.is_some() {
+        apply_kerning_overlay_entries_to_font(&mut filtered_font, &kerning_overlay_entries);
+    }
 
     let compiled = compile_filtered_with_feature_debug_context(
         filtered_font,
@@ -9299,6 +9447,126 @@ pub fn compile_preview_cached_font_from_last_layout_closure(
         }
     }
     Ok(compiled)
+}
+
+fn apply_kerning_overlay_entries_to_font(
+    font: &mut babelfont::Font,
+    entries: &[PreviewKerningOverlayEntry],
+) {
+    for entry in entries {
+        let Some(master) = font.masters.iter_mut().find(|m| m.id == entry.master_id) else {
+            continue;
+        };
+        let key = (
+            SmolStr::from(entry.first_key.as_str()),
+            SmolStr::from(entry.second_key.as_str()),
+        );
+        let target = if entry.is_rtl {
+            &mut master.kerning_rtl
+        } else {
+            &mut master.kerning
+        };
+        match entry.value {
+            Some(val) => {
+                target.insert(key, val);
+            }
+            None => {
+                target.shift_remove(&key);
+            }
+        }
+    }
+}
+
+fn get_or_populate_filtered_base_font(
+    prepared_subset_key: &str,
+    current_filter_epoch: u64,
+    current_base_epoch: u64,
+    compilation_options: &CompilationOptions,
+    closure_subset: &[String],
+) -> Result<Arc<babelfont::Font>, JsValue> {
+    let current_options_fp = options_filter_fingerprint(compilation_options);
+    {
+        let guard = FILTERED_FONT_CACHE.lock().unwrap();
+        if let Some(entry) = guard.as_ref() {
+            if entry.subset_key == prepared_subset_key
+                && entry.filter_epoch == current_filter_epoch
+                && entry.cache_epoch == current_base_epoch
+                && entry.options_fingerprint == current_options_fp
+            {
+                return Ok(Arc::clone(&entry.font));
+            }
+        }
+    }
+    let base_subset = match get_or_rebuild_subset_font_cache(prepared_subset_key)? {
+        Some(cached) => cached,
+        None => build_subset_font_from_closure_subset(closure_subset)?,
+    };
+    let base_compile = prepare_compile_facing_font(base_subset, &[])?;
+    let filtered = apply_filter_pipeline_owned(base_compile, compilation_options, false)?;
+    let arc = Arc::new(filtered);
+    *FILTERED_FONT_CACHE.lock().unwrap() = Some(FilteredFontCacheEntry {
+        subset_key: prepared_subset_key.to_string(),
+        filter_epoch: current_filter_epoch,
+        cache_epoch: current_base_epoch,
+        options_fingerprint: current_options_fp,
+        font: Arc::clone(&arc),
+    });
+    Ok(arc)
+}
+
+fn try_fast_patch_kerning_gpos(
+    kerning_font: &babelfont::Font,
+    compilation_options: &CompilationOptions,
+    base_ttf: &[u8],
+    base_glyph_order: &[SmolStr],
+) -> Option<Vec<u8>> {
+    if compilation_options.skip_kerning || compilation_options.skip_features {
+        return None;
+    }
+    if !can_compile_already_filtered(kerning_font, compilation_options) {
+        return None;
+    }
+    let mut gpos_opts = compilation_options.clone();
+    gpos_opts.skip_outlines = true;
+    gpos_opts.produce_varc_table = false;
+    let gpos_ttf = compile_filtered_with_feature_debug_context(
+        kerning_font.clone(),
+        &gpos_opts,
+        "try_fast_patch_kerning_gpos",
+    )
+    .ok()?;
+    let patched = fast_ttf_patch::splice_gpos_into_ttf(base_ttf, base_glyph_order, &gpos_ttf)?;
+    Some(zero_head_timestamps(patched))
+}
+
+/// Set transient live-drag / keyboard-burst kerning pair overrides without
+/// mutating Y.Doc or invalidating authoritative font caches.
+#[wasm_bindgen]
+pub fn set_preview_kerning_overlay(entries_json: &str) -> Result<String, JsValue> {
+    let entries: Vec<PreviewKerningOverlayEntry> =
+        serde_json::from_str(entries_json).map_err(|e| {
+            JsValue::from_str(&format!(
+                "set_preview_kerning_overlay: parse failed: {}",
+                e
+            ))
+        })?;
+    let count = entries.len();
+    let current_epoch = FONT_CACHE_EPOCH.load(Ordering::Relaxed);
+    *PREVIEW_KERNING_OVERLAY.lock().unwrap() = if entries.is_empty() {
+        None
+    } else {
+        Some(PreviewKerningOverlay {
+            base_font_cache_epoch: current_epoch,
+            entries,
+        })
+    };
+    Ok(format!("{{\"count\":{}}}", count))
+}
+
+/// Drop transient live kerning preview overrides.
+#[wasm_bindgen]
+pub fn clear_preview_kerning_overlay() {
+    *PREVIEW_KERNING_OVERLAY.lock().unwrap() = None;
 }
 
 /// Drop all transient live-drag preview overlay state.
@@ -9506,52 +9774,9 @@ pub fn compile_cached_font_from_last_layout_closure(options: &JsValue) -> Result
     let _ir_compile_span =
         PerfSpan::start("compile_cached_font_from_last_layout_closure.ir_compile");
 
-    // P2 Fast Path for committed visual outline edits (e.g. keyboard node nudges):
-    // if only 1–6 glyphs changed outlines (no anchor/feature/kerning/master/axis
-    // change) since LAST_COMPILED_TTF_CACHE was built for this exact subset and
-    // compile options, splice only those glyphs into the cached TTF.
-    if overlay_layers.is_empty() {
-        let fast_patch_input = {
-            let ttf_guard = LAST_COMPILED_TTF_CACHE.lock().unwrap();
-            ttf_guard.as_ref().and_then(|entry| {
-                if entry.patchable
-                    && entry.overlay_dirty_glyphs.is_empty()
-                    && entry.subset_key == prepared_subset_key
-                    && entry.filter_epoch == current_filter_epoch
-                    && compiled_ttf_options_compatible(entry.options_compile_fp, current_compile_fp)
-                    && !entry.pending_dirty_glyphs.is_empty()
-                {
-                    Some((
-                        entry.ttf_bytes.clone(),
-                        entry.glyph_order.clone(),
-                        entry.pending_dirty_glyphs.clone(),
-                    ))
-                } else {
-                    None
-                }
-            })
-        };
-        if let Some((base_ttf, base_glyph_order, dirty_glyphs)) = fast_patch_input {
-            if let Some(patched) = try_fast_patch_compiled_ttf(
-                &filtered_font,
-                &dirty_glyphs,
-                &compilation_options,
-                &base_ttf,
-                &base_glyph_order,
-            ) {
-                store_last_compiled_ttf(
-                    &prepared_subset_key,
-                    current_filter_epoch,
-                    current_cache_epoch,
-                    &compilation_options,
-                    &patched,
-                );
-                drop(_ir_compile_span);
-                return Ok(patched);
-            }
-        }
-    }
-
+    // Authoritative post-commit compiles (`overlay_layers.is_empty()`) ALWAYS
+    // run full `fontc::generate_font` — direct TTF splicing (`fast_ttf_patch`)
+    // is strictly limited to live-editing preview overlays.
     // A font fresh from the overlay path is not shared and moves in for free;
     // the cached filtered font stays cached for the next compile.
     let compiled_font = compile_filtered_with_feature_debug_context(
@@ -16252,6 +16477,118 @@ mod tests {
                     patched_hvar.advance_width_delta(p_gid, &coords).unwrap(),
                     expected_hvar.advance_width_delta(e_gid, &coords).unwrap(),
                     "lanä HVAR delta mismatch for {name} at coord {coord}"
+                );
+            }
+        }
+
+        clear_font_cache();
+    }
+
+    #[test]
+    fn fast_ttf_patch_gpos_kerning_overlay_matches_full_fontc_ltr_and_rtl() {
+        use read_fonts::{types::Tag, FontRef};
+
+        clear_font_cache();
+
+        let fustat_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../webapp/examples/Fustat.glyphs");
+        let mut subset_font = babelfont::load(&fustat_path).expect("load Fustat.glyphs");
+        let keep: Vec<String> = [
+            ".notdef",
+            "T",
+            "A",
+            "V",
+            "dal-ar",
+            "alef-ar",
+            "reh-ar",
+            "waw-ar",
+            "space",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        RetainGlyphs::new(keep)
+            .apply(&mut subset_font)
+            .expect("retain kerning subset");
+
+        let full_opts = CompilationOptions {
+            drop_incompatible_paths: true,
+            produce_varc_table: true,
+            dont_use_production_names: true,
+            ..Default::default()
+        };
+        let filtered_base =
+            apply_filter_pipeline_owned(subset_font.clone(), &full_opts, false).unwrap();
+        let base_ttf =
+            compile_filtered_with_feature_debug_context(filtered_base.clone(), &full_opts, "kern_base")
+                .unwrap();
+        let base_order = fast_ttf_patch::extract_ttf_glyph_order(&base_ttf).unwrap();
+
+        let wght400_master_id = filtered_base.masters[1].id.clone();
+        let kern_opts = CompilationOptions {
+            drop_incompatible_paths: true,
+            produce_varc_table: false,
+            dont_use_production_names: true,
+            ..Default::default()
+        };
+
+        for (label, entry) in [
+            (
+                "LTR @T/@A group pair",
+                PreviewKerningOverlayEntry {
+                    master_id: wght400_master_id.clone(),
+                    is_rtl: false,
+                    first_key: "@T".to_string(),
+                    second_key: "@A".to_string(),
+                    value: Some(-180),
+                },
+            ),
+            (
+                "RTL dal-ar/alef-ar pair",
+                PreviewKerningOverlayEntry {
+                    master_id: wght400_master_id.clone(),
+                    is_rtl: true,
+                    first_key: "dal-ar".to_string(),
+                    second_key: "alef-ar".to_string(),
+                    value: Some(-140),
+                },
+            ),
+        ] {
+            let mut edited_filtered = filtered_base.clone();
+            apply_kerning_overlay_entries_to_font(&mut edited_filtered, &[entry]);
+
+            let patched_ttf = try_fast_patch_kerning_gpos(
+                &edited_filtered,
+                &kern_opts,
+                &base_ttf,
+                &base_order,
+            )
+            .unwrap_or_else(|| panic!("{label}: GPOS splice must succeed"));
+
+            let expected_ttf = compile_filtered_with_feature_debug_context(
+                edited_filtered,
+                &full_opts,
+                "kern_expected",
+            )
+            .unwrap();
+
+            let patched_ref = FontRef::new(&patched_ttf).unwrap();
+            let expected_ref = FontRef::new(&expected_ttf).unwrap();
+            let base_ref = FontRef::new(&base_ttf).unwrap();
+
+            // GPOS must be 100% bit-identical to full fontc!
+            assert_eq!(
+                patched_ref.table_data(Tag::new(b"GPOS")).map(|d| d.as_bytes()),
+                expected_ref.table_data(Tag::new(b"GPOS")).map(|d| d.as_bytes()),
+                "{label}: spliced GPOS must be bit-identical to full fontc"
+            );
+            // glyf, gvar, hmtx, HVAR, GSUB must be preserved verbatim from base_ttf!
+            for tag in [b"glyf", b"gvar", b"hmtx", b"HVAR", b"GSUB"] {
+                assert_eq!(
+                    patched_ref.table_data(Tag::new(tag)).map(|d| d.as_bytes()),
+                    base_ref.table_data(Tag::new(tag)).map(|d| d.as_bytes()),
+                    "{label}: table {} must stay verbatim from base_ttf",
+                    std::str::from_utf8(tag).unwrap()
                 );
             }
         }

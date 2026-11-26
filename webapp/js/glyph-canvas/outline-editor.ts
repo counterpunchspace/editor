@@ -4602,6 +4602,11 @@ export class OutlineEditor {
     ): void {
         let previewKind: 'outline' | 'anchor' | 'sidebearing' | null = null;
         let outlineAffectedGlyphNames = new Set<string>();
+        const deferPreCompileRender =
+            Boolean(window.fontCompilation?.isInitialized) &&
+            (this.selectedSidebearingHandle !== null ||
+                this.selectedAnchors.length > 0 ||
+                this.hasVisibleOutlineCascadeDependents());
 
         this.keyboardPreviewEditFunnel.queue({
             prepare: () => {
@@ -4615,9 +4620,13 @@ export class OutlineEditor {
                     preparedPreview.affectedGlyphNames ?? new Set<string>();
                 return true;
             },
-            render: () => {
-                this.glyphCanvas.render();
-            },
+            ...(deferPreCompileRender
+                ? {}
+                : {
+                      render: () => {
+                          this.glyphCanvas.render();
+                      }
+                  }),
             compile: () => {
                 if (previewKind === 'anchor') {
                     return {

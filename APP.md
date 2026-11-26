@@ -265,6 +265,20 @@ from the bridge Y.Doc instead of leaving compile dead.
 Automatic drawings are mutated only by `rebuildAutomaticComposition`, never by
 metrics translate/bake.
 
+**Overlay-to-Full-Compile 100% Point-Identity:** Direct binary/TTF splicing
+(`fast_ttf_patch`, `HVAR` splicing, `GPOS`/kerning overlays, and any future
+live-preview fast path) is strictly a live-editing overlay for mouse drags and
+keyboard bursts — never an authoritative commit path. After every commit
+(`mouseup` or keyboard burst settle), the full subsetted font compiles
+normally through authoritative `fontc`. The final live overlay render before
+commit must be 100% point-identical to that authoritative catch-up compile in
+shaped glyph sequence, `ax`/`ay`/`dx`/`dy` positions, and outline point
+structure across all edit types (outlines, sidebearings with `HVAR` and
+cascading metrics keys, anchors and automatic composites, and LTR/RTL group
+kerning), so commit produces zero visual jump. Both mouse drags and keyboard
+bursts must share the exact same atomic overlay pipeline and single-frame
+presentation contract.
+
 That closure returns two dependent sets that must stay distinct:
 
 - `recomposeTargets` — drawings whose stored model must change (automatic composition rebuild and/or metrics-key inheritance, including outline edits that move a keyed glyph’s visual edge). Only these, plus the directly edited source drawings, may be written into the authoritative Yjs packet as drawing snapshots.

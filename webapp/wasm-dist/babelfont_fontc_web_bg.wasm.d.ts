@@ -6,6 +6,7 @@ export const apply_preview_layer_overlay: (a: number, b: number, c: number, d: n
 export const apply_yjs_update: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const boolean_op_paths: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const clear_font_cache: () => void;
+export const clear_preview_kerning_overlay: () => void;
 export const clear_preview_layer_overlay: () => void;
 export const close_layout_from_fea: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
 export const compile_babelfont: (a: number, b: number, c: any) => [number, number, number, number];
@@ -54,6 +55,7 @@ export const seed_ydoc: (a: number, b: number) => [number, number];
 export const seed_ydoc_document: (a: number, b: number, c: number, d: number) => [number, number];
 export const set_compile_feature_overlay: (a: number, b: number) => void;
 export const set_debug_font_cache_max_bytes: (a: number) => void;
+export const set_preview_kerning_overlay: (a: number, b: number) => [number, number, number, number];
 export const store_font: (a: number, b: number) => [number, number];
 export const ufo_glyph_files_for_paths: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const validate_feature_source_with_full_filter_pipeline: (a: any) => [number, number];

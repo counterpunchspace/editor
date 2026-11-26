@@ -2352,6 +2352,13 @@ export class FontCompilation {
                 nonGlyphChangeHints?: string[];
                 layerTargets?: Array<{ glyphName: string; layerId: string }>;
                 invalidateLayoutClosure?: boolean;
+                kerningUpdates?: Array<{
+                    masterId: string;
+                    isRtl: boolean;
+                    firstKey: string;
+                    secondKey: string;
+                    value: number | null;
+                }>;
             };
         }
     ): Promise<{

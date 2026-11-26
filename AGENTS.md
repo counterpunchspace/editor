@@ -14,6 +14,7 @@ When docs disagree, this order wins:
 ## Hard rules
 
 - Never stage, commit, amend or push unless the user explicitly asks.
+- **Overlay-to-Full-Compile 100% Point-Identity:** Direct binary/TTF splicing (`fast_ttf_patch`, `HVAR` splicing, `GPOS`/kerning overlays, etc.) is **strictly live-preview only** during mouse drags and keyboard bursts. After commit (`mouseup` or keyboard burst settle), the authoritative full subsetted font **must** compile via full `fontc`. The last live overlay render must be **100% point-identical** (glyph names/GIDs, HarfBuzz `ax`/`ay`/`dx`/`dy` positions, and glyph outline point structure) to the full catch-up compile — zero visual jump on commit. Keep `webapp/tests/overlay-full-compile-parity.test.js` passing for every overlay edit type.
 - Fix the root cause, no band-aids. Remove temporary code and debug logs before finishing.
 - Do not run `npm run build` after ordinary edits; use the running `npm run dev` server. CI and release build for you.
 - After changing `babelfont-fontc-build/src/*.rs`, run `./build-fontc-wasm.sh` before you're done.

@@ -402,11 +402,13 @@ const kerns = entry.isRTL ? station.kerningRTL : station.kerning;
 const value = resolveKerningValue(kerns, firstKey, secondKey);
 ```
 
-### 5. Compilation scheduling
+### 5. Compilation scheduling and live kerning overlays
 
-Marking kerning as dirty for compilation should note that both dicts trigger a
-kerning-only recompile. The `'kerning-property-panel'` reason already handles
-this — verify it covers edits to `station.kerningRTL` as well.
+Both mouse handle drags and keyboard kerning bursts (`Alt+ArrowLeft`/`Right`) share one atomic live-overlay path for LTR pairs (`station.kerning`), RTL pairs (`station.kerningRTL`), and all kerning group members (`@…`):
+
+- During active drag or burst, `GlyphCanvas` stages `{ masterId, isRtl, firstKey, secondKey, value }` via `fontManager.stageLiveKerningPreview(...)` into fused `previewOverlayAndCompile` without writing intermediate Yjs transactions.
+- Rust stores the pairs in `PREVIEW_KERNING_OVERLAY`, patches them onto a clone of `FILTERED_FONT_CACHE` (updating `master.kerning` or `master.kerning_rtl`), compiles `GPOS` only with `skip_outlines = true`, and splices `GPOS`/`GDEF` verbatim into `LAST_COMPILED_TTF_CACHE` via `fast_ttf_patch::splice_gpos_into_ttf`.
+- On `mouseup` or burst settle, one authoritative Yjs transaction writes the final pair value (clearing `PREVIEW_KERNING_OVERLAY` and patching kerning caches in place), followed by an authoritative full subsetted `fontc` catch-up compile. `webapp/tests/overlay-full-compile-parity.test.js` verifies 100% point-identity between the live overlay and the full catch-up compile for both LTR and RTL group kerning across all variation locations.
 
 ### 6. Property panel display
 

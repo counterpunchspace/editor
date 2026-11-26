@@ -1324,6 +1324,13 @@ class FontManager {
         nonGlyphChangeHints: string[];
         layerTargets: WorkerReplayTarget[];
         invalidateLayoutClosure: boolean;
+        kerningUpdates?: Array<{
+            masterId: string;
+            isRtl: boolean;
+            firstKey: string;
+            secondKey: string;
+            value: number | null;
+        }>;
     } | null = null;
     private workerYjsSendQueue: Promise<unknown>;
     private workerPreviewSendQueue: Promise<unknown>;
@@ -8126,6 +8133,69 @@ class FontManager {
         records: LivePreviewDrawingRecord[]
     ): Promise<boolean> {
         return this.submitDrawingUpdatesToWorkerPreview(records);
+    }
+
+    /**
+     * Stage a transient kerning preview overlay (LTR or RTL, glyph or group keys)
+     * to be fused into the next `previewOverlayAndCompile` worker RPC.
+     */
+    stageLiveKerningPreview(
+        updates: Array<{
+            masterId: string;
+            isRtl: boolean;
+            firstKey: string;
+            secondKey: string;
+            value: number | null;
+        }>
+    ): boolean {
+        if (
+            !this.currentFont ||
+            !updates.length ||
+            !fontCompilation.supportsFusedPreviewCompile?.()
+        ) {
+            return false;
+        }
+        const mergedByKey = new Map<
+            string,
+            {
+                masterId: string;
+                isRtl: boolean;
+                firstKey: string;
+                secondKey: string;
+                value: number | null;
+            }
+        >();
+        if (this.pendingFusedPreviewOverlay?.kerningUpdates) {
+            for (const existing of this.pendingFusedPreviewOverlay
+                .kerningUpdates) {
+                mergedByKey.set(
+                    `${existing.masterId}\0${existing.isRtl ? 1 : 0}\0${existing.firstKey}\0${existing.secondKey}`,
+                    existing
+                );
+            }
+        }
+        for (const update of updates) {
+            mergedByKey.set(
+                `${update.masterId}\0${update.isRtl ? 1 : 0}\0${update.firstKey}\0${update.secondKey}`,
+                update
+            );
+        }
+        const mergedKerningUpdates = Array.from(mergedByKey.values());
+        this.pendingFusedPreviewOverlay = {
+            layerUpdates: this.pendingFusedPreviewOverlay?.layerUpdates ?? [],
+            changedGlyphs: this.pendingFusedPreviewOverlay?.changedGlyphs ?? [],
+            nonGlyphChangeHints: Array.from(
+                new Set([
+                    ...(this.pendingFusedPreviewOverlay?.nonGlyphChangeHints ??
+                        []),
+                    'kerning'
+                ])
+            ),
+            layerTargets: this.pendingFusedPreviewOverlay?.layerTargets ?? [],
+            invalidateLayoutClosure: false,
+            kerningUpdates: mergedKerningUpdates
+        };
+        return true;
     }
 
     clearLiveDragPreview(options?: { notifyPeers?: boolean }): void {

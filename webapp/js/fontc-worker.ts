@@ -20,6 +20,8 @@ import init, {
     patch_seeded_glyph_shards_into_font_cache,
     apply_preview_layer_overlay,
     clear_preview_layer_overlay,
+    set_preview_kerning_overlay,
+    clear_preview_kerning_overlay,
     dump_layer_state_json,
     dump_worker_cache_state_json,
     get_cache_memory_stats,
@@ -1019,7 +1021,27 @@ self.onmessage = async (event) => {
             }
 
             try {
-                if (isFusedPreview && data.overlayLayers) {
+                const kerningOverlay = Array.isArray(data.kerningOverlay)
+                    ? data.kerningOverlay
+                    : Array.isArray(data.overlayLayers?.kerningUpdates)
+                      ? data.overlayLayers.kerningUpdates
+                      : null;
+                if (isFusedPreview && kerningOverlay) {
+                    const kerningResultJson = set_preview_kerning_overlay(
+                        JSON.stringify(kerningOverlay)
+                    );
+                    parseRustResultJson<{ count?: number } | null>(
+                        kerningResultJson,
+                        'set_preview_kerning_overlay'
+                    );
+                }
+
+                if (
+                    isFusedPreview &&
+                    data.overlayLayers &&
+                    Array.isArray(data.overlayLayers.layerUpdates) &&
+                    data.overlayLayers.layerUpdates.length > 0
+                ) {
                     const overlay = data.overlayLayers;
                     const updateMetadataJson = JSON.stringify({
                         changedGlyphs: Array.isArray(overlay.changedGlyphs)
@@ -2035,6 +2057,66 @@ self.onmessage = async (event) => {
                 self.postMessage({
                     id,
                     type: 'applyPreviewDrawingOverlay',
+                    success: false,
+                    error: e.toString()
+                });
+            }
+            return;
+        }
+
+        if (data.type === 'applyPreviewKerningOverlay') {
+            const { id, kerningOverlay } = data;
+            try {
+                if (!initialized) {
+                    await initializeWasm();
+                }
+                const startTime = performance.now();
+                const resultJson = set_preview_kerning_overlay(
+                    JSON.stringify(
+                        Array.isArray(kerningOverlay) ? kerningOverlay : []
+                    )
+                );
+                parseRustResultJson<{ count?: number } | null>(
+                    resultJson,
+                    'set_preview_kerning_overlay'
+                );
+                self.postMessage({
+                    id,
+                    type: 'applyPreviewKerningOverlay',
+                    success: true,
+                    result: resultJson,
+                    time_taken: performance.now() - startTime
+                });
+            } catch (e: any) {
+                console.error(
+                    '[Fontc Worker] applyPreviewKerningOverlay error:',
+                    e
+                );
+                self.postMessage({
+                    id,
+                    type: 'applyPreviewKerningOverlay',
+                    success: false,
+                    error: e.toString()
+                });
+            }
+            return;
+        }
+
+        if (data.type === 'clearPreviewKerningOverlay') {
+            const { id } = data;
+            try {
+                if (initialized) {
+                    clear_preview_kerning_overlay();
+                }
+                self.postMessage({
+                    id,
+                    type: 'clearPreviewKerningOverlay',
+                    success: true
+                });
+            } catch (e: any) {
+                self.postMessage({
+                    id,
+                    type: 'clearPreviewKerningOverlay',
                     success: false,
                     error: e.toString()
                 });

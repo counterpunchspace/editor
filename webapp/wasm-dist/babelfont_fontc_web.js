@@ -152,6 +152,13 @@ export function clear_font_cache() {
 }
 
 /**
+ * Drop transient live kerning preview overrides.
+ */
+export function clear_preview_kerning_overlay() {
+    wasm.clear_preview_kerning_overlay();
+}
+
+/**
  * Drop all transient live-drag preview overlay state.
  */
 export function clear_preview_layer_overlay() {
@@ -1548,6 +1555,33 @@ export function set_compile_feature_overlay(text) {
  */
 export function set_debug_font_cache_max_bytes(max_bytes) {
     wasm.set_debug_font_cache_max_bytes(max_bytes);
+}
+
+/**
+ * Set transient live-drag / keyboard-burst kerning pair overrides without
+ * mutating Y.Doc or invalidating authoritative font caches.
+ * @param {string} entries_json
+ * @returns {string}
+ */
+export function set_preview_kerning_overlay(entries_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(entries_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.set_preview_kerning_overlay(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
 }
 
 /**

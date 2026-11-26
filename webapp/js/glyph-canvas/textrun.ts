@@ -2688,7 +2688,10 @@ export class TextRunEditor {
             // Shaping can change the glyphs adjacent to the current cursor
             // without changing cursorPosition itself, so cursor-dependent UI
             // such as the kerning panel needs an explicit refresh here.
-            this.call('cursormoved');
+            // Forward `skipRender` so callers that own a single atomic paint
+            // (e.g. `kerning-only` and `anchor-only` live overlays) do not
+            // trigger a premature render before pan/handle settlement.
+            this.call('cursormoved', undefined, { skipRender });
 
             // Prefetch explicit glyph outlines/advances in background for tokens
             // that are missing in the current editing font subset.

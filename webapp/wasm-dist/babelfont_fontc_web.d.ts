@@ -53,6 +53,11 @@ export function boolean_op_paths(op: string, paths_json: string): string;
 export function clear_font_cache(): void;
 
 /**
+ * Drop transient live kerning preview overrides.
+ */
+export function clear_preview_kerning_overlay(): void;
+
+/**
  * Drop all transient live-drag preview overlay state.
  */
 export function clear_preview_layer_overlay(): void;
@@ -509,6 +514,12 @@ export function set_compile_feature_overlay(text: string): void;
 export function set_debug_font_cache_max_bytes(max_bytes: number): void;
 
 /**
+ * Set transient live-drag / keyboard-burst kerning pair overrides without
+ * mutating Y.Doc or invalidating authoritative font caches.
+ */
+export function set_preview_kerning_overlay(entries_json: string): string;
+
+/**
  * Store a font in memory from babelfont JSON.
  *
  * Populates both the canonical serde_json::Value cache and the
@@ -549,6 +560,7 @@ export interface InitOutput {
     readonly apply_yjs_update: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly boolean_op_paths: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly clear_font_cache: () => void;
+    readonly clear_preview_kerning_overlay: () => void;
     readonly clear_preview_layer_overlay: () => void;
     readonly close_layout_from_fea: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly compile_babelfont: (a: number, b: number, c: any) => [number, number, number, number];
@@ -597,6 +609,7 @@ export interface InitOutput {
     readonly seed_ydoc_document: (a: number, b: number, c: number, d: number) => [number, number];
     readonly set_compile_feature_overlay: (a: number, b: number) => void;
     readonly set_debug_font_cache_max_bytes: (a: number) => void;
+    readonly set_preview_kerning_overlay: (a: number, b: number) => [number, number, number, number];
     readonly store_font: (a: number, b: number) => [number, number];
     readonly ufo_glyph_files_for_paths: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly validate_feature_source_with_full_filter_pipeline: (a: any) => [number, number];

@@ -1196,6 +1196,24 @@ class GlyphCanvas {
         /** The value the shaped text shows (the last compiled write). */
         shaped: number;
     } | null = null;
+    private _liveKerningPreview: {
+        writeKey: string;
+        context: TextModeKerningContext;
+        station: Station;
+        firstKey: string;
+        secondKey: string;
+        isRTL: boolean;
+        isDrag: boolean;
+        focusCanvas: boolean;
+        targetValue: number;
+        inFlightValue: number;
+        shapedValue: number;
+        compileInFlight: boolean;
+        dirtyWhileInFlight: boolean;
+        commitTimer: number | null;
+        fallbackTimer: number | null;
+        lastPropertyPanelUpdateAt: number;
+    } | null = null;
     /**
      * Kerning writes wait for the compile of the previous one, so a held
      * key or a drag renders every step instead of queueing commits.
@@ -3424,14 +3442,27 @@ class GlyphCanvas {
         this.textRunEditor!.on('willreshape', () => {
             this.cancelFeatureChangeAnimation();
         });
-        this.textRunEditor!.on('cursormoved', (reason?: string) => {
-            this.updatePropertyPanel();
-            if (this.hasPendingIdleViewLock() || this.renderSuppressed) {
-                return;
+        this.textRunEditor!.on(
+            'cursormoved',
+            (reason?: string, options?: { skipRender?: boolean }) => {
+                if (
+                    !options?.skipRender ||
+                    (!this._liveKerningPreview &&
+                        !this.outlineEditor.draggingSomething)
+                ) {
+                    this.updatePropertyPanel();
+                }
+                if (
+                    options?.skipRender ||
+                    this.hasPendingIdleViewLock() ||
+                    this.renderSuppressed
+                ) {
+                    return;
+                }
+                this.panToCursor(reason === 'backspace');
+                this.render();
             }
-            this.panToCursor(reason === 'backspace');
-            this.render();
-        });
+        );
         this.textRunEditor!.on('textchanged', () => {
             this.onTextChange();
         });
@@ -9472,6 +9503,21 @@ class GlyphCanvas {
         // A nudge while the previous one compiles adds to the value that
         // is waiting, so no step of a held key is lost.
         const writeKey = this.getTextModeKerningWriteKey(context);
+        if (this.canUseLiveKerningOverlay()) {
+            const currentValue =
+                (this._liveKerningPreview?.writeKey === writeKey
+                    ? this._liveKerningPreview.targetValue
+                    : null) ??
+                context.selectedValue ??
+                0;
+            this.pushLiveKerningPreview(
+                writeKey,
+                currentValue + delta,
+                context,
+                { isDrag: false, focusCanvas: true }
+            );
+            return;
+        }
         const currentValue =
             this.textModeKerningWrites.pendingValue(writeKey)?.value ??
             context.selectedValue ??
@@ -9481,6 +9527,251 @@ class GlyphCanvas {
             context,
             focusCanvas: true
         });
+    }
+
+    private canUseLiveKerningOverlay(): boolean {
+        return Boolean(
+            window.fontCompilation?.isInitialized &&
+            fontManager.currentFont &&
+            typeof fontManager.stageLiveKerningPreview === 'function'
+        );
+    }
+
+    private pushLiveKerningPreview(
+        writeKey: string,
+        nextValue: number,
+        context: TextModeKerningContext,
+        options: { isDrag: boolean; focusCanvas: boolean }
+    ): void {
+        if (
+            !context.station ||
+            !context.selectedFirstKey ||
+            !context.selectedSecondKey
+        ) {
+            return;
+        }
+
+        if (
+            this._liveKerningPreview &&
+            this._liveKerningPreview.writeKey !== writeKey
+        ) {
+            this.commitLiveKerningPreview();
+        }
+
+        if (!this._liveKerningPreview) {
+            const initialShaped = context.selectedValue ?? 0;
+            this._liveKerningPreview = {
+                writeKey,
+                context,
+                station: context.station,
+                firstKey: context.selectedFirstKey,
+                secondKey: context.selectedSecondKey,
+                isRTL: context.isRTL,
+                isDrag: options.isDrag,
+                focusCanvas: options.focusCanvas,
+                targetValue: nextValue,
+                inFlightValue: initialShaped,
+                shapedValue: initialShaped,
+                compileInFlight: false,
+                dirtyWhileInFlight: false,
+                commitTimer: null,
+                fallbackTimer: null,
+                lastPropertyPanelUpdateAt: 0
+            };
+        } else {
+            this._liveKerningPreview.context = context;
+            this._liveKerningPreview.targetValue = nextValue;
+            this._liveKerningPreview.isDrag =
+                this._liveKerningPreview.isDrag || options.isDrag;
+            this._liveKerningPreview.focusCanvas =
+                this._liveKerningPreview.focusCanvas || options.focusCanvas;
+        }
+
+        const preview = this._liveKerningPreview;
+        const pairKey = getTextModeKerningPairKey(
+            preview.firstKey,
+            preview.secondKey
+        );
+        this.textModeKerningDraftPairKey = pairKey;
+        this.textModeKerningDraftScopeKey =
+            this.getTextModeKerningDraftScopeKey(
+                preview.station.id || null,
+                preview.isRTL
+            );
+        this.textModeKerningDraftValue = String(nextValue);
+
+        if (!options.isDrag) {
+            if (preview.commitTimer !== null) {
+                window.clearTimeout(preview.commitTimer);
+            }
+            preview.commitTimer = window.setTimeout(() => {
+                if (this._liveKerningPreview === preview) {
+                    preview.commitTimer = null;
+                    this.commitLiveKerningPreview();
+                }
+            }, APP_SETTINGS.KEYBOARD_PREVIEW_COMMIT_DEBOUNCE);
+        }
+
+        if (preview.compileInFlight) {
+            preview.dirtyWhileInFlight = true;
+            return;
+        }
+
+        this.dispatchNextLiveKerningPreviewCompile(preview);
+    }
+
+    private dispatchNextLiveKerningPreviewCompile(
+        preview: NonNullable<GlyphCanvas['_liveKerningPreview']>
+    ): void {
+        const currentFont = fontManager.currentFont;
+        if (!currentFont) {
+            return;
+        }
+
+        preview.compileInFlight = true;
+        preview.dirtyWhileInFlight = false;
+        preview.inFlightValue = preview.targetValue;
+
+        const drag = this.textModeKerningHandleDrag;
+        if (drag && drag.writeKey === preview.writeKey) {
+            drag.written = preview.inFlightValue;
+        }
+
+        const staged = fontManager.stageLiveKerningPreview([
+            {
+                masterId: preview.station.id || '',
+                isRtl: preview.isRTL,
+                firstKey: preview.firstKey,
+                secondKey: preview.secondKey,
+                value: preview.inFlightValue
+            }
+        ]);
+        if (!staged) {
+            preview.compileInFlight = false;
+            return;
+        }
+
+        if (preview.fallbackTimer !== null) {
+            window.clearTimeout(preview.fallbackTimer);
+        }
+        preview.fallbackTimer = window.setTimeout(() => {
+            if (
+                this._liveKerningPreview !== preview ||
+                !preview.compileInFlight
+            ) {
+                return;
+            }
+            preview.fallbackTimer = null;
+            preview.compileInFlight = false;
+            this.render();
+            this.drainCoalescedLiveKerningPreview();
+        }, 150);
+
+        const changeSource = preview.isDrag
+            ? 'mouse-drag-kerning'
+            : 'keyboard-kerning-value';
+        fontManager.setEditingCompileContext(changeSource, 'kerning-value');
+        currentFont.requestRecompileWithoutDataChange({
+            compileContext: {
+                changeSource,
+                editType: 'kerning-value',
+                dataFreshnessMode: 'live-drag-worker-preview'
+            }
+        });
+        window.autoCompileManager?.checkAndSchedule?.();
+
+        const now = performance.now();
+        if (now - preview.lastPropertyPanelUpdateAt >= 100) {
+            preview.lastPropertyPanelUpdateAt = now;
+            if (preview.focusCanvas) {
+                const active = document.activeElement as HTMLElement | null;
+                if (active && this.propertyPanel?.contains(active)) {
+                    active.blur();
+                }
+            }
+            this.updatePropertyPanel();
+            if (preview.focusCanvas) {
+                this.focusCanvasForTextModeKerning();
+            }
+        }
+    }
+
+    markLiveKerningPreviewPresented(): void {
+        const preview = this._liveKerningPreview;
+        if (!preview) {
+            return;
+        }
+        if (preview.fallbackTimer !== null) {
+            window.clearTimeout(preview.fallbackTimer);
+            preview.fallbackTimer = null;
+        }
+        preview.compileInFlight = false;
+        preview.shapedValue = preview.inFlightValue;
+        const drag = this.textModeKerningHandleDrag;
+        if (drag && drag.writeKey === preview.writeKey) {
+            drag.shaped = preview.inFlightValue;
+        }
+    }
+
+    drainCoalescedLiveKerningPreview(): void {
+        const preview = this._liveKerningPreview;
+        if (
+            !preview ||
+            preview.compileInFlight ||
+            !preview.dirtyWhileInFlight ||
+            preview.targetValue === preview.shapedValue
+        ) {
+            return;
+        }
+        preview.dirtyWhileInFlight = false;
+        queueMicrotask(() => {
+            if (
+                this._liveKerningPreview === preview &&
+                !preview.compileInFlight &&
+                preview.targetValue !== preview.shapedValue
+            ) {
+                this.dispatchNextLiveKerningPreviewCompile(preview);
+            }
+        });
+    }
+
+    private commitLiveKerningPreview(): void {
+        const preview = this._liveKerningPreview;
+        if (!preview) {
+            return;
+        }
+        if (preview.commitTimer !== null) {
+            window.clearTimeout(preview.commitTimer);
+            preview.commitTimer = null;
+        }
+        if (preview.fallbackTimer !== null) {
+            window.clearTimeout(preview.fallbackTimer);
+            preview.fallbackTimer = null;
+        }
+        this._liveKerningPreview = null;
+
+        const finalValue = preview.targetValue;
+        // Commit one authoritative Yjs transaction + full subsetted fontc
+        // catch-up compile (compileEditType: null) so the worker clears its
+        // transient kerning overlay and verifies 100% full-compile parity.
+        this.writeTextModeKerningPairValue(
+            preview.station,
+            preview.firstKey,
+            preview.secondKey,
+            finalValue,
+            preview.isRTL,
+            { fullCatchUpCompile: true }
+        );
+        if (preview.focusCanvas) {
+            const active = document.activeElement as HTMLElement | null;
+            if (active && this.propertyPanel?.contains(active)) {
+                active.blur();
+            }
+        }
+        this.updatePropertyPanel();
+        if (preview.focusCanvas) {
+            this.focusCanvasForTextModeKerning();
+        }
     }
 
     private getTextModeKerningWriteKey(
@@ -9588,15 +9879,19 @@ class GlyphCanvas {
         firstKey: string,
         secondKey: string,
         value: number | null,
-        isRTL: boolean
+        isRTL: boolean,
+        options?: { fullCatchUpCompile?: boolean }
     ): void {
+        const compileEditType = options?.fullCatchUpCompile
+            ? null
+            : ('kerning-value' as const);
         const write = (): void => {
             window.patchSyncEngine?.beginTransaction(
                 'Edit kerning pair',
                 null,
                 {
                     compileChangeSource: 'keyboard-kerning-value',
-                    compileEditType: 'kerning-value'
+                    compileEditType
                 }
             );
             try {
@@ -9673,12 +9968,15 @@ class GlyphCanvas {
         ) {
             return null;
         }
-        // While dragging, the shaped text lags the pointer by a compile;
-        // offset the caret by the difference so the handle stays under it.
+        // While dragging with the legacy non-overlay fallback, offset the
+        // handle by the compile lead. With atomic live kerning overlay,
+        // painting waits for the compiled blob so handle & glyphs stay locked.
         const drag = this.textModeKerningHandleDrag;
-        const lead = drag
-            ? (drag.target - drag.shaped) * (drag.isRTL ? -1 : 1)
-            : 0;
+        const livePreview = this._liveKerningPreview;
+        const lead =
+            drag && !livePreview
+                ? (drag.target - drag.shaped) * (drag.isRTL ? -1 : 1)
+                : 0;
         const x = this.textRunEditor.cursorX + lead;
         if (!Number.isFinite(x)) {
             return null;
@@ -9703,7 +10001,11 @@ class GlyphCanvas {
         return {
             x,
             y: -(clampedScreenY - panY) / scale,
-            value: drag ? drag.target : (context.selectedValue ?? 0),
+            value: livePreview
+                ? livePreview.shapedValue
+                : drag
+                  ? drag.target
+                  : (context.selectedValue ?? 0),
             isRTL: context.isRTL
         };
     }
@@ -9792,9 +10094,16 @@ class GlyphCanvas {
             return;
         }
         drag.target = value;
-        // Each write is a commit the other windows follow; the pacer sends
-        // the latest value once the previous one has compiled. The handle
-        // follows the pointer meanwhile.
+        if (this.canUseLiveKerningOverlay()) {
+            // Atomic live kerning overlay: zero pre-compile render; paint once
+            // synchronously when the compiled GPOS overlay returns.
+            this.pushLiveKerningPreview(drag.writeKey, value, drag.context, {
+                isDrag: true,
+                focusCanvas: false
+            });
+            return;
+        }
+        // Fallback when compile worker is not initialized (e.g. unit tests).
         this.textModeKerningWrites.push(drag.writeKey, {
             value,
             context: drag.context,
@@ -9817,7 +10126,11 @@ class GlyphCanvas {
             return;
         }
         this.kerningHandleMoves.cancel();
-        this.textModeKerningWrites.flush();
+        if (this._liveKerningPreview) {
+            this.commitLiveKerningPreview();
+        } else {
+            this.textModeKerningWrites.flush();
+        }
         this.textModeKerningHandleDrag = null;
         document.removeEventListener(
             'mousemove',
@@ -9831,14 +10144,21 @@ class GlyphCanvas {
 
     getTextModeKerningOverlayState(): TextModeKerningOverlay | null {
         const context = this.getCurrentTextModeKerningContext();
+        const livePreview = this._liveKerningPreview;
+        const activeValue =
+            livePreview &&
+            context.status === 'ready' &&
+            this.getTextModeKerningWriteKey(context) === livePreview.writeKey
+                ? livePreview.shapedValue
+                : context.selectedValue;
         if (
             context.status !== 'ready' ||
             !context.firstCluster ||
             !context.secondCluster ||
             !context.metrics ||
-            !context.hasSelectedValue ||
-            context.selectedValue === null ||
-            context.selectedValue === 0
+            (!livePreview && !context.hasSelectedValue) ||
+            activeValue === null ||
+            activeValue === 0
         ) {
             return null;
         }
@@ -9847,7 +10167,7 @@ class GlyphCanvas {
             context.secondCluster,
             context.isRTL,
             context.metrics,
-            context.selectedValue,
+            activeValue,
             this.textRunEditor?.cursorX ?? null
         );
     }
@@ -12166,6 +12486,15 @@ class GlyphCanvas {
         this.endTextModeKerningHandleDrag();
         this.pointerMoves.cancel();
         this.textModeKerningWrites.cancel();
+        if (this._liveKerningPreview) {
+            if (this._liveKerningPreview.commitTimer !== null) {
+                window.clearTimeout(this._liveKerningPreview.commitTimer);
+            }
+            if (this._liveKerningPreview.fallbackTimer !== null) {
+                window.clearTimeout(this._liveKerningPreview.fallbackTimer);
+            }
+            this._liveKerningPreview = null;
+        }
         void window.patchSyncEngine?.flushPendingCloudSends?.();
 
         // Clear any pending blur timeout
@@ -13150,7 +13479,11 @@ function setupFontLoadingListener() {
                             latestAppliedEditingRevision = incomingRevision;
                         }
 
-                        gc.requestRepaintAfterCompile();
+                        gc.markLiveKerningPreviewPresented();
+                        gc.requestRepaintAfterCompile({
+                            immediate: true
+                        });
+                        gc.drainCoalescedLiveKerningPreview();
                         return;
                     }
 

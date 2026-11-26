@@ -33,6 +33,8 @@ const TAG_HHEA: Tag = Tag::new(b"hhea");
 const TAG_HEAD: Tag = Tag::new(b"head");
 const TAG_MAXP: Tag = Tag::new(b"maxp");
 const TAG_HVAR: Tag = Tag::new(b"HVAR");
+const TAG_GPOS: Tag = Tag::new(b"GPOS");
+const TAG_GDEF: Tag = Tag::new(b"GDEF");
 
 // Composite glyph flags (OpenType glyf specification)
 const ARG_1_AND_2_ARE_WORDS: u16 = 0x0001;
@@ -705,4 +707,53 @@ fn splice_hvar(
         .collect();
     let hvar = Hvar::new(varstore, Some(varidx_map), None, None);
     write_fonts::dump_table(&hvar).ok()
+}
+
+/// Splice the `GPOS` (and `GDEF`, if present) table from a `skip_outlines=true`
+/// kerning-only TTF into `base_ttf`, preserving `glyf`, `loca`, `gvar`, `hmtx`,
+/// `HVAR`, `GSUB`, `cmap`, `fvar`, `STAT`, `name`, `OS/2`, `post`, `head`, `maxp`
+/// verbatim. Returns `None` if glyph order does not match 1-for-1 (caller falls
+/// back cleanly to full `fontc`).
+pub fn splice_gpos_into_ttf(
+    base_ttf: &[u8],
+    base_glyph_order: &[SmolStr],
+    gpos_ttf: &[u8],
+) -> Option<Vec<u8>> {
+    let gpos_glyph_order = extract_ttf_glyph_order(gpos_ttf)?;
+    if gpos_glyph_order.as_slice() != base_glyph_order {
+        return None;
+    }
+
+    let base_font = FontRef::new(base_ttf).ok()?;
+    let gpos_font = FontRef::new(gpos_ttf).ok()?;
+
+    let mut builder = FontBuilder::new();
+    let gpos_has_gdef = gpos_font.table_data(TAG_GDEF).is_some();
+
+    if let Some(gpos_data) = gpos_font.table_data(TAG_GPOS) {
+        builder.add_raw(TAG_GPOS, gpos_data.as_bytes().to_vec());
+    }
+    if let Some(gdef_data) = gpos_font.table_data(TAG_GDEF) {
+        builder.add_raw(TAG_GDEF, gdef_data.as_bytes().to_vec());
+    }
+
+    for record in base_font.table_directory.table_records() {
+        let tag = record.tag();
+        if tag == TAG_GPOS || (tag == TAG_GDEF && gpos_has_gdef) {
+            continue;
+        }
+        let raw = base_font.table_data(tag)?.as_bytes();
+        if tag == TAG_HEAD {
+            if raw.len() < 54 {
+                return None;
+            }
+            let mut head = raw.to_vec();
+            head[8..12].copy_from_slice(&0u32.to_be_bytes());
+            builder.add_raw(TAG_HEAD, head);
+        } else {
+            builder.add_raw(tag, raw.to_vec());
+        }
+    }
+
+    Some(builder.build())
 }

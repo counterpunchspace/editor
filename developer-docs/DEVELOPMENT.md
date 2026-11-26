@@ -19,22 +19,26 @@ Useful development-only helpers:
 
 Both CI and release workflows run `npm test` in `webapp` (`test:checks` then Playwright). There is no separate `test:ci` that skips Playwright. Keep Playwright green locally before pushing; the suite is on the critical path for preview and production deploys.
 
+Key architecture verification suites in `webapp/tests/`:
+
+- `overlay-full-compile-parity.test.js` — runs real `babelfont_fontc_web` WASM and real HarfBuzz (`harfbuzzjs`) in Node to prove 100% point-identity between every live-editing overlay (outlines, sidebearings with `HVAR`, anchors, LTR group kerning, RTL Arabic group kerning) and the authoritative full `fontc` catch-up compile across default, interpolated, and extreme variation locations.
+- `dead-code-regression.test.js` — runs `knip` against `webapp/knip.json` (add any spawned `.mjs` test helpers to `entry`).
+
 ## Python Runtime Model
 
-Counterpunch runs Python in two separate Pyodide environments:
+Counterpunch runs a **single main-thread Pyodide runtime** booted eagerly in the background on startup without blocking font-open readiness (`ensurePyodideReady()`) with gzipped bundled wheels. The console, script editor, glyph filters, compile filters, and Python plugins all share this one runtime, eliminating the duplicate worker Pyodide heap.
 
-- Main-thread Pyodide for the console, script editor, and regular Python execution
-- Glyph-filter worker Pyodide for glyph filter plugins off the UI thread
+### Shared Plugin Context
 
-These environments are isolated. Python objects and module state are not shared directly.
-
-### Sharing JSON-like Data Between Threads
-
-Use the shared plugin context channel for JSON-like data only:
+Use the shared plugin context channel for JSON-like data:
 
 - Main thread sets context via `window.glyphOverviewFilterManager`
-- Worker-side filter Python reads it via `Context()`
-- Worker-side filter Python can send updates back via `SetContextPatch({...})`
+- Filter Python reads it via `Context()` and can send updates back via `SetContextPatch({...})`
+
+## Memory & Rendering Architecture Notes
+
+- **Single-canvas binary Glyph Overview:** `glyph-overview-view.ts` renders visible tiles onto one virtualized canvas backed by a compact binary outline protocol (`getGlyphOutlinesBinary`) and `CompiledTileGlyph` (`Path2D` + FNV-1a `geometryDigest`), retaining zero per-tile JSON shape arrays.
+- **Local sparse open:** Large local fonts (e.g., CJK variable fonts) load full outlines directly into the Rust compilation worker while keeping main-thread JS sparse, hydrating glyph shards on demand during typing, editing, and overview scrolling.
 
 Main-thread API:
 
