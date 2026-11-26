@@ -346,9 +346,7 @@ export class LiveDragEditFunnel {
 
     private async waitForNextPaint(): Promise<void> {
         await new Promise<void>((resolve) => {
-            requestAnimationFrame(() => {
-                requestAnimationFrame(() => resolve());
-            });
+            requestAnimationFrame(() => resolve());
         });
     }
 }

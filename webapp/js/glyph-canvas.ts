@@ -4512,6 +4512,7 @@ class GlyphCanvas {
     setFont(
         fontArrayBuffer: ArrayBuffer,
         options?: {
+            skipInitialShape?: boolean;
             skipInitialShapeRender?: boolean;
             skipPropertiesUIUpdate?: boolean;
         }
@@ -4552,12 +4553,6 @@ class GlyphCanvas {
                 !this.initialFontLoaded
             ).then(async (hbFont) => {
                 timelineSpanEnd(loadFontSpanId);
-                // Rebuild editing font name→GID map for Stage 2 shaping
-                const gidMapSpanId = timelineSpanStart(
-                    'canvas.setFont.rebuildNameToGidMap'
-                );
-                this.textRunEditor!.rebuildEditingFontNameToGid();
-                timelineSpanEnd(gidMapSpanId);
 
                 // During startup, prefer URL-restored StateManager location over a
                 // stale pre-await capture so we don't paint the font default first.
@@ -4578,16 +4573,18 @@ class GlyphCanvas {
                 await this.axesManager!.updateAxesUI();
                 timelineSpanEnd(axesUiSpanId);
 
-                // Shape text with new editing font
-                // (Stage 2 will use the rebuilt name→GID map)
-                const shapeTextSpanId = timelineSpanStart(
-                    'canvas.setFont.shapeText'
-                );
-                this.textRunEditor!.shapeText(
-                    options?.skipInitialShapeRender === true
-                );
+                // Shape text with new editing font unless the caller will
+                // perform its own shapeText(true) immediately after setFont.
+                if (options?.skipInitialShape !== true) {
+                    const shapeTextSpanId = timelineSpanStart(
+                        'canvas.setFont.shapeText'
+                    );
+                    this.textRunEditor!.shapeText(
+                        options?.skipInitialShapeRender === true
+                    );
+                    timelineSpanEnd(shapeTextSpanId);
+                }
                 await reapplyStartupCursorIfNeeded(this);
-                timelineSpanEnd(shapeTextSpanId);
                 console.log(
                     '[GlyphCanvas]',
                     'Shaped text after editing font reload'
@@ -8452,17 +8449,60 @@ class GlyphCanvas {
     }
 
     private getSelectedTextModeKerningStation(): Station | null {
-        if (!this.textRunEditor?.selectedStationId) {
+        const fontModel = fontManager.currentFont?.fontModel;
+        if (!fontModel?.stations?.length) {
             return null;
         }
-
-        const fontModel = fontManager.currentFont?.fontModel;
-        return (
-            fontModel?.stations?.find(
-                (candidate: Station) =>
-                    candidate.id === this.textRunEditor?.selectedStationId
-            ) ?? null
-        );
+        if (this.textRunEditor?.selectedStationId) {
+            const explicit =
+                fontModel.stations.find(
+                    (candidate: Station) =>
+                        candidate.id === this.textRunEditor?.selectedStationId
+                ) ?? null;
+            if (explicit) {
+                return explicit;
+            }
+        }
+        // If startup/open hasn't finished autoSelectMatchingStation() yet,
+        // resolve an exact station match at the current variation location so
+        // kerning reads and nudges never fail with a transient null station.
+        const currentLocation =
+            this.axesManager?.variationSettings ??
+            window.stateManager?.editor_variation_location;
+        const axes = fontModel.axes;
+        if (currentLocation && axes && axes.length > 0) {
+            const tolerance = 0.01;
+            for (const station of fontModel.stations) {
+                if (!station?.id || !station.location) continue;
+                const stationUserspace = designspaceToUserspace(
+                    station.location,
+                    axes as any
+                );
+                let allMatch = true;
+                for (const axis of axes) {
+                    const tag = axis.tag;
+                    const stationVal = Number(stationUserspace[tag]);
+                    const currentVal = Number(
+                        currentLocation[tag] ?? axis.default ?? 0
+                    );
+                    if (
+                        !Number.isFinite(stationVal) ||
+                        !Number.isFinite(currentVal) ||
+                        Math.abs(stationVal - currentVal) > tolerance
+                    ) {
+                        allMatch = false;
+                        break;
+                    }
+                }
+                if (allMatch) {
+                    if (this.textRunEditor) {
+                        this.textRunEditor.selectedStationId = station.id;
+                    }
+                    return station;
+                }
+            }
+        }
+        return null;
     }
 
     private getKerningGlyphNameForCluster(
@@ -9407,7 +9447,20 @@ class GlyphCanvas {
     }
 
     private async nudgeTextModeKerningValue(delta: number): Promise<void> {
-        const context = this.getCurrentTextModeKerningContext();
+        let context = this.getCurrentTextModeKerningContext();
+        if (
+            window.fontManager?.isLocalSparseFont?.() &&
+            context.firstGlyphName &&
+            context.secondGlyphName &&
+            (!window.currentFontModel?.findGlyph?.(context.firstGlyphName) ||
+                !window.currentFontModel?.findGlyph?.(context.secondGlyphName))
+        ) {
+            await window.fontManager.ensureLocalGlyphsHydrated([
+                context.firstGlyphName,
+                context.secondGlyphName
+            ]);
+            context = this.getCurrentTextModeKerningContext();
+        }
         if (
             context.status !== 'ready' ||
             !context.selectedFirstKey ||
@@ -12992,7 +13045,9 @@ function setupFontLoadingListener() {
                     if (compilationMode === 'outline-only') {
                         gc.fontBytes = fontBytesArray;
                         gc.axesManager!.fontBytes = fontBytesArray;
-                        gc.textRunEditor!.swapFontBlob(fontBytesArray);
+                        gc.textRunEditor!.swapFontBlob(fontBytesArray, {
+                            skipRebuildNameToGid: true
+                        });
                         if (
                             detail?.dataFreshnessMode ===
                             'authoritative-worker-yjs'
@@ -13035,7 +13090,9 @@ function setupFontLoadingListener() {
                     if (compilationMode === 'anchor-only') {
                         gc.fontBytes = fontBytesArray;
                         gc.axesManager!.fontBytes = fontBytesArray;
-                        gc.textRunEditor!.swapFontBlob(fontBytesArray);
+                        gc.textRunEditor!.swapFontBlob(fontBytesArray, {
+                            skipRebuildNameToGid: true
+                        });
                         gc.textRunEditor!.shapeText(true);
                         timelineMark(
                             'canvas.editingFontCompiled.anchorOnlySwapped'
@@ -13076,6 +13133,60 @@ function setupFontLoadingListener() {
                         return;
                     }
 
+                    // Fast path for text-input compiles: swap HarfBuzz blob,
+                    // shape once, and paint immediately without blocking on
+                    // sidebar DOM rebuilds (axes/stations never change on typing;
+                    // features UI updates asynchronously after paint).
+                    if (
+                        compilationMode === 'text-input' &&
+                        gc.initialFontLoaded &&
+                        !deferredCommittedSidebearingRender
+                    ) {
+                        const setFontSpanId = timelineSpanStart(
+                            'canvas.editingFontCompiled.setFont'
+                        );
+                        gc.fontBytes = fontBytesArray;
+                        gc.axesManager!.fontBytes = fontBytesArray;
+                        gc.textRunEditor!.swapFontBlob(fontBytesArray);
+                        timelineSpanEnd(setFontSpanId);
+
+                        const forceShapeTextSpanId = timelineSpanStart(
+                            'canvas.editingFontCompiled.forceShapeText'
+                        );
+                        if (
+                            gc.pendingTextModeKerningCursorAnchor &&
+                            !deferredIdleViewLock
+                        ) {
+                            gc.captureTextModeKerningPanAnchor();
+                        }
+                        gc.textRunEditor!.shapeText(true);
+                        if (deferredIdleViewLock) {
+                            gc.reapplyIdleViewLock();
+                            gc.consumeIdleViewLockAfterReshape();
+                            gc.pendingTextModeKerningCursorAnchor = false;
+                        } else if (gc.pendingTextModeKerningCursorAnchor) {
+                            gc.applyTextModeKerningPanAdjustment();
+                            gc.clearTextModeKerningPanAnchor();
+                            gc.pendingTextModeKerningCursorAnchor = false;
+                        }
+                        timelineSpanEnd(forceShapeTextSpanId);
+
+                        if (Number.isFinite(incomingRevision)) {
+                            latestAppliedEditingRevision = incomingRevision;
+                        }
+
+                        gc.requestRepaintAfterCompile();
+                        gc.renderSuppressed = false;
+                        if (gc.featuresManager) {
+                            gc.featuresManager.editingFontBytes =
+                                detail.fontBytes;
+                            requestAnimationFrame(() => {
+                                void gc.featuresManager?.updateFeaturesUI?.();
+                            });
+                        }
+                        return;
+                    }
+
                     // Full compilation path — existing behavior
                     if (gc.featuresManager) {
                         gc.featuresManager.editingFontBytes = detail.fontBytes;
@@ -13102,6 +13213,7 @@ function setupFontLoadingListener() {
                         'canvas.editingFontCompiled.setFont'
                     );
                     await window.glyphCanvas.setFont(arrayBuffer, {
+                        skipInitialShape: true,
                         skipInitialShapeRender: true,
                         // The deferred sidebearing path owns the one final
                         // anchored render after recomposition. Updating the

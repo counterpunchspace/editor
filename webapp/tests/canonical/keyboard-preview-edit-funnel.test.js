@@ -133,8 +133,6 @@ describe('KeyboardPreviewEditFunnel', () => {
 
         flushAnimationFrame();
         await Promise.resolve();
-        flushAnimationFrame();
-        await Promise.resolve();
         await Promise.resolve();
 
         expect(calls).toEqual([
@@ -267,10 +265,6 @@ describe('KeyboardPreviewEditFunnel', () => {
             }
         });
 
-        await Promise.resolve();
-        expect(calls).toEqual(['prepare', 'render']);
-
-        flushAnimationFrame();
         await Promise.resolve();
         expect(calls).toEqual(['prepare', 'render']);
 

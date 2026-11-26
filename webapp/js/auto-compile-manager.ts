@@ -32,13 +32,13 @@ import fontManager from './font-manager';
         }
 
         triggerQueued = true;
-        window.setTimeout(() => {
+        queueMicrotask(() => {
             triggerQueued = false;
             triggerCompilation().catch((err) => {
                 console.error('Compilation error:', err);
                 isCompiling = false;
             });
-        }, 0);
+        });
     }
 
     /**

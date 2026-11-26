@@ -35,9 +35,9 @@ static LAYER_CACHE: Mutex<Option<LayerCache>> = Mutex::new(None);
 // Built lazily from OUTLINE_CACHE results (which contain flattened shapes).
 static COMPONENT_DEPENDENTS: Mutex<Option<HashMap<String, HashSet<String>>>> = Mutex::new(None);
 
-const MAX_OUTLINE_CACHE_ENTRIES: usize = 600;
+const MAX_OUTLINE_CACHE_ENTRIES: usize = 300;
 const MAX_OVERVIEW_BINARY_CACHE_ENTRIES: usize = 600;
-const MAX_LAYER_CACHE_ENTRIES: usize = 600;
+const MAX_LAYER_CACHE_ENTRIES: usize = 300;
 
 struct OutlineCache {
     location_json: String,

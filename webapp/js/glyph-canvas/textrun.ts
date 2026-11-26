@@ -120,6 +120,7 @@ export class TextRunEditor {
     explicitGlyphOutlinePending: Set<string>;
     explicitGlyphOutlineGeneration: number;
     textBufferWriteGeneration: number;
+    lastTextChangeWasKeystroke: boolean;
     displayTextBuffer: string;
     displayIndexToRawStart: number[];
     displayIndexToRawEnd: number[];
@@ -182,6 +183,7 @@ export class TextRunEditor {
         this.explicitGlyphOutlinePending = new Set();
         this.explicitGlyphOutlineGeneration = 0;
         this.textBufferWriteGeneration = 0;
+        this.lastTextChangeWasKeystroke = false;
         this.displayTextBuffer = this.textBuffer;
         this.displayIndexToRawStart = [];
         this.displayIndexToRawEnd = [];
@@ -505,6 +507,7 @@ export class TextRunEditor {
     setTextBuffer(text: string) {
         this.compositionSelectionHold = null;
         this.stopWaitingForTypedCharacterCompile();
+        this.lastTextChangeWasKeystroke = false;
         this.textBuffer = normalizeTextNewlines(text || '');
         this.textBufferWriteGeneration += 1;
         markUserTextBufferWritten();
@@ -2203,6 +2206,7 @@ export class TextRunEditor {
         // Regular character input (only if not a modifier key combo)
         if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
             e.preventDefault();
+            this.lastTextChangeWasKeystroke = true;
             const typedCodepoint = e.key.codePointAt(0);
             if (typedCodepoint !== undefined) {
                 this.typedCodepointsAwaitingCompile.add(typedCodepoint);
@@ -2338,6 +2342,9 @@ export class TextRunEditor {
         // Clean up old HarfBuzz objects before creating new ones to prevent memory leak
         this.destroyHarfbuzz();
         this.invalidateExplicitGlyphOutlineCache();
+        if (isInitialLoad) {
+            this.intrinsicGlyphAdvances.clear();
+        }
 
         // Store font blob
         this.fontBlob = fontData;
@@ -2392,7 +2399,10 @@ export class TextRunEditor {
      * The renderer reads outlines from hbFont.glyphToPath() (fresh) and
      * positions from shapedGlyphs (stale but correct for outline-only changes).
      */
-    swapFontBlob(fontData: Uint8Array): void {
+    swapFontBlob(
+        fontData: Uint8Array,
+        options?: { skipRebuildNameToGid?: boolean }
+    ): void {
         this.destroyHarfbuzz();
         this.invalidateExplicitGlyphOutlineCache();
         this.fontBlob = fontData;
@@ -2412,7 +2422,11 @@ export class TextRunEditor {
             this.hbFont.setVariations(this.axesManager.variationSettings);
         }
 
-        this.rebuildEditingFontNameToGid();
+        if (!(
+            options?.skipRebuildNameToGid && this.editingFontNameToGid.size > 0
+        )) {
+            this.rebuildEditingFontNameToGid();
+        }
     }
 
     private getActiveShapingFont(): any {

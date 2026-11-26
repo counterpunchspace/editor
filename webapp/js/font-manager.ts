@@ -94,6 +94,20 @@ import {
 } from './perf-timeline';
 
 const NO_OP_YJS_UPDATE = new Uint8Array([0, 0]);
+
+/**
+ * Core Arabic joining letters and common harakat pre-warmed on the first
+ * interactive Arabic keystroke so typing an Arabic sentence compiles once
+ * instead of triggering a fresh WASM compile on every unseen character.
+ */
+const ARABIC_CORE_TYPING_CODEPOINTS: readonly number[] = [
+    0x0621, 0x0622, 0x0623, 0x0624, 0x0625, 0x0626, 0x0627, 0x0628, 0x0629,
+    0x062a, 0x062b, 0x062c, 0x062d, 0x062e, 0x062f, 0x0630, 0x0631, 0x0632,
+    0x0633, 0x0634, 0x0635, 0x0636, 0x0637, 0x0638, 0x0639, 0x063a, 0x0641,
+    0x0642, 0x0643, 0x0644, 0x0645, 0x0646, 0x0647, 0x0648, 0x0649, 0x064a,
+    0x064b, 0x064c, 0x064d, 0x064e, 0x064f, 0x0650, 0x0651, 0x0652
+];
+const MAX_STICKY_TYPING_GLYPHS = 120;
 import {
     beginLoadingCursor,
     endLoadingCursor,
@@ -1299,6 +1313,7 @@ class FontManager {
         string,
         EditingCompileContext
     >;
+    private stickyTypingSubsetGlyphs: Set<string> = new Set();
     private workerYjsSendQueue: Promise<unknown>;
     private workerPreviewSendQueue: Promise<unknown>;
     private pendingCloudBadgeVisibleAtByAssetId: Map<string, number>;
@@ -1355,6 +1370,7 @@ class FontManager {
         this.closureCache = null;
         this.editingSubsetSnapshotGlyphs = [];
         this.editingSubsetSnapshotKey = '';
+        this.stickyTypingSubsetGlyphs.clear();
         this.coveredSparseHydrationKey = null;
         this.localSparseHydrator = null;
         this.isExternalReloading = false;
@@ -2467,6 +2483,7 @@ class FontManager {
         this.closureCache = null;
         this.editingSubsetSnapshotGlyphs = [];
         this.editingSubsetSnapshotKey = '';
+        this.stickyTypingSubsetGlyphs.clear();
         this.coveredSparseHydrationKey = null;
         this.localSparseHydrator = null;
         this.clearEditingCompileContext();
@@ -3155,6 +3172,7 @@ class FontManager {
         this.closureCache = null;
         this.editingSubsetSnapshotGlyphs = [];
         this.editingSubsetSnapshotKey = '';
+        this.stickyTypingSubsetGlyphs.clear();
         this.coveredSparseHydrationKey = null;
         this.localSparseHydrator = null;
 
@@ -3208,6 +3226,7 @@ class FontManager {
         this.closureCache = null;
         this.editingSubsetSnapshotGlyphs = [];
         this.editingSubsetSnapshotKey = '';
+        this.stickyTypingSubsetGlyphs.clear();
         this.coveredSparseHydrationKey = null;
         this.localSparseHydrator = null;
         this.pendingBabelfontJsonSyncAfterDrag = true;
@@ -3279,6 +3298,7 @@ class FontManager {
         this.closureCache = null;
         this.editingSubsetSnapshotGlyphs = [];
         this.editingSubsetSnapshotKey = '';
+        this.stickyTypingSubsetGlyphs.clear();
         this.coveredSparseHydrationKey = null;
 
         if (window.glyphCanvas) {
@@ -3892,6 +3912,61 @@ class FontManager {
 
     isLocalSparseFont(): boolean {
         return !!this.localSparseHydrator?.isActive();
+    }
+
+    /**
+     * During interactive keystroke typing, keep the typing subset sticky across
+     * consecutive keystrokes (capped at MAX_STICKY_TYPING_GLYPHS) and pre-warm
+     * core Arabic joining letters + harakat on the first Arabic keystroke so
+     * typing a sentence triggers 1–2 WASM compiles instead of one per character.
+     * Programmatic `setTextBuffer` calls clear the sticky set so snapshots and
+     * explicit subset compiles remain deterministic.
+     */
+    private expandStickyTypingSubset(
+        resolvedText: string,
+        baseGlyphs: string[]
+    ): string[] {
+        const isInteractiveKeystroke =
+            window.glyphCanvas?.textRunEditor?.lastTextChangeWasKeystroke ===
+            true;
+        if (!isInteractiveKeystroke) {
+            this.stickyTypingSubsetGlyphs.clear();
+            return baseGlyphs;
+        }
+        const addSticky = (name?: string | null) => {
+            if (!name || this.stickyTypingSubsetGlyphs.has(name)) {
+                return;
+            }
+            this.stickyTypingSubsetGlyphs.add(name);
+            if (this.stickyTypingSubsetGlyphs.size > MAX_STICKY_TYPING_GLYPHS) {
+                const oldest = this.stickyTypingSubsetGlyphs
+                    .values()
+                    .next().value;
+                if (oldest) {
+                    this.stickyTypingSubsetGlyphs.delete(oldest);
+                }
+            }
+        };
+        if (/[\u0600-\u06FF]/.test(resolvedText)) {
+            const fontModel = this.currentFont?.fontModel;
+            for (const cp of ARABIC_CORE_TYPING_CODEPOINTS) {
+                const glyph =
+                    fontModel?.findGlyphByCodepoint?.(cp) ??
+                    (typeof this.findCatalogGlyphByCodepoint === 'function'
+                        ? this.findCatalogGlyphByCodepoint(cp)
+                        : null);
+                if (glyph?.name) {
+                    addSticky(glyph.name);
+                }
+            }
+        }
+        for (const name of baseGlyphs) {
+            addSticky(name);
+        }
+        return this.normalizeSubsetGlyphs([
+            ...baseGlyphs,
+            ...this.stickyTypingSubsetGlyphs
+        ]);
     }
 
     /**
@@ -4626,10 +4701,24 @@ class FontManager {
         let consumedStartupCompileSlot = false;
 
         try {
-            await this.ensureSparseHydrationForCompile(
-                resolvedText,
-                subsetGlyphs
+            const preCompileContext = this.getEditingCompileContextForRequest(
+                String(this.currentFont.compileRequestVersion)
             );
+            const isTextInputRequest =
+                preCompileContext.changeSource === 'text-input' ||
+                this.lastChangeSource === 'text-input';
+            const isLocalSparseTextInput =
+                isTextInputRequest &&
+                this.isLocalSparseFont() &&
+                window.glyphCanvas?.textRunEditor
+                    ?.lastTextChangeWasKeystroke === true;
+
+            if (!isLocalSparseTextInput) {
+                await this.ensureSparseHydrationForCompile(
+                    resolvedText,
+                    subsetGlyphs
+                );
+            }
             // Compute layout closure subset
             let glyphsToInclude = subsetGlyphs;
             if (this.isLocalSparseFont()) {
@@ -4676,6 +4765,13 @@ class FontManager {
                 }
             }
 
+            if (isTextInputRequest) {
+                glyphsToInclude = this.expandStickyTypingSubset(
+                    resolvedText,
+                    glyphsToInclude
+                );
+            }
+
             const activeEditedGlyphName =
                 window.glyphCanvas?.outlineEditor?.currentGlyphName ||
                 window.glyphCanvas?.getCurrentGlyphName?.();
@@ -4685,8 +4781,24 @@ class FontManager {
             ) {
                 glyphsToInclude = [...glyphsToInclude, activeEditedGlyphName];
             }
-            glyphsToInclude =
-                this.constrainSubsetToHydratedGlyphs(glyphsToInclude);
+            if (isLocalSparseTextInput) {
+                // `fontc-worker`'s FONT_CACHE already holds the complete local
+                // font, so compile immediately in 1 worker hop and hydrate
+                // main-thread JS shards asynchronously after compile returns.
+                const catalogByName =
+                    this.localSparseHydrator?.getBootstrap().glyphIdByName;
+                if (catalogByName && catalogByName.size > 0) {
+                    const filtered = glyphsToInclude.filter((name) =>
+                        catalogByName.has(name)
+                    );
+                    if (filtered.length > 0) {
+                        glyphsToInclude = filtered;
+                    }
+                }
+            } else {
+                glyphsToInclude =
+                    this.constrainSubsetToHydratedGlyphs(glyphsToInclude);
+            }
             this.updateEditingSubsetSnapshot(glyphsToInclude);
             this.notifyActiveEditorGlyphRoom();
 
@@ -4919,6 +5031,16 @@ class FontManager {
                 );
             }
             timelineSpanEnd(applyCompiledResultSpanId);
+            if (isLocalSparseTextInput && glyphsToInclude.length > 0) {
+                const bgText = resolvedText;
+                const bgGlyphs = glyphsToInclude;
+                window.setTimeout(() => {
+                    void this.ensureSparseHydrationForCompile(
+                        bgText,
+                        bgGlyphs
+                    ).catch(() => undefined);
+                }, 0);
+            }
             const duration = (performance.now() - startTime).toFixed(2);
 
             const sourceInfo = incrementalChangeSource
