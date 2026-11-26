@@ -1239,13 +1239,16 @@ test.describe('cloud collaboration fuzz', () => {
                 ] as const);
                 const master = pick(FUZZ_STATIONS).id;
                 const shift = random() < 0.3;
-                if (target === 'component' && componentsOf(Q).length) {
+                const manualComponents = componentsOf(Q).filter(
+                    (index) => !shapesOf(Q, master)[index]?.automatic
+                );
+                if (target === 'component' && manualComponents.length) {
                     return {
                         kind: 'nudge',
                         glyph: Q,
                         master,
                         target,
-                        shape: pick(componentsOf(Q)),
+                        shape: pick(manualComponents),
                         index: 0,
                         key,
                         shift
@@ -1970,8 +1973,9 @@ test.describe('cloud collaboration fuzz', () => {
             ) => {
                 // Late catch-ups or retries would land in this window.
                 await mainPage.waitForTimeout(2500);
-                // Rooms that exist after the step: a glyph the step added
-                // has a new room, one it deleted may be purged already.
+                // Query every glyph room known before or after the step: added
+                // glyphs have a new room, and deleted glyphs keep their room
+                // until whole-font purge (their delete/undo update lands there).
                 const namesAfter = await glyphNamesById();
                 for (const [id, name] of namesAfter) {
                     if (!measured.names.has(id)) {
@@ -1979,7 +1983,7 @@ test.describe('cloud collaboration fuzz', () => {
                     }
                 }
                 const roomDocsAfter = await fontRoomDocumentIds(mainPage, [
-                    ...namesAfter.keys()
+                    ...measured.names.keys()
                 ]);
                 const traffic = summarizeRoomTraffic(
                     roomTraffic,
@@ -2284,6 +2288,16 @@ test.describe('cloud collaboration fuzz', () => {
                         reverted.undone = edit.kind === 'undo';
                         reverted.undoneAt =
                             edit.kind === 'undo' ? step : undefined;
+                        if (edit.kind === 'redo') {
+                            // Redo pushes the item back onto the top of the
+                            // real undo stack after any edits made since it
+                            // was undone, so ownItems.at(-1) must reflect it.
+                            const idx = items.indexOf(reverted);
+                            if (idx >= 0) {
+                                items.splice(idx, 1);
+                                items.push(reverted);
+                            }
+                        }
                         const stack = redoStacks.get(group) ?? [];
                         redoStacks.set(
                             group,

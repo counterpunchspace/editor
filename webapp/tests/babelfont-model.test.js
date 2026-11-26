@@ -8061,3 +8061,109 @@ describe('adding drawings refuses missing identity', () => {
         expect(glyph.drawings).toHaveLength(1);
     });
 });
+
+describe('automatic composite recomposition on removeShape and component.reference', () => {
+    const { Font } = require('../js/babelfont-model');
+
+    function makeCompositeFont() {
+        return Font.fromData({
+            upm: 1000,
+            axes: [],
+            masters: [{ id: 'm1', name: { dflt: 'Regular' }, location: {} }],
+            glyphs: [
+                {
+                    name: 'a',
+                    category: 'Base',
+                    exported: true,
+                    codepoints: [0x61],
+                    layers: [
+                        {
+                            id: 'a-m1',
+                            width: 500,
+                            master: { type: 'DefaultForMaster', master: 'm1' },
+                            shapes: [
+                                {
+                                    nodes: [
+                                        { x: 50, y: 0, nodetype: 'Line' },
+                                        { x: 450, y: 0, nodetype: 'Line' },
+                                        { x: 450, y: 500, nodetype: 'Line' },
+                                        { x: 50, y: 500, nodetype: 'Line' }
+                                    ],
+                                    closed: true
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    name: 'o',
+                    category: 'Base',
+                    exported: true,
+                    codepoints: [0x6f],
+                    layers: [
+                        {
+                            id: 'o-m1',
+                            width: 720,
+                            master: { type: 'DefaultForMaster', master: 'm1' },
+                            shapes: [
+                                {
+                                    nodes: [
+                                        { x: 60, y: 0, nodetype: 'Line' },
+                                        { x: 660, y: 0, nodetype: 'Line' },
+                                        { x: 660, y: 500, nodetype: 'Line' },
+                                        { x: 60, y: 500, nodetype: 'Line' }
+                                    ],
+                                    closed: true
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    name: 'q',
+                    category: 'Base',
+                    exported: true,
+                    codepoints: [0x71],
+                    layers: [
+                        {
+                            id: 'q-m1',
+                            width: 0,
+                            master: { type: 'DefaultForMaster', master: 'm1' },
+                            shapes: []
+                        }
+                    ]
+                }
+            ]
+        });
+    }
+
+    test('Drawing.removeShape recomposes an automatically aligned composite immediately', () => {
+        const font = makeCompositeFont();
+        const drawing = font.findGlyph('q').findDrawingById('q-m1');
+        drawing.addComponent('o');
+        drawing.addComponent('a');
+        for (const comp of drawing.components) {
+            comp.automaticAlignment = true;
+        }
+        drawing.rebuildAutomaticComposition();
+        expect(drawing.isAutomaticAlignedDrawing()).toBe(true);
+        expect(drawing.width).toBe(1220);
+
+        drawing.removeShape(1);
+        expect(drawing.isAutomaticAlignedDrawing()).toBe(true);
+        expect(drawing.width).toBe(720);
+    });
+
+    test('Component.reference setter recomposes an automatically aligned composite immediately', () => {
+        const font = makeCompositeFont();
+        const drawing = font.findGlyph('q').findDrawingById('q-m1');
+        drawing.addComponent('o');
+        drawing.components[0].automaticAlignment = true;
+        drawing.rebuildAutomaticComposition();
+        expect(drawing.isAutomaticAlignedDrawing()).toBe(true);
+        expect(drawing.width).toBe(720);
+
+        drawing.components[0].reference = 'a';
+        expect(drawing.width).toBe(500);
+    });
+});

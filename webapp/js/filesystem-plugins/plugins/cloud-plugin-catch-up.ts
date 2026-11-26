@@ -221,8 +221,16 @@ export const cloudPluginCatchUpMethods = {
             }))
             .filter((target) => {
                 // A deleted glyph's last write still reaches the revision
-                // feed; there is nothing to fetch.
-                if (bridge.isDeletedGlyphDocument?.(target.documentId)) {
+                // feed; there is nothing to fetch unless this window still
+                // holds a non-empty resident shard that must receive the
+                // deletion so the compile worker drops it too.
+                if (
+                    bridge.isDeletedGlyphDocument?.(target.documentId) &&
+                    (bridge.hasResidentGlyphDocument?.(target.documentId) !==
+                        true ||
+                        bridge.isEmptyGlyphDocument?.(target.documentId) ===
+                            true)
+                ) {
                     return skip(target, 'deleted');
                 }
                 // The open glyph’s synced socket already receives every
@@ -521,8 +529,17 @@ export const cloudPluginCatchUpMethods = {
                 materializeError: materializeError?.message ?? null
             }
         );
+        const settledDeletion =
+            current &&
+            (bridge.isDeletedGlyphDocument?.(target.documentId) === true ||
+                (resident &&
+                    !modeled &&
+                    reachedTail.has(target.documentId) &&
+                    bridge.isEmptyGlyphDocument?.(target.documentId) === true &&
+                    !!target.expectedRevision));
         if (
             resident &&
+            !settledDeletion &&
             glyphId &&
             bridge.hasSparseWorkingSet?.() === true &&
             !(bridge.listSparseWorkingGlyphIds?.() ?? []).includes(glyphId)
@@ -541,7 +558,7 @@ export const cloudPluginCatchUpMethods = {
                 { document: target.documentId, reason: 'catch-up' }
             );
         }
-        if (resident && modeled && current) {
+        if ((resident && modeled && current) || settledDeletion) {
             bridge.noteGlyphRevisionFetched?.(glyphId, target.expectedRevision);
             this._glyphCatchUpAttempts.delete(target.documentId);
             this._glyphCatchUpForceBody.delete(glyphId);

@@ -1551,7 +1551,10 @@ async function applyFuzzEditUnguarded(
                         for (const [name, members] of Object.entries(
                             font[property] ?? {}
                         )) {
-                            groups[name] = [...(members as string[])];
+                            const list = members as string[];
+                            groups[name] = step.include
+                                ? list.filter((member) => member !== step.glyph)
+                                : [...list];
                         }
                         const members = (groups[step.group] ?? []).filter(
                             (name) => name !== step.glyph

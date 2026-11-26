@@ -1734,7 +1734,8 @@ fn validate_feature_font(font: &babelfont::Font) -> Result<(), JsValue> {
 
 /// Applies rename snapshots to private caches and publishes them only after
 /// native component and feature validation succeeds.
-fn apply_glyph_rename_transaction(
+fn apply_glyph_rename_transaction<T: ReadTxn>(
+    txn: &T,
     glyph_renames: &[GlyphRename],
     renamed_glyph_snapshots: &HashMap<String, serde_json::Value>,
     changed_glyph_snapshots: &[(String, Option<serde_json::Value>)],
@@ -1745,6 +1746,7 @@ fn apply_glyph_rename_transaction(
     refresh_features: bool,
 ) -> Result<(), JsValue> {
     let had_canonical_json = CANONICAL_JSON_CACHE.lock().unwrap().is_some();
+    let mut rebuilt_from_post_rename_ydoc = false;
     let mut candidate_canonical = if had_canonical_json {
         CANONICAL_JSON_CACHE
             .lock()
@@ -1754,7 +1756,20 @@ fn apply_glyph_rename_transaction(
                 JsValue::from_str("glyph rename transaction: canonical cache is not initialized")
             })?
     } else {
-        let font = get_or_rebuild_font_cache()?;
+        let cached_native = if FONT_CACHE_EPOCH.load(Ordering::Relaxed)
+            == FONT_CACHE_BUILT_AT_EPOCH.load(Ordering::Relaxed)
+        {
+            FONT_CACHE.lock().unwrap().as_ref().cloned()
+        } else {
+            None
+        };
+        let font = match cached_native {
+            Some(cached) => cached,
+            None => {
+                rebuilt_from_post_rename_ydoc = true;
+                Arc::new(stream_native_font_from_ydoc_set_with_txn(txn)?)
+            }
+        };
         serde_json::to_value(&*font).map_err(|error| {
             JsValue::from_str(&format!(
                 "glyph rename transaction: failed to serialize native cache: {}",
@@ -1767,12 +1782,35 @@ fn apply_glyph_rename_transaction(
     if refresh_masters {
         replace_top_level_json_entry(&mut candidate_canonical, "masters", masters_json);
     }
-    if !rename_glyph_json_entries(
-        &mut candidate_canonical,
-        &mut candidate_index,
-        glyph_renames,
-        renamed_glyph_snapshots,
-    ) {
+    let sharded = has_any_glyph_shards();
+    let mut pending_renames: Vec<GlyphRename> = Vec::with_capacity(glyph_renames.len());
+    for rename in glyph_renames {
+        if !candidate_index.contains_key(&rename.old_name)
+            && (rebuilt_from_post_rename_ydoc || sharded)
+        {
+            if let Some(snapshot) = renamed_glyph_snapshots.get(&rename.new_name) {
+                replace_glyph_json_entry(
+                    &mut candidate_canonical,
+                    &mut candidate_index,
+                    &rename.new_name,
+                    Some(snapshot.clone()),
+                );
+            }
+        } else {
+            pending_renames.push(GlyphRename {
+                old_name: rename.old_name.clone(),
+                new_name: rename.new_name.clone(),
+            });
+        }
+    }
+    if !pending_renames.is_empty()
+        && !rename_glyph_json_entries(
+            &mut candidate_canonical,
+            &mut candidate_index,
+            &pending_renames,
+            renamed_glyph_snapshots,
+        )
+    {
         return Err(JsValue::from_str(
             "glyph rename transaction: rename target is absent from canonical cache",
         ));
@@ -5508,14 +5546,19 @@ pub fn seed_ydoc_document(document_id: &str, state_update: &[u8]) -> Result<(), 
 /// Stream a `babelfont::Font` directly from `Y_DOC` + dormant/live glyph shards
 /// one glyph at a time, without materializing a full-font `serde_json::Value` tree.
 fn stream_native_font_from_ydoc_set() -> Result<babelfont::Font, JsValue> {
-    let mut core_json = {
-        let core_guard = Y_DOC.lock().unwrap();
-        let Some(core) = core_guard.as_ref() else {
-            return Err(JsValue::from_str("No font loaded. Open a font first."));
-        };
-        let txn = core.transact();
-        ydoc_to_babelfont_json_with_txn(&txn).map_err(|error| JsValue::from_str(&error))?
+    let core_guard = Y_DOC.lock().unwrap();
+    let Some(core) = core_guard.as_ref() else {
+        return Err(JsValue::from_str("No font loaded. Open a font first."));
     };
+    let txn = core.transact();
+    stream_native_font_from_ydoc_set_with_txn(&txn)
+}
+
+fn stream_native_font_from_ydoc_set_with_txn<T: ReadTxn>(
+    txn: &T,
+) -> Result<babelfont::Font, JsValue> {
+    let mut core_json =
+        ydoc_to_babelfont_json_with_txn(txn).map_err(|error| JsValue::from_str(&error))?;
 
     if !has_any_glyph_shards() {
         if core_json.get("glyphs").is_none() {
@@ -7161,6 +7204,7 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                         None
                     };
                     apply_glyph_rename_transaction(
+                        &txn,
                         &glyph_renames,
                         &renamed_glyph_snapshots,
                         &changed_glyph_snapshots,
@@ -7509,9 +7553,26 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                             refresh_feature_related_caches_from_ydoc(&txn)?;
                         }
 
+                        let has_glyph_or_layer_updates = !changed_layer_snapshots.is_empty()
+                            || !changed_glyph_snapshots.is_empty();
+                        let subset_cache_absent = SUBSET_FONT_CACHE.lock().unwrap().is_none()
+                            && SUBSET_JSON_CACHE.lock().unwrap().is_none();
+                        let filtered_cache_directly_touched = subset_cache_refresh.is_none()
+                            && has_glyph_or_layer_updates
+                            && (subset_cache_absent
+                                || FILTERED_FONT_CACHE.lock().unwrap().as_ref().is_some_and(
+                                    |entry| {
+                                        changed_layer_snapshots.iter().any(|(target, _)| {
+                                            entry.font.glyphs.get(target.glyph_name.as_str()).is_some()
+                                        }) || changed_glyph_snapshots.iter().any(|(name, _)| {
+                                            entry.font.glyphs.get(name.as_str()).is_some()
+                                        })
+                                    },
+                                ));
                         let filtered_cache_source_changed = refresh_masters
                             || refresh_axes
                             || subset_cache_refresh.is_some()
+                            || filtered_cache_directly_touched
                             || invalidate_layout_closure
                             || !glyph_renames.is_empty();
 
@@ -7722,6 +7783,25 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                         *SUBSET_FONT_CACHE.lock().unwrap() = None;
                         *FILTERED_FONT_CACHE.lock().unwrap() = None;
                         FONT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed);
+                        SUBSET_FONT_CACHE_BUILT_AT_EPOCH.store(0, Ordering::Relaxed);
+                    } else if has_any_glyph_shards() {
+                        // Sharded cloud font: `Y_DOC` (`&txn`) is `font-core` only
+                        // and holds zero glyphs (glyphs live in `GLYPH_DOCS` /
+                        // `DORMANT_GLYPH_STATES`). Never populate `CANONICAL_JSON_CACHE`
+                        // from `font-core`; invalidate caches so the next
+                        // `get_or_rebuild_font_cache()` streams the full sharded font
+                        // via `stream_native_font_from_ydoc_set()`.
+                        *canonical_lock = None;
+                        *CANONICAL_GLYPH_INDEX_CACHE.lock().unwrap() = None;
+                        *FONT_CACHE.lock().unwrap() = None;
+                        *SUBSET_JSON_CACHE.lock().unwrap() = None;
+                        *SUBSET_GLYPH_INDEX_CACHE.lock().unwrap() = None;
+                        *SUBSET_FONT_CACHE.lock().unwrap() = None;
+                        *FILTERED_FONT_CACHE.lock().unwrap() = None;
+                        invalidate_last_compiled_ttf();
+                        glyph_outlines::clear_outline_cache();
+                        FONT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed);
+                        FILTER_EPOCH.fetch_add(1, Ordering::Relaxed);
                         SUBSET_FONT_CACHE_BUILT_AT_EPOCH.store(0, Ordering::Relaxed);
                     } else {
                         // No canonical cache yet — fall back to full rebuild
@@ -16594,5 +16674,440 @@ mod tests {
         }
 
         clear_font_cache();
+    }
+
+    #[test]
+    fn sharded_glyph_update_after_font_cache_cleared_does_not_poison_canonical_cache() {
+        use yrs::{Map, ReadTxn, Transact, WriteTxn};
+
+        clear_font_cache();
+        reset_ydoc_set();
+
+        // 1. Seed a sharded cloud font: font-core (no glyphs) + two glyph shards A and B.
+        let core_doc = yrs::Doc::new();
+        {
+            let mut txn = core_doc.transact_mut();
+            let font_map = txn.get_or_insert_map("font");
+            font_map.insert(&mut txn, "upm", 1000i64);
+            let version_arr = font_map.insert(&mut txn, "version", yrs::ArrayPrelim::default());
+            version_arr.push_back(&mut txn, 1i64);
+            version_arr.push_back(&mut txn, 0i64);
+            font_map.insert(&mut txn, "date", "2026-01-01T00:00:00.000Z");
+            let names_map = font_map.insert(&mut txn, "names", yrs::MapPrelim::<yrs::Any>::new());
+            let family = names_map.insert(&mut txn, "family_name", yrs::MapPrelim::<yrs::Any>::new());
+            family.insert(&mut txn, "dflt", "Test");
+            font_map.insert(&mut txn, "axes", yrs::ArrayPrelim::default());
+            let masters = font_map.insert(&mut txn, "masters", yrs::ArrayPrelim::default());
+            let m0 = masters.insert(&mut txn, 0, yrs::MapPrelim::<yrs::Any>::new());
+            m0.insert(&mut txn, "id", "m0");
+            let m0_name = m0.insert(&mut txn, "name", yrs::MapPrelim::<yrs::Any>::new());
+            m0_name.insert(&mut txn, "dflt", "Regular");
+            m0.insert(&mut txn, "location", yrs::MapPrelim::<yrs::Any>::new());
+            m0.insert(&mut txn, "metrics", yrs::MapPrelim::<yrs::Any>::new());
+            m0.insert(&mut txn, "guides", yrs::ArrayPrelim::default());
+            m0.insert(&mut txn, "kerning", yrs::MapPrelim::<yrs::Any>::new());
+            m0.insert(&mut txn, "format_specific", yrs::MapPrelim::<yrs::Any>::new());
+            let features = font_map.insert(&mut txn, "features", yrs::MapPrelim::<yrs::Any>::new());
+            features.insert(&mut txn, "classes", yrs::MapPrelim::<yrs::Any>::new());
+            features.insert(&mut txn, "prefixes", yrs::MapPrelim::<yrs::Any>::new());
+            features.insert(&mut txn, "features", yrs::ArrayPrelim::default());
+            let order = font_map.insert(&mut txn, "glyphOrder", yrs::ArrayPrelim::default());
+            order.push_back(&mut txn, "A");
+            order.push_back(&mut txn, "B");
+        }
+        let core_update = core_doc.transact().encode_state_as_update_v1(&yrs::StateVector::default());
+        seed_ydoc_document(FONT_CORE_DOCUMENT_ID, &core_update).expect("seed font-core");
+
+        let mut b_doc_opt: Option<yrs::Doc> = None;
+        for (doc_id, glyph_name) in [("glyph:id-a", "A"), ("glyph:id-b", "B")] {
+            let gdoc = yrs::Doc::new();
+            {
+                let mut txn = gdoc.transact_mut();
+                let gmap = txn.get_or_insert_map("glyph");
+                gmap.insert(&mut txn, "name", glyph_name);
+                gmap.insert(&mut txn, "category", "Base");
+                gmap.insert(&mut txn, "exported", true);
+                let layers = gmap.insert(&mut txn, "layers", yrs::ArrayPrelim::default());
+                let l0 = layers.insert(&mut txn, 0, yrs::MapPrelim::<yrs::Any>::new());
+                l0.insert(&mut txn, "id", "m0");
+                l0.insert(&mut txn, "width", 500.0f64);
+                l0.insert(&mut txn, "shapes", yrs::ArrayPrelim::default());
+                l0.insert(&mut txn, "anchors", yrs::ArrayPrelim::default());
+                l0.insert(&mut txn, "guides", yrs::ArrayPrelim::default());
+                l0.insert(&mut txn, "format_specific", yrs::MapPrelim::<yrs::Any>::new());
+                let master_ref = l0.insert(&mut txn, "master", yrs::MapPrelim::<yrs::Any>::new());
+                master_ref.insert(&mut txn, "type", "DefaultForMaster");
+                master_ref.insert(&mut txn, "master", "m0");
+            }
+            let gupdate = gdoc.transact().encode_state_as_update_v1(&yrs::StateVector::default());
+            seed_ydoc_document(doc_id, &gupdate).expect("seed glyph shard");
+            if doc_id == "glyph:id-b" {
+                b_doc_opt = Some(gdoc);
+            }
+        }
+        rebuild_caches_from_ydoc_set().expect("rebuild sharded caches");
+
+        // 2. Simulate preceding glyphOrder undo clearing FONT_CACHE while
+        //    CANONICAL_JSON_CACHE is None (retired on sharded fonts).
+        *FONT_CACHE.lock().unwrap() = None;
+        *CANONICAL_JSON_CACHE.lock().unwrap() = None;
+
+        // 3. Apply a glyph-shard update to glyph:id-b while FONT_CACHE is None.
+        let b_doc = b_doc_opt.expect("glyph:id-b local doc");
+        let delta_update = {
+            let sv = b_doc.transact().state_vector();
+            let mut txn = b_doc.transact_mut();
+            if let Some(gmap) = txn.get_map("glyph") {
+                gmap.insert(&mut txn, "exported", true);
+            }
+            txn.encode_state_as_update_v1(&sv)
+        };
+        let metadata = serde_json::json!({
+            "documentId": "glyph:id-b",
+            "changedGlyphs": ["B"],
+            "layerTargets": [{ "glyphName": "B", "layerId": "m0" }]
+        })
+        .to_string();
+        apply_yjs_update(&delta_update, &metadata).expect("apply sharded glyph update");
+
+        // 4. CANONICAL_JSON_CACHE must NOT be poisoned with empty-glyphs font-core,
+        //    and get_or_rebuild_font_cache() must still stream both A and B!
+        assert!(
+            CANONICAL_JSON_CACHE.lock().unwrap().is_none(),
+            "sharded apply_yjs_update must never poison CANONICAL_JSON_CACHE with font-core"
+        );
+        let rebuilt = get_or_rebuild_font_cache().expect("stream full sharded font");
+        let names: Vec<&str> = rebuilt.glyphs.iter().map(|g| g.name.as_str()).collect();
+        assert_eq!(names, vec!["A", "B"]);
+
+        clear_font_cache();
+        reset_ydoc_set();
+    }
+
+    #[test]
+    fn apply_yjs_update_invalidates_filtered_font_cache_when_subset_font_cache_is_none() {
+        use yrs::{Map, ReadTxn, Transact, WriteTxn};
+
+        clear_font_cache();
+        reset_ydoc_set();
+
+        // 1. Seed a sharded font (font-core + glyph:id-a) and populate FILTERED_FONT_CACHE.
+        let core_doc = yrs::Doc::new();
+        {
+            let mut txn = core_doc.transact_mut();
+            let font_map = txn.get_or_insert_map("font");
+            font_map.insert(&mut txn, "upm", 1000i64);
+            let version_arr = font_map.insert(&mut txn, "version", yrs::ArrayPrelim::default());
+            version_arr.push_back(&mut txn, 1i64);
+            version_arr.push_back(&mut txn, 0i64);
+            font_map.insert(&mut txn, "date", "2026-01-01T00:00:00.000Z");
+            let names_map = font_map.insert(&mut txn, "names", yrs::MapPrelim::<yrs::Any>::new());
+            let family = names_map.insert(&mut txn, "family_name", yrs::MapPrelim::<yrs::Any>::new());
+            family.insert(&mut txn, "dflt", "Test");
+            font_map.insert(&mut txn, "axes", yrs::ArrayPrelim::default());
+            let masters = font_map.insert(&mut txn, "masters", yrs::ArrayPrelim::default());
+            let m0 = masters.insert(&mut txn, 0, yrs::MapPrelim::<yrs::Any>::new());
+            m0.insert(&mut txn, "id", "m0");
+            let m0_name = m0.insert(&mut txn, "name", yrs::MapPrelim::<yrs::Any>::new());
+            m0_name.insert(&mut txn, "dflt", "Regular");
+            m0.insert(&mut txn, "location", yrs::MapPrelim::<yrs::Any>::new());
+            m0.insert(&mut txn, "metrics", yrs::MapPrelim::<yrs::Any>::new());
+            m0.insert(&mut txn, "guides", yrs::ArrayPrelim::default());
+            m0.insert(&mut txn, "kerning", yrs::MapPrelim::<yrs::Any>::new());
+            m0.insert(&mut txn, "format_specific", yrs::MapPrelim::<yrs::Any>::new());
+            let features = font_map.insert(&mut txn, "features", yrs::MapPrelim::<yrs::Any>::new());
+            features.insert(&mut txn, "classes", yrs::MapPrelim::<yrs::Any>::new());
+            features.insert(&mut txn, "prefixes", yrs::MapPrelim::<yrs::Any>::new());
+            features.insert(&mut txn, "features", yrs::ArrayPrelim::default());
+            let order = font_map.insert(&mut txn, "glyphOrder", yrs::ArrayPrelim::default());
+            order.push_back(&mut txn, "A");
+        }
+        let core_update = core_doc
+            .transact()
+            .encode_state_as_update_v1(&yrs::StateVector::default());
+        seed_ydoc_document(FONT_CORE_DOCUMENT_ID, &core_update).expect("seed font-core");
+
+        let gdoc = yrs::Doc::new();
+        {
+            let mut txn = gdoc.transact_mut();
+            let gmap = txn.get_or_insert_map("glyph");
+            gmap.insert(&mut txn, "name", "A");
+            gmap.insert(&mut txn, "category", "Base");
+            gmap.insert(&mut txn, "exported", true);
+            let layers = gmap.insert(&mut txn, "layers", yrs::MapPrelim::<yrs::Any>::new());
+            let l0 = layers.insert(&mut txn, "m0", yrs::MapPrelim::<yrs::Any>::new());
+            l0.insert(&mut txn, "id", "m0");
+            l0.insert(&mut txn, "width", 500.0f64);
+            l0.insert(&mut txn, "shapes", yrs::ArrayPrelim::default());
+            l0.insert(&mut txn, "anchors", yrs::ArrayPrelim::default());
+            l0.insert(&mut txn, "guides", yrs::ArrayPrelim::default());
+            l0.insert(&mut txn, "format_specific", yrs::MapPrelim::<yrs::Any>::new());
+            let master_ref = l0.insert(&mut txn, "master", yrs::MapPrelim::<yrs::Any>::new());
+            master_ref.insert(&mut txn, "type", "DefaultForMaster");
+            master_ref.insert(&mut txn, "master", "m0");
+        }
+        let gupdate = gdoc
+            .transact()
+            .encode_state_as_update_v1(&yrs::StateVector::default());
+        seed_ydoc_document("glyph:id-a", &gupdate).expect("seed glyph:id-a");
+        rebuild_caches_from_ydoc_set().expect("rebuild sharded caches");
+
+        let cached_font = get_or_rebuild_font_cache().expect("cached font");
+        let filter_epoch_before = FILTER_EPOCH.load(Ordering::Relaxed);
+        let cache_epoch_before = FONT_CACHE_EPOCH.load(Ordering::Relaxed);
+        *FILTERED_FONT_CACHE.lock().unwrap() = Some(FilteredFontCacheEntry {
+            subset_key: "A".to_string(),
+            filter_epoch: filter_epoch_before,
+            cache_epoch: cache_epoch_before,
+            options_fingerprint: 0,
+            font: cached_font,
+        });
+        // Ensure SUBSET_FONT_CACHE and SUBSET_JSON_CACHE are None (exact L1 state in #337).
+        *SUBSET_FONT_CACHE.lock().unwrap() = None;
+        *SUBSET_JSON_CACHE.lock().unwrap() = None;
+
+        // 2. Apply a layer update to glyph:id-a (A/m0 width 500 -> 555).
+        let delta_update = {
+            let sv = gdoc.transact().state_vector();
+            let mut txn = gdoc.transact_mut();
+            let gmap = txn.get_map("glyph").unwrap();
+            if let Some(yrs::types::Value::YMap(layers)) = gmap.get(&txn, "layers") {
+                if let Some(yrs::types::Value::YMap(l0)) = layers.get(&txn, "m0") {
+                    l0.insert(&mut txn, "width", 555.0f64);
+                }
+            }
+            txn.encode_state_as_update_v1(&sv)
+        };
+        let metadata = serde_json::json!({
+            "documentId": "glyph:id-a",
+            "changedGlyphs": ["A"],
+            "layerTargets": [{ "glyphName": "A", "layerId": "m0" }]
+        })
+        .to_string();
+        apply_yjs_update(&delta_update, &metadata).expect("apply layer update");
+
+        // 3. FILTERED_FONT_CACHE must be cleared and FILTER_EPOCH incremented!
+        assert!(
+            FILTERED_FONT_CACHE.lock().unwrap().is_none(),
+            "FILTERED_FONT_CACHE must be invalidated when SUBSET_FONT_CACHE is None"
+        );
+        assert!(
+            FILTER_EPOCH.load(Ordering::Relaxed) > filter_epoch_before,
+            "FILTER_EPOCH must advance when FILTERED_FONT_CACHE is invalidated"
+        );
+
+        clear_font_cache();
+        reset_ydoc_set();
+    }
+
+    #[test]
+    fn apply_yjs_update_glyph_rename_succeeds_when_font_cache_was_cleared_before_shard_update() {
+        use yrs::{Map, ReadTxn, Transact, WriteTxn};
+
+        clear_font_cache();
+        reset_ydoc_set();
+
+        // 1. Seed sharded cloud font: font-core + glyph:id-g1 ("oldG").
+        let core_doc = yrs::Doc::new();
+        {
+            let mut txn = core_doc.transact_mut();
+            let font_map = txn.get_or_insert_map("font");
+            font_map.insert(&mut txn, "upm", 1000i64);
+            let version_arr = font_map.insert(&mut txn, "version", yrs::ArrayPrelim::default());
+            version_arr.push_back(&mut txn, 1i64);
+            version_arr.push_back(&mut txn, 0i64);
+            font_map.insert(&mut txn, "date", "2026-01-01T00:00:00.000Z");
+            let names_map = font_map.insert(&mut txn, "names", yrs::MapPrelim::<yrs::Any>::new());
+            let family = names_map.insert(&mut txn, "family_name", yrs::MapPrelim::<yrs::Any>::new());
+            family.insert(&mut txn, "dflt", "Test");
+            font_map.insert(&mut txn, "axes", yrs::ArrayPrelim::default());
+            let masters = font_map.insert(&mut txn, "masters", yrs::ArrayPrelim::default());
+            let m0 = masters.insert(&mut txn, 0, yrs::MapPrelim::<yrs::Any>::new());
+            m0.insert(&mut txn, "id", "m0");
+            let m0_name = m0.insert(&mut txn, "name", yrs::MapPrelim::<yrs::Any>::new());
+            m0_name.insert(&mut txn, "dflt", "Regular");
+            m0.insert(&mut txn, "location", yrs::MapPrelim::<yrs::Any>::new());
+            m0.insert(&mut txn, "metrics", yrs::MapPrelim::<yrs::Any>::new());
+            m0.insert(&mut txn, "guides", yrs::ArrayPrelim::default());
+            m0.insert(&mut txn, "kerning", yrs::MapPrelim::<yrs::Any>::new());
+            m0.insert(&mut txn, "format_specific", yrs::MapPrelim::<yrs::Any>::new());
+            let features = font_map.insert(&mut txn, "features", yrs::MapPrelim::<yrs::Any>::new());
+            features.insert(&mut txn, "classes", yrs::MapPrelim::<yrs::Any>::new());
+            features.insert(&mut txn, "prefixes", yrs::MapPrelim::<yrs::Any>::new());
+            features.insert(&mut txn, "features", yrs::ArrayPrelim::default());
+            let order = font_map.insert(&mut txn, "glyphOrder", yrs::ArrayPrelim::default());
+            order.push_back(&mut txn, "oldG");
+        }
+        let core_update = core_doc
+            .transact()
+            .encode_state_as_update_v1(&yrs::StateVector::default());
+        seed_ydoc_document(FONT_CORE_DOCUMENT_ID, &core_update).expect("seed font-core");
+
+        let gdoc = yrs::Doc::new();
+        {
+            let mut txn = gdoc.transact_mut();
+            let gmap = txn.get_or_insert_map("glyph");
+            gmap.insert(&mut txn, "name", "oldG");
+            gmap.insert(&mut txn, "category", "Base");
+            gmap.insert(&mut txn, "exported", true);
+            let layers = gmap.insert(&mut txn, "layers", yrs::MapPrelim::<yrs::Any>::new());
+            let l0 = layers.insert(&mut txn, "m0", yrs::MapPrelim::<yrs::Any>::new());
+            l0.insert(&mut txn, "id", "m0");
+            l0.insert(&mut txn, "width", 500.0f64);
+            l0.insert(&mut txn, "shapes", yrs::ArrayPrelim::default());
+            l0.insert(&mut txn, "anchors", yrs::ArrayPrelim::default());
+            l0.insert(&mut txn, "guides", yrs::ArrayPrelim::default());
+            l0.insert(&mut txn, "format_specific", yrs::MapPrelim::<yrs::Any>::new());
+            let master_ref = l0.insert(&mut txn, "master", yrs::MapPrelim::<yrs::Any>::new());
+            master_ref.insert(&mut txn, "type", "DefaultForMaster");
+            master_ref.insert(&mut txn, "master", "m0");
+        }
+        let gupdate = gdoc
+            .transact()
+            .encode_state_as_update_v1(&yrs::StateVector::default());
+        seed_ydoc_document("glyph:id-g1", &gupdate).expect("seed glyph:id-g1");
+        rebuild_caches_from_ydoc_set().expect("rebuild sharded caches");
+
+        // 2. Simulate font-core glyphOrder arriving first and clearing FONT_CACHE
+        //    (while CANONICAL_JSON_CACHE is None in native-first mode).
+        *FONT_CACHE.lock().unwrap() = None;
+        *CANONICAL_JSON_CACHE.lock().unwrap() = None;
+        FONT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed);
+
+        // 3. Apply glyph:id-g1 rename update ("oldG" -> "newG") with glyphRenames metadata.
+        let rename_update = {
+            let sv = gdoc.transact().state_vector();
+            let mut txn = gdoc.transact_mut();
+            let gmap = txn.get_map("glyph").unwrap();
+            gmap.insert(&mut txn, "name", "newG");
+            txn.encode_state_as_update_v1(&sv)
+        };
+        let metadata = serde_json::json!({
+            "documentId": "glyph:id-g1",
+            "changedGlyphs": ["newG"],
+            "glyphRenames": [{ "oldName": "oldG", "newName": "newG" }]
+        })
+        .to_string();
+        apply_yjs_update(&rename_update, &metadata)
+            .expect("glyph rename must succeed when FONT_CACHE was cleared before shard update");
+
+        // 4. Worker Y.Doc must stay intact and FONT_CACHE must hold "newG" (not "oldG").
+        assert!(Y_DOC.lock().unwrap().is_some(), "Y_DOC must not be discarded");
+        let font = get_or_rebuild_font_cache().expect("native font cache valid");
+        let names: Vec<&str> = font.glyphs.iter().map(|g| g.name.as_str()).collect();
+        assert_eq!(names, vec!["newG"]);
+
+        clear_font_cache();
+        reset_ydoc_set();
+    }
+
+    #[test]
+    fn apply_yjs_update_glyph_rename_succeeds_for_dormant_shard_absent_from_font_cache() {
+        use yrs::{Map, ReadTxn, Transact, WriteTxn};
+
+        clear_font_cache();
+        reset_ydoc_set();
+
+        // 1. Seed sharded cloud font with glyph A only, and build FONT_CACHE.
+        let core_doc = yrs::Doc::new();
+        {
+            let mut txn = core_doc.transact_mut();
+            let font_map = txn.get_or_insert_map("font");
+            font_map.insert(&mut txn, "upm", 1000i64);
+            let version_arr = font_map.insert(&mut txn, "version", yrs::ArrayPrelim::default());
+            version_arr.push_back(&mut txn, 1i64);
+            version_arr.push_back(&mut txn, 0i64);
+            font_map.insert(&mut txn, "date", "2026-01-01T00:00:00.000Z");
+            let names_map = font_map.insert(&mut txn, "names", yrs::MapPrelim::<yrs::Any>::new());
+            let family = names_map.insert(&mut txn, "family_name", yrs::MapPrelim::<yrs::Any>::new());
+            family.insert(&mut txn, "dflt", "Test");
+            font_map.insert(&mut txn, "axes", yrs::ArrayPrelim::default());
+            let masters = font_map.insert(&mut txn, "masters", yrs::ArrayPrelim::default());
+            let m0 = masters.insert(&mut txn, 0, yrs::MapPrelim::<yrs::Any>::new());
+            m0.insert(&mut txn, "id", "m0");
+            let m0_name = m0.insert(&mut txn, "name", yrs::MapPrelim::<yrs::Any>::new());
+            m0_name.insert(&mut txn, "dflt", "Regular");
+            m0.insert(&mut txn, "location", yrs::MapPrelim::<yrs::Any>::new());
+            m0.insert(&mut txn, "metrics", yrs::MapPrelim::<yrs::Any>::new());
+            m0.insert(&mut txn, "guides", yrs::ArrayPrelim::default());
+            m0.insert(&mut txn, "kerning", yrs::MapPrelim::<yrs::Any>::new());
+            m0.insert(&mut txn, "format_specific", yrs::MapPrelim::<yrs::Any>::new());
+            let features = font_map.insert(&mut txn, "features", yrs::MapPrelim::<yrs::Any>::new());
+            features.insert(&mut txn, "classes", yrs::MapPrelim::<yrs::Any>::new());
+            features.insert(&mut txn, "prefixes", yrs::MapPrelim::<yrs::Any>::new());
+            features.insert(&mut txn, "features", yrs::ArrayPrelim::default());
+            let order = font_map.insert(&mut txn, "glyphOrder", yrs::ArrayPrelim::default());
+            order.push_back(&mut txn, "A");
+        }
+        let core_update = core_doc
+            .transact()
+            .encode_state_as_update_v1(&yrs::StateVector::default());
+        seed_ydoc_document(FONT_CORE_DOCUMENT_ID, &core_update).expect("seed font-core");
+
+        let make_glyph_doc = |name: &str| {
+            let gdoc = yrs::Doc::new();
+            {
+                let mut txn = gdoc.transact_mut();
+                let gmap = txn.get_or_insert_map("glyph");
+                gmap.insert(&mut txn, "name", name);
+                gmap.insert(&mut txn, "category", "Base");
+                gmap.insert(&mut txn, "exported", true);
+                let layers = gmap.insert(&mut txn, "layers", yrs::MapPrelim::<yrs::Any>::new());
+                let l0 = layers.insert(&mut txn, "m0", yrs::MapPrelim::<yrs::Any>::new());
+                l0.insert(&mut txn, "id", "m0");
+                l0.insert(&mut txn, "width", 500.0f64);
+                l0.insert(&mut txn, "shapes", yrs::ArrayPrelim::default());
+                l0.insert(&mut txn, "anchors", yrs::ArrayPrelim::default());
+                l0.insert(&mut txn, "guides", yrs::ArrayPrelim::default());
+                l0.insert(&mut txn, "format_specific", yrs::MapPrelim::<yrs::Any>::new());
+                let master_ref = l0.insert(&mut txn, "master", yrs::MapPrelim::<yrs::Any>::new());
+                master_ref.insert(&mut txn, "type", "DefaultForMaster");
+                master_ref.insert(&mut txn, "master", "m0");
+            }
+            gdoc
+        };
+
+        let a_doc = make_glyph_doc("A");
+        let a_update = a_doc
+            .transact()
+            .encode_state_as_update_v1(&yrs::StateVector::default());
+        seed_ydoc_document("glyph:id-a", &a_update).expect("seed glyph:id-a");
+        rebuild_caches_from_ydoc_set().expect("rebuild sharded caches");
+
+        // 2. Seed a later-added glyph shard ("oldDormant") into DORMANT_GLYPH_STATES
+        //    without inserting it into FONT_CACHE (exact L1/O2 state in #368:
+        //    FONT_CACHE is Some(cached) with only ["A"], and the shard rename arrives
+        //    before font-core!).
+        let dormant_doc = make_glyph_doc("oldDormant");
+        let dormant_update = dormant_doc
+            .transact()
+            .encode_state_as_update_v1(&yrs::StateVector::default());
+        seed_ydoc_document("glyph:id-dormant", &dormant_update).expect("seed dormant shard");
+        assert!(FONT_CACHE.lock().unwrap().is_some());
+
+        // 3. Apply glyph:id-dormant rename update ("oldDormant" -> "newDormant").
+        let rename_update = {
+            let sv = dormant_doc.transact().state_vector();
+            let mut txn = dormant_doc.transact_mut();
+            let gmap = txn.get_map("glyph").unwrap();
+            gmap.insert(&mut txn, "name", "newDormant");
+            txn.encode_state_as_update_v1(&sv)
+        };
+        let metadata = serde_json::json!({
+            "documentId": "glyph:id-dormant",
+            "changedGlyphs": ["newDormant"],
+            "glyphRenames": [{ "oldName": "oldDormant", "newName": "newDormant" }]
+        })
+        .to_string();
+        apply_yjs_update(&rename_update, &metadata)
+            .expect("rename of dormant shard absent from FONT_CACHE must succeed");
+
+        assert!(Y_DOC.lock().unwrap().is_some(), "Y_DOC must not be discarded");
+        let font = get_or_rebuild_font_cache().expect("native font cache valid");
+        let names: Vec<&str> = font.glyphs.iter().map(|g| g.name.as_str()).collect();
+        assert_eq!(names, vec!["A", "newDormant"]);
+
+        clear_font_cache();
+        reset_ydoc_set();
     }
 }

@@ -1558,4 +1558,88 @@ describe('glyph catch-up for edits outside the receiver subset', () => {
         });
         expect(bridge.listLiveCatalogGlyphIds()).toEqual(['id-a']);
     });
+
+    test('deletion catch-up on a resident tombstoned glyph empties it, replaces worker doc, and emits a remove commit', () => {
+        const writer = createEngine('writer-delete-race');
+        const receiver = hydrateReceiverFromWriter(writer.bridge);
+        const docId = glyphDocumentId('id-b');
+        const preDeleteState = writer.bridge.encodeDocumentState(docId);
+
+        // Writer deletes B and tombstones it in the catalog.
+        const catalogEntry = (glyphId, name, deleted = false) => ({
+            glyphId,
+            name,
+            codepoints: {},
+            latestGlyphRevision: '0',
+            exported: true,
+            deleted,
+            generation: 0
+        });
+        receiver.syncCloudOwnedProjection({
+            glyphCatalog: {
+                'id-a': catalogEntry('id-a', 'A', false),
+                'id-b': catalogEntry('id-b', 'B', true)
+            },
+            codepointIndex: {}
+        });
+        // font-core removes B from glyphOrder before glyph:id-b deletion arrives.
+        receiver.yDoc.transact(() => {
+            const order = receiver.fontMap.get('glyphOrder');
+            const idx = order.toArray().indexOf('B');
+            if (idx >= 0) {
+                order.delete(idx, 1);
+            }
+        });
+        receiver.applyDocumentCheckpoint(
+            FONT_CORE_DOCUMENT_ID,
+            receiver.encodeDocumentState(FONT_CORE_DOCUMENT_ID)
+        );
+        expect(receiver.isDeletedGlyphDocument(docId)).toBe(true);
+        expect(receiver.hasResidentGlyphDocument(docId)).toBe(true);
+        expect(receiver.isEmptyGlyphDocument(docId)).toBe(false);
+
+        const workerReplaces = [];
+        const committed = [];
+        receiver.setWorkerDocumentReplaceCallback((documentId, state) =>
+            workerReplaces.push({ documentId, state })
+        );
+        receiver.onCommittedChange((entries, context) =>
+            committed.push({ entries, context })
+        );
+
+        // Stale pre-delete catch-up on the resident tombstoned shard returns false
+        // and does not resurrect B or trigger a worker replace/commit.
+        expect(receiver.applyDocumentCatchUp(docId, preDeleteState)).toBe(
+            false
+        );
+        expect(workerReplaces).toHaveLength(0);
+        expect(committed).toHaveLength(0);
+        expect(
+            receiver.getFontJsonSnapshot().glyphs.map((g) => g.name)
+        ).toEqual(['A']);
+
+        // Now writer empties glyph:id-b (the deletion update arrives via log-fetch).
+        const writerDoc = writer.bridge._wakeGlyphDoc('id-b');
+        writerDoc.transact(() => {
+            const glyphMap = writerDoc.getMap('glyph');
+            glyphMap.forEach((_v, k) => glyphMap.delete(k));
+        });
+        const deletionState = writer.bridge.encodeDocumentState(docId);
+
+        expect(receiver.applyDocumentCatchUp(docId, deletionState)).toBe(true);
+        expect(receiver.isEmptyGlyphDocument(docId)).toBe(true);
+        expect(
+            receiver.getFontJsonSnapshot().glyphs.map((g) => g.name)
+        ).toEqual(['A']);
+        expect(workerReplaces).toHaveLength(1);
+        expect(workerReplaces[0].documentId).toBe(docId);
+        expect(committed).toHaveLength(1);
+        expect(committed[0].entries).toEqual([
+            expect.objectContaining({
+                op: 'remove',
+                path: 'glyphs.B:',
+                compileChangeSource: 'remote-catch-up'
+            })
+        ]);
+    });
 });

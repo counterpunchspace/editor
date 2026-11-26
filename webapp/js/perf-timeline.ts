@@ -26,6 +26,10 @@ let timelineEntryCounter = 0;
 const TIMELINE_PRUNE_INTERVAL = 200;
 const TIMELINE_MAX_RETAINED_ENTRIES = 200;
 
+function isRetainedLifecycleLabel(label: string): boolean {
+    return label.startsWith(`${MARK_PREFIX}:font.lifecycle.`);
+}
+
 function prunePerformanceTimelineIfNeeded(): void {
     timelineEntryCounter += 1;
     if (timelineEntryCounter % TIMELINE_PRUNE_INTERVAL !== 0) {
@@ -46,7 +50,11 @@ function prunePerformanceTimelineIfNeeded(): void {
             let cleared = 0;
             for (let i = 0; i < marks.length && cleared < excess; i++) {
                 const name = marks[i].name;
-                if (!isCodeLoadingLabel(name) && !activeStartMarks.has(name)) {
+                if (
+                    !isCodeLoadingLabel(name) &&
+                    !isRetainedLifecycleLabel(name) &&
+                    !activeStartMarks.has(name)
+                ) {
                     perf.clearMarks(name);
                     cleared += 1;
                 }
@@ -60,7 +68,10 @@ function prunePerformanceTimelineIfNeeded(): void {
             let cleared = 0;
             for (let i = 0; i < measures.length && cleared < excess; i++) {
                 const name = measures[i].name;
-                if (!isCodeLoadingLabel(name)) {
+                if (
+                    !isCodeLoadingLabel(name) &&
+                    !isRetainedLifecycleLabel(name)
+                ) {
                     perf.clearMeasures(name);
                     cleared += 1;
                 }

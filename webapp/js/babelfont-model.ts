@@ -6418,6 +6418,12 @@ export class Component extends ArrayElementBase<ComponentData, Shape> {
         ) {
             font.invalidateReverseComponentIndex();
         }
+        if (drawing instanceof Drawing && drawing.isAutomaticAlignedDrawing()) {
+            drawing.rebuildAutomaticComposition();
+            if (glyph instanceof Glyph && glyph.name) {
+                font?.recomputeMetricsKeys(new Set([glyph.name]));
+            }
+        }
     }
 
     /**
@@ -6615,7 +6621,7 @@ export class Component extends ArrayElementBase<ComponentData, Shape> {
             )
             .map((path) => flattenedPathToStoredShape(path));
 
-        drawing.removeShape(index);
+        drawing.removeShape(index, { skipAutomaticRebuild: true });
         for (let pathOffset = 0; pathOffset < pathShapes.length; pathOffset++) {
             drawing.insertShapeAt(index + pathOffset, pathShapes[pathOffset]);
         }
@@ -10555,7 +10561,10 @@ export class Drawing extends ArrayElementBase {
     /**
      * Remove a shape at the specified index
      */
-    removeShape(shapeOrIndex: number | Shape | Path | Component): void {
+    removeShape(
+        shapeOrIndex: number | Shape | Path | Component,
+        options?: { skipAutomaticRebuild?: boolean }
+    ): void {
         assertModelMutationAllowed();
         this.withFingerprintChangeEvent(() => {
             if (!this.data.shapes) {
@@ -10580,6 +10589,23 @@ export class Drawing extends ArrayElementBase {
                 [...this.getPath(), 'shapes', index],
                 removedShape
             );
+            if (
+                removedShape &&
+                typeof removedShape === 'object' &&
+                ('reference' in removedShape || 'Component' in removedShape)
+            ) {
+                this.getFont()?.invalidateReverseComponentIndex();
+            }
+            if (
+                !options?.skipAutomaticRebuild &&
+                this.isAutomaticAlignedDrawing()
+            ) {
+                this.rebuildAutomaticComposition();
+                const glyphName = this.getGlyphName();
+                if (glyphName) {
+                    this.getFont()?.recomputeMetricsKeys(new Set([glyphName]));
+                }
+            }
         });
     }
 

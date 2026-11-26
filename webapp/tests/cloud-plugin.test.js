@@ -3536,6 +3536,72 @@ describe('CloudPlugin glyph catch-up from core revision map', () => {
         }
     });
 
+    test('fetches a deleted glyph when a non-empty shard is still resident and settles without working-set-add or retries', async () => {
+        const plugin = new CloudPlugin();
+        const catchUpDocuments = jest
+            .fn()
+            .mockResolvedValue(['glyph:gone-resident']);
+        const replaceSparseWorkingGlyphIds = jest.fn();
+        const noteGlyphRevisionFetched = jest.fn();
+        plugin._liveSession = { catchUpDocuments };
+        let emptied = false;
+        const bridge = {
+            hasSparseWorkingSet: () => true,
+            listSparseWorkingGlyphIds: () => ['kept'],
+            replaceSparseWorkingGlyphIds,
+            noteGlyphRevisionFetched,
+            glyphDocumentIdForName: () => null,
+            listGlyphRevisionTokens: () => [
+                { glyphId: 'gone-resident', revision: 'rev-del' },
+                { glyphId: 'gone-empty', revision: 'rev-del' }
+            ],
+            glyphHasCatchUpRevision: () => false,
+            hasResidentGlyphDocument: (documentId) =>
+                documentId === 'glyph:gone-resident' ||
+                documentId === 'glyph:gone-empty',
+            isEmptyGlyphDocument: (documentId) =>
+                documentId === 'glyph:gone-empty' ||
+                (documentId === 'glyph:gone-resident' && emptied),
+            isDeletedGlyphDocument: (documentId) =>
+                documentId === 'glyph:gone-resident' ||
+                documentId === 'glyph:gone-empty',
+            catalogGlyphIsInModel: () => false,
+            materializeResidentCatalogGlyph: () => {}
+        };
+        plugin._activeAssetSizeBridge = bridge;
+        catchUpDocuments.mockImplementation(async (targets) => {
+            emptied = true;
+            return targets.map((t) => t.documentId);
+        });
+        const originalCanvas = window.glyphCanvas;
+        window.glyphCanvas = { textRunEditor: { glyphNameBuffer: [] } };
+        try {
+            plugin._enqueueGlyphCatchUp(['gone-resident', 'gone-empty'], {
+                includeUnloaded: true
+            });
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            expect(catchUpDocuments).toHaveBeenCalledTimes(1);
+            expect(catchUpDocuments).toHaveBeenCalledWith(
+                [
+                    {
+                        documentId: 'glyph:gone-resident',
+                        expectedRevision: 'rev-del'
+                    }
+                ],
+                { includeLiveDocuments: true }
+            );
+            expect(replaceSparseWorkingGlyphIds).not.toHaveBeenCalled();
+            expect(noteGlyphRevisionFetched).toHaveBeenCalledWith(
+                'gone-resident',
+                'rev-del'
+            );
+            expect(plugin._glyphCatchUpAttempts.size).toBe(0);
+            expect(plugin._glyphCatchUpForceBody.size).toBe(0);
+        } finally {
+            window.glyphCanvas = originalCanvas;
+        }
+    });
+
     test('skips the HTTP catch-up of a glyph whose live socket is synced', async () => {
         const plugin = new CloudPlugin();
         const catchUpDocuments = jest.fn().mockResolvedValue([]);

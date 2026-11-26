@@ -4098,8 +4098,51 @@ export class PatchSyncEngine {
         }
         // A catch-up started before the glyph was deleted (a rename's, say)
         // can land after the deletion; it must not bring the glyph back.
+        // If this window already holds the pre-deletion shard, still apply an
+        // incoming deletion so the local Y.Doc and the compile worker drop it
+        // from GLYPH_ID_BY_NAME and recompile without the stale glyph.
         if (this._isTombstonedGlyphDocument(documentId)) {
-            return false;
+            if (!this.hasResidentGlyphDocument(documentId)) {
+                return false;
+            }
+            const glyphId = glyphIdFromDocumentId(documentId);
+            const doc = glyphId ? this._wakeGlyphDoc(glyphId) : null;
+            if (!doc) {
+                return false;
+            }
+            const glyphMapBefore = doc.getMap('glyph');
+            const hadGlyphDataBefore =
+                glyphMapBefore instanceof Y.Map && glyphMapBefore.size > 0;
+            const describedBefore = hadGlyphDataBefore
+                ? this._readCatchUpDescription(documentId)
+                : null;
+            applyUpdateWithIntegrity(
+                doc,
+                update,
+                documentId,
+                SYSTEM_REMOTE_ORIGIN,
+                this._brokenScope
+            );
+            const glyphMapAfter = doc.getMap('glyph');
+            const hasGlyphDataAfter =
+                glyphMapAfter instanceof Y.Map && glyphMapAfter.size > 0;
+            if (hadGlyphDataBefore && !hasGlyphDataAfter) {
+                const workerState = this.encodeDocumentState(documentId);
+                if (workerState.length) {
+                    this._workerDocumentReplaceCallback?.(
+                        documentId,
+                        workerState
+                    );
+                }
+                if (describedBefore) {
+                    this._emitCatchUpCommittedChange(
+                        documentId,
+                        update,
+                        describedBefore
+                    );
+                }
+            }
+            return !hasGlyphDataAfter;
         }
         // Only a glyph already held here counts: hydrating a glyph for the
         // first time is not anyone’s edit.
@@ -4180,14 +4223,35 @@ export class PatchSyncEngine {
             return null;
         }
         const glyphName = this._glyphNameById.get(glyphId);
-        const snapshot = glyphName
+        let snapshot = glyphName
             ? this._readNormalizedGlyphSnapshotFromYDoc(glyphName, {
                   ignoreExisting: true
               })
             : null;
-        return glyphName && snapshot
-            ? { kind: 'glyph', glyphId, snapshot }
-            : null;
+        if (!snapshot) {
+            const doc = this._wakeGlyphDoc(glyphId);
+            const glyphMap = doc?.getMap('glyph');
+            const storedName =
+                glyphMap instanceof Y.Map ? glyphMap.get('name') : undefined;
+            if (
+                glyphMap instanceof Y.Map &&
+                glyphMap.size > 0 &&
+                typeof storedName === 'string' &&
+                storedName
+            ) {
+                snapshot = this._cloneRuntimeValue(
+                    this._normalizeGlyphSnapshot(
+                        fromYType(glyphMap),
+                        undefined,
+                        {
+                            strictDrawings: true,
+                            ignoreExisting: true
+                        }
+                    )
+                ) as Unsafe;
+            }
+        }
+        return snapshot ? { kind: 'glyph', glyphId, snapshot } : null;
     }
 
     /** Core keys of the font JSON; glyphs live in their own shards. */
@@ -4240,7 +4304,8 @@ export class PatchSyncEngine {
                 const path = forward.path;
                 if (
                     path[0] === GLYPH_REVISIONS_KEY ||
-                    path[0] === FONT_DEPS_ENTRY_PATH
+                    path[0] === FONT_DEPS_ENTRY_PATH ||
+                    (before.kind === 'glyph' && path[0] === 'glyphOrder')
                 ) {
                     return [];
                 }
@@ -4310,6 +4375,20 @@ export class PatchSyncEngine {
     /** True when the catalog says the glyph was deleted. */
     isDeletedGlyphDocument(documentId: string): boolean {
         return this._isTombstonedGlyphDocument(documentId);
+    }
+
+    /** True when a resident glyph shard holds an empty glyph map (deleted). */
+    isEmptyGlyphDocument(documentId: string): boolean {
+        const glyphId = glyphIdFromDocumentId(documentId);
+        if (!glyphId || !this._hasHeldGlyphDoc(glyphId)) {
+            return false;
+        }
+        const glyphMap = this._wakeGlyphDoc(glyphId)?.getMap('glyph');
+        if (!(glyphMap instanceof Y.Map) || glyphMap.size === 0) {
+            return true;
+        }
+        const storedName = glyphMap.get('name');
+        return typeof storedName !== 'string' || !storedName;
     }
 
     /** A glyph shard whose catalog entry is a tombstone (the glyph was deleted). */
