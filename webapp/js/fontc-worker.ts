@@ -991,7 +991,18 @@ self.onmessage = async (event) => {
             return;
         }
 
-        if (data.type === 'compileEditingCached') {
+        if (
+            data.type === 'compileEditingCached' ||
+            data.type === 'previewOverlayAndCompile'
+        ) {
+            const isFusedPreview = data.type === 'previewOverlayAndCompile';
+            const compilePayload = isFusedPreview
+                ? {
+                      ...(data.compileRequest || {}),
+                      id: data.id,
+                      _usePreviewDrawingOverlay: true
+                  }
+                : data;
             const compileEditingSpanId = timelineSpanStart(
                 'font.worker.compileEditingCached',
                 undefined,
@@ -1008,6 +1019,42 @@ self.onmessage = async (event) => {
             }
 
             try {
+                if (isFusedPreview && data.overlayLayers) {
+                    const overlay = data.overlayLayers;
+                    const updateMetadataJson = JSON.stringify({
+                        changedGlyphs: Array.isArray(overlay.changedGlyphs)
+                            ? overlay.changedGlyphs
+                            : [],
+                        nonGlyphChangeHints: Array.isArray(
+                            overlay.nonGlyphChangeHints
+                        )
+                            ? overlay.nonGlyphChangeHints
+                            : [],
+                        layerTargets: Array.isArray(overlay.layerTargets)
+                            ? overlay.layerTargets
+                            : []
+                    });
+                    const overlayResultJson = apply_preview_layer_overlay(
+                        JSON.stringify(
+                            Array.isArray(overlay.layerUpdates)
+                                ? overlay.layerUpdates
+                                : []
+                        ),
+                        updateMetadataJson
+                    );
+                    const parsedOverlay = parseRustResultJson<{
+                        skipped?: string;
+                    } | null>(overlayResultJson, 'apply_preview_layer_overlay');
+                    const wasSkipped = parsedOverlay?.skipped != null;
+                    if (
+                        !wasSkipped &&
+                        overlay.invalidateLayoutClosure !== false
+                    ) {
+                        cachedPreviewBaseSubsetKey = null;
+                        cachedPreviewClosureGlyphCount = null;
+                    }
+                }
+
                 timelineMark(
                     'font.worker.compileEditingCached.started',
                     withProcess(
@@ -1025,11 +1072,16 @@ self.onmessage = async (event) => {
                     layoutClosureKey,
                     fontRevisionKey,
                     _dragActive,
-                    _compileSource,
-                    _usePreviewLayerOverlay: _usePreviewDrawingOverlay
-                } = data;
+                    _compileSource
+                } = compilePayload;
+                const _usePreviewDrawingOverlay = Boolean(
+                    compilePayload._usePreviewDrawingOverlay ??
+                    compilePayload._usePreviewLayerOverlay
+                );
 
-                if (data.babelfontJson !== '__incremental_drawing__') {
+                if (
+                    compilePayload.babelfontJson !== '__incremental_drawing__'
+                ) {
                     throw new Error(
                         'compileEditingCached requires the incremental Yjs worker cache; full babelfont JSON fallback is disabled'
                     );
@@ -1047,7 +1099,7 @@ self.onmessage = async (event) => {
                     ? subsetGlyphs
                     : null;
 
-                applyCompileFeatureOverlay(data);
+                applyCompileFeatureOverlay(compilePayload);
 
                 if (_compileSource === 'feature-code') {
                     const validateFeaturesSpanId = timelineSpanStart(
@@ -2360,7 +2412,9 @@ self.onmessage = async (event) => {
             );
             try {
                 timelineMark('font.worker.clearCache.started');
-                clear_font_cache();
+                if (initialized) {
+                    clear_font_cache();
+                }
                 cachedBabelfontJson = null;
                 cachedFontRevisionKey = null;
                 cachedBaseSubsetKey = null;

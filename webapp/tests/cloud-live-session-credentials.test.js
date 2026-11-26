@@ -89,3 +89,47 @@ test('the session’s first token is not reused: a reconnect asks for a new one'
     await live._refreshCredentialsOnce();
     expect(refresh).toHaveBeenCalledTimes(1);
 });
+
+test('stale-access reconnect within CREDENTIAL_REUSE_MS forces refresh and revokes access on 403', async () => {
+    const { CloudAdapter } = require('../js/cloud-adapter');
+    let callCount = 0;
+    const refresh = jest.fn(async () => {
+        callCount += 1;
+        if (callCount === 1) {
+            return {
+                token: token(Date.now() + 900_000),
+                roomUrl: 'wss://rooms.example/room/asset-1'
+            };
+        }
+        throw new Error('room-token request failed: 403 {"error":"Forbidden"}');
+    });
+    const live = session(refresh);
+    // Warm the credential cache so we are well within CREDENTIAL_REUSE_MS.
+    await live._refreshCredentialsOnce();
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    const adapter = new CloudAdapter({
+        assetId: 'asset-1',
+        websiteBaseUrl: 'https://editor.example',
+        refreshCredentials: async (options) => {
+            await live._refreshCredentialsOnce(options);
+            return {
+                token: live._token,
+                roomUrl: live._roomUrl
+            };
+        }
+    });
+    live._adapters.set('font-core', adapter);
+    adapter._directConnection = {
+        token: live._token,
+        roomUrl: live._roomUrl
+    };
+    adapter._lastClose = { code: 1006, reason: '' };
+    adapter._lastServerError = { message: 'Access epoch is stale' };
+
+    await adapter._reconnectDirectConnection();
+
+    expect(refresh).toHaveBeenCalledTimes(2);
+    expect(adapter._accessRevoked).toBe(true);
+    expect(adapter._reconnectForbidden).toBe(true);
+});

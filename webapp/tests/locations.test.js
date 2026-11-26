@@ -1,7 +1,10 @@
 const {
+    designspaceToUserspace,
     extendAxesForDesignspaceLocation,
+    normalizeLocation,
     reconcileUserspaceLocation,
-    userspaceAxisRanges
+    userspaceAxisRanges,
+    userspaceToDesignspace
 } = require('../js/locations');
 
 describe('reconcileUserspaceLocation', () => {
@@ -119,5 +122,13 @@ describe('extendAxesForDesignspaceLocation', () => {
         expect(axes[0].min).toBeLessThan(200);
         expect(axes[0].map[0][1]).toBe(0);
         expect(axes[0].map[0][0]).toBe(axes[0].min);
+    });
+});
+
+describe('static font undefined axes guard', () => {
+    test('location conversion helpers tolerate undefined axes without throwing', () => {
+        expect(designspaceToUserspace({ wght: 400 }, undefined)).toEqual({});
+        expect(userspaceToDesignspace({ wght: 400 }, undefined)).toEqual({});
+        expect(normalizeLocation({ wght: 400 }, undefined)).toEqual({});
     });
 });

@@ -58,14 +58,45 @@ function hashString(input: string): string {
     return `${input.length}:${(h1 >>> 0).toString(16)}:${(h2 >>> 0).toString(16)}`;
 }
 
-function pyodide(): { runPythonAsync(code: string): Promise<unknown> } | null {
+type CompileFilterPyodide = {
+    runPythonAsync(code: string): Promise<unknown>;
+    globals?: {
+        has?: (name: string) => boolean;
+        get?: (name: string) => unknown;
+    };
+};
+
+function pyodide(): CompileFilterPyodide | null {
     return (
         (
             window as unknown as {
-                pyodide?: { runPythonAsync(code: string): Promise<unknown> };
+                pyodide?: CompileFilterPyodide;
             }
         ).pyodide ?? null
     );
+}
+
+function hasPythonGlobal(
+    python: CompileFilterPyodide | null,
+    name: string
+): boolean {
+    const globals = python?.globals;
+    if (!globals) {
+        return false;
+    }
+    if (typeof globals.has === 'function') {
+        return globals.has(name);
+    }
+    if (typeof globals.get === 'function') {
+        const value = globals.get(name);
+        if (value === undefined) {
+            return false;
+        }
+        const proxy = value as { destroy?: () => void };
+        proxy?.destroy?.();
+        return true;
+    }
+    return false;
 }
 
 function pythonString(value: string): string {
@@ -174,7 +205,7 @@ export function discoveredCompileFilters(): CompileFilterInfo[] {
 
 export async function discoverCompileFilters(): Promise<CompileFilterInfo[]> {
     const python = pyodide();
-    if (!python) {
+    if (!python || !hasPythonGlobal(python, '_cp_compile_filters_discover')) {
         return discovered;
     }
     const raw = await runHostPythonAsync('_cp_compile_filters_discover()');
@@ -314,11 +345,14 @@ export async function retireLegacyCompileFilterGuides(): Promise<void> {
 }
 
 export async function setupCompileFilter(pluginId: string): Promise<void> {
-    if (!pyodide() && typeof window.ensurePyodideReady === 'function') {
+    if (
+        !hasPythonGlobal(pyodide(), '_cp_compile_filter_setup') &&
+        typeof window.ensurePyodideReady === 'function'
+    ) {
         await window.ensurePyodideReady();
     }
     const python = pyodide();
-    if (!python) {
+    if (!python || !hasPythonGlobal(python, '_cp_compile_filter_setup')) {
         return;
     }
     await python.runPythonAsync(
@@ -327,11 +361,14 @@ export async function setupCompileFilter(pluginId: string): Promise<void> {
 }
 
 export async function takedownCompileFilter(pluginId: string): Promise<void> {
-    if (!pyodide() && typeof window.ensurePyodideReady === 'function') {
+    if (
+        !hasPythonGlobal(pyodide(), '_cp_compile_filter_takedown') &&
+        typeof window.ensurePyodideReady === 'function'
+    ) {
         await window.ensurePyodideReady();
     }
     const python = pyodide();
-    if (!python) {
+    if (!python || !hasPythonGlobal(python, '_cp_compile_filter_takedown')) {
         return;
     }
     await python.runPythonAsync(
@@ -354,7 +391,11 @@ export async function onCompileFilterGuideChange(
     ).currentFontModel;
     const ids = activeCompileFilterIds(font);
     const python = pyodide();
-    if (!python || ids.length === 0) {
+    if (
+        !python ||
+        ids.length === 0 ||
+        !hasPythonGlobal(python, '_cp_compile_filter_guide')
+    ) {
         return false;
     }
     if (discovered.length === 0) {
@@ -740,7 +781,10 @@ export async function queryTransientAnchors(
         return [];
     }
     const python = pyodide();
-    if (!python) {
+    if (
+        !python ||
+        !hasPythonGlobal(python, '_cp_compile_filter_transient_anchors')
+    ) {
         return [];
     }
     await retireLegacyCompileFilterGuides();
@@ -837,7 +881,7 @@ export async function commitTransientAnchor(change: {
     y: number;
     defaultX: number;
 }): Promise<boolean> {
-    if (!pyodide()) {
+    if (!hasPythonGlobal(pyodide(), '_cp_compile_filter_transient_anchor')) {
         return false;
     }
     const bridge = (
@@ -1077,10 +1121,13 @@ export async function prepareCompileFilters(
     if (!font || ids.length === 0) {
         return { drawingUpdates: [], features: '' };
     }
-    if (!pyodide() && typeof window.ensurePyodideReady === 'function') {
+    if (
+        !hasPythonGlobal(pyodide(), '_cp_compile_filters_run') &&
+        typeof window.ensurePyodideReady === 'function'
+    ) {
         await window.ensurePyodideReady();
     }
-    if (!pyodide()) {
+    if (!hasPythonGlobal(pyodide(), '_cp_compile_filters_run')) {
         return { drawingUpdates: [], features: '' };
     }
     if (discovered.length === 0) {

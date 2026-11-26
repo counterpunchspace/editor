@@ -572,4 +572,125 @@ describe('GlyphOverviewFilterManager combined filters', () => {
             expect(refresh).not.toHaveBeenCalled();
         });
     });
+
+    describe('Python filter globals cleanup (Pyodide KeyError regression)', () => {
+        function createStrictPyodideMock({ includeHas = true } = {}) {
+            const store = new Map();
+            const globals = {
+                set: (key, value) => {
+                    store.set(key, value);
+                },
+                delete: (key) => {
+                    if (!store.has(key)) {
+                        throw new Error(`KeyError: '${key}'`);
+                    }
+                    store.delete(key);
+                }
+            };
+            if (includeHas) {
+                globals.has = (key) => store.has(key);
+            }
+            const runPython = jest.fn((code) => {
+                if (code.includes('__glyph_filter_glyphs')) {
+                    // Batch classification returns a Python-like PyProxy with toJs/destroy
+                    const glyphs = store.get('__glyph_filter_glyphs') || [];
+                    const result = Object.fromEntries(
+                        glyphs.map((g) => [g.name, g.name.endsWith('a')])
+                    );
+                    return {
+                        toJs: () => result,
+                        destroy: jest.fn()
+                    };
+                }
+                if (code.includes('exec(__glyph_filter_source')) {
+                    return false;
+                }
+                if (code.includes('getattr(__glyph_filter_instance')) {
+                    return false;
+                }
+                if (code.includes('_cp_filter_syntax_error')) {
+                    return '';
+                }
+                return undefined;
+            });
+            return {
+                store,
+                pyodide: { globals, runPython }
+            };
+        }
+
+        afterEach(() => {
+            delete window.pyodide;
+        });
+
+        test('user-generated filter does not throw KeyError on unset __glyph_filter_instance and cleans up globals', () => {
+            const { store, pyodide } = createStrictPyodideMock();
+            window.pyodide = pyodide;
+
+            const userFilter = {
+                ...makeFilter('user.glyph_endings', ['glyph.name.changed']),
+                isUserFilter: true,
+                pythonCode:
+                    "EVENT_TYPES = ['glyph.name.changed']\ndef classify_glyph(glyph):\n    return glyph.name.endswith('a')\n"
+            };
+
+            expect(() =>
+                manager.classifyGlyphs(userFilter, [
+                    { name: 'alef' },
+                    { name: 'beh_a' }
+                ])
+            ).not.toThrow();
+
+            expect(userFilter.sourceLoaded).toBe(true);
+            expect([...userFilter.classifications.keys()]).toEqual(['beh_a']);
+            expect([...store.keys()]).toEqual([]);
+        });
+
+        test('plugin instance filter does not throw KeyError on unset user globals and cleans up globals', () => {
+            const { store, pyodide } = createStrictPyodideMock();
+            window.pyodide = pyodide;
+
+            const pluginFilter = {
+                ...makeFilter('com.example.custom', ['glyph.name.changed']),
+                isUserFilter: false,
+                instance: { kind: 'py-instance' }
+            };
+
+            expect(() =>
+                manager.classifyGlyphs(pluginFilter, [
+                    { name: 'alef' },
+                    { name: 'beh_a' }
+                ])
+            ).not.toThrow();
+
+            expect(pluginFilter.sourceLoaded).toBe(true);
+            expect([...pluginFilter.classifications.keys()]).toEqual(['beh_a']);
+            expect([...store.keys()]).toEqual([]);
+        });
+
+        test('deleteFilterGlobal tolerates missing keys even without globals.has', () => {
+            const { store, pyodide } = createStrictPyodideMock({
+                includeHas: false
+            });
+            window.pyodide = pyodide;
+
+            const userFilter = {
+                ...makeFilter('user.no_has', ['glyph.name.changed']),
+                isUserFilter: true,
+                pythonCode:
+                    "EVENT_TYPES = ['glyph.name.changed']\ndef classify_glyph(glyph):\n    return True\n"
+            };
+
+            expect(() =>
+                manager.classifyGlyphs(userFilter, [{ name: 'a' }])
+            ).not.toThrow();
+            expect(() =>
+                manager.deleteFilterGlobal(pyodide, '__glyph_filter_instance')
+            ).not.toThrow();
+            expect(() =>
+                manager.validateFilterSource(userFilter.pythonCode)
+            ).not.toThrow();
+            expect([...store.keys()]).toEqual([]);
+        });
+    });
 });

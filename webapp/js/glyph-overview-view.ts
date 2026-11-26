@@ -3199,12 +3199,23 @@ export class GlyphOverviewView {
             // glyphs from the shared cache, which still holds the outlines
             // from before this change.
             const location = { ...this.currentLocation };
-            const response = await fontComp.sendMessage({
-                type: 'getGlyphOutlines',
-                glyphNames: refreshGlyphNames,
-                location,
-                flattenComponents: false
-            });
+            const useBinary =
+                Boolean(fontComp.worker) &&
+                typeof decodeOverviewBinaryOutlines === 'function';
+            const response = await fontComp.sendMessage(
+                useBinary
+                    ? {
+                          type: 'getGlyphOutlinesBinary',
+                          glyphNames: refreshGlyphNames,
+                          location
+                      }
+                    : {
+                          type: 'getGlyphOutlines',
+                          glyphNames: refreshGlyphNames,
+                          location,
+                          flattenComponents: false
+                      }
+            );
             if (
                 sharedOutlineLocationKey(location) !==
                 sharedOutlineLocationKey(this.currentLocation)
@@ -3221,7 +3232,14 @@ export class GlyphOverviewView {
                 return;
             }
 
-            const outlines = JSON.parse(response.outlinesJson || '[]');
+            const outlines =
+                response.buffer instanceof ArrayBuffer
+                    ? decodeOverviewBinaryOutlines(
+                          response.buffer,
+                          response.byteOffset ?? 0,
+                          response.byteLength ?? response.buffer.byteLength
+                      )
+                    : JSON.parse(response.outlinesJson || '[]');
             if (!Array.isArray(outlines) || !outlines.length) {
                 return;
             }

@@ -1681,7 +1681,9 @@ export type CloudAdapterOptions = {
     /** Session owns the one reconnect rebaseline after every live shard is fresh. */
     deferVisibleRebaseline?: boolean;
     wal?: CloudDurableWal;
-    refreshCredentials?: () => Promise<{ token: string; roomUrl: string }>;
+    refreshCredentials?: (options?: {
+        force?: boolean;
+    }) => Promise<{ token: string; roomUrl: string }>;
     /**
      * The room refused an edit because this user may no longer write. The
      * owner of the shared outbox (the session) keeps every unsent edit in

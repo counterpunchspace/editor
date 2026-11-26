@@ -515,7 +515,10 @@ export class CloudAdapter implements FileSystemAdapter {
      */
     private readonly _seqByTransactionId = new Map<string, number>();
     private _refreshCredentials:
-        (() => Promise<{ token: string; roomUrl: string }>) | null = null;
+        | ((options?: {
+              force?: boolean;
+          }) => Promise<{ token: string; roomUrl: string }>)
+        | null = null;
     private _terminalCloseDetail: string | null = null;
     /** A peer update was refused; nothing more is applied to this document. */
     private _inboundHaltedUntilReconnect = false;
@@ -2285,7 +2288,8 @@ export class CloudAdapter implements FileSystemAdapter {
                 });
                 if (
                     event.reason === 'stale-access' ||
-                    event.reason === 'missing-access-epoch'
+                    event.reason === 'missing-access-epoch' ||
+                    this._lastServerError?.message === 'Access epoch is stale'
                 ) {
                     this._reconnectAttempt = 0;
                 }
@@ -4712,7 +4716,14 @@ export class CloudAdapter implements FileSystemAdapter {
         let roomUrl = this._directConnection?.roomUrl;
         if (this._refreshCredentials) {
             try {
-                const next = await this._refreshCredentials();
+                const forceRefresh =
+                    this._lastClose?.code === 4008 ||
+                    this._lastClose?.reason === 'stale-access' ||
+                    this._lastClose?.reason === 'missing-access-epoch' ||
+                    this._lastServerError?.message === 'Access epoch is stale';
+                const next = await this._refreshCredentials({
+                    force: forceRefresh
+                });
                 if (next?.token && next?.roomUrl) {
                     token = next.token;
                     roomUrl = next.roomUrl;

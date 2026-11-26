@@ -188,6 +188,7 @@ interface GlyphFilterPlugin {
 type FilterPyodide = {
     globals: {
         set: (name: string, value: unknown) => void;
+        has?: (name: string) => boolean;
         delete?: (name: string) => void;
     };
     runPython?: (code: string) => unknown;
@@ -1937,7 +1938,7 @@ export class GlyphOverviewFilterManager {
                     });
                 }
             } finally {
-                pyodide.globals.delete?.('__glyph_filter_check_source');
+                this.deleteFilterGlobal(pyodide, '__glyph_filter_check_source');
             }
         }
         const inspection = this.inspectUserFilterSource(code);
@@ -3637,11 +3638,14 @@ export class GlyphOverviewFilterManager {
             }
         } finally {
             this.destroyPyProxy(raw);
-            pyodide.globals.delete?.('__glyph_filter_glyphs');
-            pyodide.globals.delete?.('__glyph_filter_use_candidate');
-            pyodide.globals.delete?.('__glyph_filter_is_user');
-            pyodide.globals.delete?.('__glyph_filter_namespace');
-            pyodide.globals.delete?.('__glyph_filter_instance');
+            this.deleteFilterGlobal(pyodide, '__glyph_filter_glyphs');
+            this.deleteFilterGlobal(pyodide, '__glyph_filter_use_candidate');
+            this.deleteFilterGlobal(pyodide, '__glyph_filter_is_user');
+            if (plugin.isUserFilter) {
+                this.deleteFilterGlobal(pyodide, '__glyph_filter_namespace');
+            } else {
+                this.deleteFilterGlobal(pyodide, '__glyph_filter_instance');
+            }
         }
     }
 
@@ -3737,6 +3741,20 @@ export class GlyphOverviewFilterManager {
         proxy?.destroy?.();
     }
 
+    private deleteFilterGlobal(pyodide: FilterPyodide, key: string): void {
+        if (!pyodide.globals.delete) {
+            return;
+        }
+        if (pyodide.globals.has && !pyodide.globals.has(key)) {
+            return;
+        }
+        try {
+            pyodide.globals.delete(key);
+        } catch {
+            // Pyodide's globals proxy raises KeyError when a key is absent.
+        }
+    }
+
     private ensureFilterSource(plugin: GlyphFilterPlugin): void {
         if (plugin.sourceLoaded) {
             return;
@@ -3759,9 +3777,12 @@ export class GlyphOverviewFilterManager {
                 );
             }
         } finally {
-            pyodide.globals.delete?.('__glyph_filter_namespace');
-            pyodide.globals.delete?.('__glyph_filter_source');
-            pyodide.globals.delete?.('__glyph_filter_instance');
+            this.deleteFilterGlobal(pyodide, '__glyph_filter_namespace');
+            if (plugin.isUserFilter) {
+                this.deleteFilterGlobal(pyodide, '__glyph_filter_source');
+            } else {
+                this.deleteFilterGlobal(pyodide, '__glyph_filter_instance');
+            }
         }
         plugin.hasCandidateFunction = hasCandidate === true;
         plugin.sourceLoaded = true;

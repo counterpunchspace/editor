@@ -518,24 +518,95 @@ export async function overviewTileState(
                                   : value
                       )
                     : null;
-            const atTile = await outlinesAt(overview?.currentLocation ?? {});
+            const binaryDigestsAt = async (at: Record<string, number>) => {
+                const digests = new Map<string, string>();
+                const response = await w.fontCompilation.sendMessage({
+                    type: 'getGlyphOutlinesBinary',
+                    glyphNames: names,
+                    location: at
+                });
+                const buffer = response?.buffer;
+                if (!(buffer instanceof ArrayBuffer)) {
+                    return digests;
+                }
+                const byteOffset = response.byteOffset ?? 0;
+                const byteLength =
+                    response.byteLength ?? buffer.byteLength - byteOffset;
+                if (byteLength < 4) {
+                    return digests;
+                }
+                const view = new DataView(buffer, byteOffset, byteLength);
+                const bytes = new Uint8Array(buffer, byteOffset, byteLength);
+                const decoder = new TextDecoder('utf-8');
+                const glyphCount = view.getUint32(0, true);
+                let pos = 4;
+                for (let g = 0; g < glyphCount; g++) {
+                    const nameLen = view.getUint16(pos, true);
+                    pos += 2;
+                    const name = decoder.decode(
+                        bytes.subarray(pos, pos + nameLen)
+                    );
+                    pos += nameLen;
+                    const payloadStart = pos;
+                    const width = view.getFloat32(pos, true);
+                    pos += 20; // width + 4 bbox floats
+                    pos += 1; // flags
+                    const runCount = view.getUint16(pos, true);
+                    pos += 2;
+                    for (let r = 0; r < runCount; r++) {
+                        pos += 1; // runFlags
+                        const cmdLen = view.getUint32(pos, true);
+                        pos += 4 + cmdLen;
+                    }
+                    let hash = 2166136261;
+                    for (let i = payloadStart; i < pos; i++) {
+                        hash ^= bytes[i];
+                        hash = Math.imul(hash, 16777619);
+                    }
+                    digests.set(
+                        name,
+                        `bin:${width}:${runCount}:${(hash >>> 0)
+                            .toString(16)
+                            .padStart(8, '0')}`
+                    );
+                }
+                return digests;
+            };
+            const tileLocation = overview?.currentLocation ?? {};
+            const atTile = await outlinesAt(tileLocation);
+            const atTileBinaryDigests = await binaryDigestsAt(tileLocation);
             const atFixed = await outlinesAt(fixedLocation);
             const tiles = Array.from(
                 overview?.tiles?.values?.() ?? []
             ) as Array<{
                 glyphName: string;
-                cachedData?: { shapes: unknown; width: unknown };
+                cachedData?: {
+                    __compiledTileGlyph?: boolean;
+                    geometryDigest?: string;
+                    shapes?: unknown;
+                    width?: unknown;
+                };
             }>;
             return names.map((name) => {
                 const tile = tiles.find((entry) => entry.glyphName === name);
                 const current = drawable(
                     atTile.find((outline) => outline.name === name)
                 );
+                const cached = tile?.cachedData;
+                const tileStale = cached?.__compiledTileGlyph
+                    ? typeof cached.geometryDigest === 'string' &&
+                      atTileBinaryDigests.has(name)
+                        ? cached.geometryDigest !==
+                          atTileBinaryDigests.get(name)
+                        : false
+                    : !!cached &&
+                      drawable({
+                          shapes: cached.shapes,
+                          width: cached.width
+                      }) !== current;
                 return {
                     name,
-                    tileStale:
-                        !!tile?.cachedData &&
-                        drawable(tile.cachedData) !== current,
+                    tileStale,
                     outline: drawable(
                         atFixed.find((outline) => outline.name === name)
                     )
@@ -558,10 +629,11 @@ export async function describeStaleTiles(
     return page.evaluate(async (names) => {
         const w = window as any;
         const overview = w.glyphOverviewInstance;
+        const tileLocation = overview?.currentLocation ?? {};
         const response = await w.fontCompilation.sendMessage({
             type: 'getGlyphOutlines',
             glyphNames: names,
-            location: overview?.currentLocation ?? {},
+            location: tileLocation,
             flattenComponents: false
         });
         const worker = JSON.parse(response.outlinesJson || '[]') as Array<{
@@ -569,17 +641,92 @@ export async function describeStaleTiles(
             shapes: unknown;
             width: unknown;
         }>;
+        const workerBinaryDigests = new Map<string, string>();
+        const binaryResponse = await w.fontCompilation.sendMessage({
+            type: 'getGlyphOutlinesBinary',
+            glyphNames: names,
+            location: tileLocation
+        });
+        if (binaryResponse?.buffer instanceof ArrayBuffer) {
+            const byteOffset = binaryResponse.byteOffset ?? 0;
+            const byteLength =
+                binaryResponse.byteLength ??
+                binaryResponse.buffer.byteLength - byteOffset;
+            if (byteLength >= 4) {
+                const view = new DataView(
+                    binaryResponse.buffer,
+                    byteOffset,
+                    byteLength
+                );
+                const bytes = new Uint8Array(
+                    binaryResponse.buffer,
+                    byteOffset,
+                    byteLength
+                );
+                const decoder = new TextDecoder('utf-8');
+                const glyphCount = view.getUint32(0, true);
+                let pos = 4;
+                for (let g = 0; g < glyphCount; g++) {
+                    const nameLen = view.getUint16(pos, true);
+                    pos += 2;
+                    const name = decoder.decode(
+                        bytes.subarray(pos, pos + nameLen)
+                    );
+                    pos += nameLen;
+                    const payloadStart = pos;
+                    const width = view.getFloat32(pos, true);
+                    pos += 21; // width + 4 bbox floats + flags
+                    const runCount = view.getUint16(pos, true);
+                    pos += 2;
+                    for (let r = 0; r < runCount; r++) {
+                        pos += 1;
+                        const cmdLen = view.getUint32(pos, true);
+                        pos += 4 + cmdLen;
+                    }
+                    let hash = 2166136261;
+                    for (let i = payloadStart; i < pos; i++) {
+                        hash ^= bytes[i];
+                        hash = Math.imul(hash, 16777619);
+                    }
+                    workerBinaryDigests.set(
+                        name,
+                        `bin:${width}:${runCount}:${(hash >>> 0)
+                            .toString(16)
+                            .padStart(8, '0')}`
+                    );
+                }
+            }
+        }
         const tiles = Array.from(overview?.tiles?.values?.() ?? []) as Array<{
             glyphName: string;
-            cachedData?: { shapes: unknown; width: unknown };
+            cachedData?: {
+                __compiledTileGlyph?: boolean;
+                geometryDigest?: string;
+                contours?: unknown[];
+                shapes?: unknown;
+                width?: unknown;
+            };
         }>;
-        // Width, then the first shape where tile and worker differ, in full.
+        // Width, then the first shape (or binary digest) where tile and worker differ.
         const describe = (
-            tile?: { shapes: unknown; width: unknown },
-            held?: { shapes: unknown; width: unknown }
+            tile?: {
+                __compiledTileGlyph?: boolean;
+                geometryDigest?: string;
+                contours?: unknown[];
+                shapes?: unknown;
+                width?: unknown;
+            },
+            held?: { shapes: unknown; width: unknown },
+            workerDigest?: string
         ) => {
             if (!tile || !held) {
                 return `tile ${tile ? 'present' : 'none'} | worker ${held ? 'present' : 'none'}`;
+            }
+            if (tile.__compiledTileGlyph) {
+                const match =
+                    typeof tile.geometryDigest === 'string' &&
+                    tile.geometryDigest === workerDigest;
+                return `width ${String(tile.width)} vs ${String(held.width)}; ${match ? 'digest matches' : `digest ${String(tile.geometryDigest ?? 'none')} vs ${String(workerDigest ?? 'none')}`} (${Array.isArray(tile.contours) ? tile.contours.length : 0} contours)`;
             }
             const tileShapes = Array.isArray(tile.shapes) ? tile.shapes : [];
             const heldShapes = Array.isArray(held.shapes) ? held.shapes : [];
@@ -608,7 +755,8 @@ export async function describeStaleTiles(
                 .map((entry) => `${now - entry.at} ms ago`);
             return `${name}: ${describe(
                 tile?.cachedData,
-                worker.find((outline) => outline.name === name)
+                worker.find((outline) => outline.name === name),
+                workerBinaryDigests.get(name)
             )}; glyphChanged ${told.length ? told.join(', ') : 'never recorded'}`;
         });
         const pending = (w.remoteCascadePreview?.pendingTargets ?? []).map(

@@ -4409,4 +4409,3 @@ function announceWindowClose(): void {
 }
 
 window.addEventListener('pagehide', announceWindowClose);
-window.addEventListener('unload', announceWindowClose);

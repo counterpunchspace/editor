@@ -10,6 +10,7 @@ import { execFileSync, execSync, spawn } from 'node:child_process';
 const EDITOR_ORIGIN = new URL(
     process.env.CLOUD_E2E_EDITOR_URL || 'https://localhost:8000'
 ).origin;
+const EDITOR_PORT = Number(new URL(EDITOR_ORIGIN).port) || 8000;
 const EDITOR_ORIGINS = [
     ...new Set([
         EDITOR_ORIGIN,
@@ -428,7 +429,7 @@ export async function ensureCloudCollabStack() {
     const websiteUp = await isLoopbackPortOpen(8788);
     const roomUp = await isLoopbackPortOpen(8787);
     const proxyUp = await isLoopbackPortOpen(8786);
-    const editorUp = await isLoopbackPortOpen(8000);
+    const editorUp = await isLoopbackPortOpen(EDITOR_PORT);
     const websiteHealthy = websiteUp ? await probeWebsiteHealthy() : false;
     const sessionHealthy = websiteHealthy
         ? await probeLocalCloudSessionHealthy()
@@ -489,7 +490,7 @@ export async function ensureCloudCollabStack() {
         (await isLoopbackPortOpen(8787));
     const proxyStillUp =
         (canReuse || lingeringProxy) && (await isLoopbackPortOpen(8786));
-    const editorStillUp = editorUp && (await isLoopbackPortOpen(8000));
+    const editorStillUp = editorUp && (await isLoopbackPortOpen(EDITOR_PORT));
     const collabPersist = path.join(persistRoot, 'collab');
     fs.mkdirSync(collabPersist, { recursive: true });
 
@@ -564,7 +565,8 @@ export async function ensureCloudCollabStack() {
                 'ROOM_WORKER_URL=http://localhost:8787',
                 'CLOUD_ROOM_LIMITS_SERVICE_TOKEN=e2e-p0-limits',
                 'CLOUD_AUTHORIZE_SERVICE_TOKEN=e2e-p0-authorize',
-                'CLOUD_ATTEST_SERVICE_TOKEN=e2e-p0-attest'
+                'CLOUD_ATTEST_SERVICE_TOKEN=e2e-p0-attest',
+                'RESEND_API_KEY=re_123456789'
             ].join('\n') + '\n'
         );
         execFileSync(
@@ -621,6 +623,8 @@ export async function ensureCloudCollabStack() {
                 'CLOUD_AUTHORIZE_SERVICE_TOKEN=e2e-p0-authorize',
                 '--binding',
                 'CLOUD_ATTEST_SERVICE_TOKEN=e2e-p0-attest',
+                '--binding',
+                'RESEND_API_KEY=re_123456789',
                 '--env-file',
                 websiteE2eEnv
             ],
@@ -792,9 +796,11 @@ export async function ensureCloudCollabStack() {
     );
 
     if (!editorStillUp) {
-        await waitForPort(8000, 'editor');
+        await waitForPort(EDITOR_PORT, 'editor');
     } else {
-        console.log('[ensure-cloud-collab-stack] reusing editor on port 8000');
+        console.log(
+            `[ensure-cloud-collab-stack] reusing editor on port ${EDITOR_PORT}`
+        );
     }
     const editorDeadline = Date.now() + 120000;
     while (Date.now() < editorDeadline) {

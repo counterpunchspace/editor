@@ -66,6 +66,8 @@ export interface CompiledTileGlyph {
     hasSubtraction: boolean;
     hasEmptyComponent: boolean;
     contours: CompiledTileContour[];
+    /** Fast FNV-1a digest of the binary geometry payload (width, bbox, flags, runs). */
+    geometryDigest?: string;
     /** Preserves test/diagnostic metadata if attached to raw outline payloads. */
     at?: unknown;
     outline?: unknown;
@@ -137,6 +139,7 @@ export function decodeOverviewBinaryOutlines(
         pos += 2;
         const name = decodeUtf8Slice(bytes, pos, nameLen);
         pos += nameLen;
+        const payloadStart = pos;
 
         const width = view.getFloat32(pos, true);
         const xMin = view.getFloat32(pos + 4, true);
@@ -210,6 +213,15 @@ export function decodeOverviewBinaryOutlines(
             };
         }
 
+        let hash = 2166136261;
+        for (let i = payloadStart; i < pos; i++) {
+            hash ^= bytes[i];
+            hash = Math.imul(hash, 16777619);
+        }
+        const geometryDigest = `bin:${width}:${runCount}:${(hash >>> 0)
+            .toString(16)
+            .padStart(8, '0')}`;
+
         results[g] = {
             __compiledTileGlyph: true,
             name,
@@ -222,7 +234,8 @@ export function decodeOverviewBinaryOutlines(
             hasSubtraction: (flags & OVERVIEW_GLYPH_FLAG_HAS_SUBTRACTION) !== 0,
             hasEmptyComponent:
                 (flags & OVERVIEW_GLYPH_FLAG_HAS_EMPTY_COMPONENT) !== 0,
-            contours
+            contours,
+            geometryDigest
         };
     }
 

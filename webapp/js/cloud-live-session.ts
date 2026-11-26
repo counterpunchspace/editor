@@ -2378,8 +2378,8 @@ export class CloudLiveSession {
             onUnsentEditsKept: () => {
                 this._reportKeptEdits(this._keptEditCount());
             },
-            refreshCredentials: async () => {
-                await this._refreshCredentialsOnce();
+            refreshCredentials: async (options) => {
+                await this._refreshCredentialsOnce(options);
                 return {
                     token: this._token,
                     roomUrl: normalizeCloudShardWebSocketUrl(

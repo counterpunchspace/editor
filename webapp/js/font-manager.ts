@@ -1314,6 +1314,17 @@ class FontManager {
         EditingCompileContext
     >;
     private stickyTypingSubsetGlyphs: Set<string> = new Set();
+    private pendingFusedPreviewOverlay: {
+        layerUpdates: Array<{
+            glyphName: string;
+            layerId: string;
+            layerData: Babelfont.Layer;
+        }>;
+        changedGlyphs: string[];
+        nonGlyphChangeHints: string[];
+        layerTargets: WorkerReplayTarget[];
+        invalidateLayoutClosure: boolean;
+    } | null = null;
     private workerYjsSendQueue: Promise<unknown>;
     private workerPreviewSendQueue: Promise<unknown>;
     private pendingCloudBadgeVisibleAtByAssetId: Map<string, number>;
@@ -3514,8 +3525,8 @@ class FontManager {
             }
 
             console.log('[FontManager] handleNewFont: clearing caches');
-            // A compile worker that has not started yet holds no cache.
-            if (fontCompilation.worker) {
+            // A compile worker that has not finished initializing holds no cache.
+            if (fontCompilation.worker && fontCompilation.isInitialized) {
                 try {
                     await fontCompilation.sendMessage({ type: 'clearCache' });
                     console.log('[FontManager] handleNewFont: clearCache done');
@@ -4948,6 +4959,14 @@ class FontManager {
                     );
                 }
 
+                const fusedPreviewOverlay =
+                    dataFreshnessModeAtRequest === 'live-drag-worker-preview'
+                        ? this.pendingFusedPreviewOverlay
+                        : null;
+                if (fusedPreviewOverlay) {
+                    this.pendingFusedPreviewOverlay = null;
+                }
+
                 result = await fontCompilation.compileEditingFromJsonCached(
                     requestedRevisionKey,
                     subsetForCompile ?? [],
@@ -4964,7 +4983,10 @@ class FontManager {
                                 !forceFullWorkerCompile),
                         usePreviewDrawingOverlay:
                             dataFreshnessModeAtRequest ===
-                            'live-drag-worker-preview'
+                            'live-drag-worker-preview',
+                        ...(fusedPreviewOverlay
+                            ? { previewOverlay: fusedPreviewOverlay }
+                            : undefined)
                     }
                 );
 
@@ -7820,6 +7842,7 @@ class FontManager {
         drawingId?: string | null,
         options?: {
             dispatchGlyphChanged?: boolean;
+            fuseWithNextCompile?: boolean;
             explicitDrawingData?: Iterable<ExplicitDrawingCacheInput>;
             /** When set, use these explicit per-glyph drawing targets instead of
              *  glyph-names + a shared source layerId. */
@@ -7893,17 +7916,74 @@ class FontManager {
                           }
                       );
 
-            const updatedIncrementally =
-                !!pendingDrawingUpdates &&
-                pendingDrawingUpdates.length > 0 &&
-                (await this.submitDrawingUpdatesToWorkerPreview(
-                    pendingDrawingUpdates
-                ));
-
-            if (!updatedIncrementally) {
-                throw new Error(
-                    'Incremental worker preview overlay failed during live drag refresh'
+            if (
+                (options?.fuseWithNextCompile ||
+                    options?.dispatchGlyphChanged === false) &&
+                fontCompilation.supportsFusedPreviewCompile?.() &&
+                pendingDrawingUpdates &&
+                pendingDrawingUpdates.length > 0
+            ) {
+                const normalizedUpdates = pendingDrawingUpdates.map(
+                    (update) => ({
+                        glyphName: update.glyphName,
+                        layerId: update.layerId,
+                        layerData: this.normalizeDrawingForRust(
+                            update.layerData
+                        )
+                    })
                 );
+                const mergedByKey = new Map<
+                    string,
+                    {
+                        glyphName: string;
+                        layerId: string;
+                        layerData: Babelfont.Layer;
+                    }
+                >();
+                if (this.pendingFusedPreviewOverlay) {
+                    for (const existing of this.pendingFusedPreviewOverlay
+                        .layerUpdates) {
+                        mergedByKey.set(
+                            `${existing.glyphName}\0${existing.layerId}`,
+                            existing
+                        );
+                    }
+                }
+                for (const update of normalizedUpdates) {
+                    mergedByKey.set(
+                        `${update.glyphName}\0${update.layerId}`,
+                        update
+                    );
+                }
+                const mergedUpdates = Array.from(mergedByKey.values());
+                this.pendingFusedPreviewOverlay = {
+                    layerUpdates: mergedUpdates,
+                    changedGlyphs: Array.from(
+                        new Set(mergedUpdates.map((u) => u.glyphName))
+                    ),
+                    nonGlyphChangeHints: [],
+                    layerTargets: normalizeWorkerReplayTargets(
+                        mergedUpdates.map((u) => ({
+                            glyphName: u.glyphName,
+                            layerId: u.layerId
+                        }))
+                    ),
+                    invalidateLayoutClosure: false
+                };
+            } else {
+                this.pendingFusedPreviewOverlay = null;
+                const updatedIncrementally =
+                    !!pendingDrawingUpdates &&
+                    pendingDrawingUpdates.length > 0 &&
+                    (await this.submitDrawingUpdatesToWorkerPreview(
+                        pendingDrawingUpdates
+                    ));
+
+                if (!updatedIncrementally) {
+                    throw new Error(
+                        'Incremental worker preview overlay failed during live drag refresh'
+                    );
+                }
             }
             this._stagedLinkedPreview = {
                 updates: pendingDrawingUpdates,
@@ -8050,6 +8130,7 @@ class FontManager {
 
     clearLiveDragPreview(options?: { notifyPeers?: boolean }): void {
         this._stagedLinkedPreview = null;
+        this.pendingFusedPreviewOverlay = null;
         if (options?.notifyPeers !== false) {
             window.windowSync?.endLivePreview?.();
         }

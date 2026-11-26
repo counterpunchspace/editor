@@ -5671,7 +5671,7 @@ class GlyphCanvas {
                 : {};
             const userspaceLocation: Record<string, number> = location
                 ? ({
-                      ...designspaceToUserspace(location, fontModel.axes as any)
+                      ...designspaceToUserspace(location, fontModel.axes || [])
                   } as Record<string, number>)
                 : {};
 
@@ -12094,7 +12094,7 @@ class GlyphCanvas {
         timelineMark('canvas.render.completed');
     }
 
-    requestRepaintAfterCompile(): void {
+    requestRepaintAfterCompile(options?: { immediate?: boolean }): void {
         this.hasDeferredRenderRequest = true;
         timelineMark('canvas.compileRepaint.requested');
         recordLiveTextDiagnostic(
@@ -12134,11 +12134,19 @@ class GlyphCanvas {
                 this.textRunEditor
             );
             this.render();
-            if (this.outlineEditor.active) {
+            if (
+                this.outlineEditor.active &&
+                !this.outlineEditor.draggingSomething
+            ) {
                 this.outlineEditor.performHitDetection(null);
             }
             timelineMark('canvas.compileRepaint.completed');
         };
+
+        if (options?.immediate && !this.shouldDeferCanvasPaint()) {
+            tryRepaint();
+            return;
+        }
 
         requestAnimationFrame(tryRepaint);
     }
@@ -13048,10 +13056,10 @@ function setupFontLoadingListener() {
                         gc.textRunEditor!.swapFontBlob(fontBytesArray, {
                             skipRebuildNameToGid: true
                         });
-                        if (
+                        const didReshapeOutlineOnly =
                             detail?.dataFreshnessMode ===
-                            'authoritative-worker-yjs'
-                        ) {
+                            'authoritative-worker-yjs';
+                        if (didReshapeOutlineOnly) {
                             gc.textRunEditor!.shapeText(true);
                             timelineMark(
                                 'canvas.editingFontCompiled.outlineOnlyCommittedShaped'
@@ -13078,10 +13086,12 @@ function setupFontLoadingListener() {
                             gc.outlineEditor.reapplyPendingSidebearingBboxCenterAnchor();
                             gc.outlineEditor.scheduleSidebearingOwnedRepaint();
                         } else {
-                            if (deferredIdleViewLock) {
+                            if (deferredIdleViewLock && didReshapeOutlineOnly) {
                                 gc.consumeIdleViewLockAfterReshape();
                             }
-                            gc.requestRepaintAfterCompile();
+                            gc.requestRepaintAfterCompile({
+                                immediate: isLivePreview
+                            });
                         }
                         return;
                     }
@@ -13105,7 +13115,9 @@ function setupFontLoadingListener() {
                         if (deferredIdleViewLock) {
                             gc.consumeIdleViewLockAfterReshape();
                         }
-                        gc.requestRepaintAfterCompile();
+                        gc.requestRepaintAfterCompile({
+                            immediate: isLivePreview
+                        });
                         return;
                     }
 

@@ -693,7 +693,9 @@ class GlyphOverview extends GlyphOverviewView {
             if (this.isGlyphHydrated(glyphName)) {
                 this.applyTileHydrationAppearance(targetTile);
             }
-            targetTile.cachedData = undefined;
+            // Stale-while-revalidate: keep the previous CompiledTileGlyph painted
+            // until refreshChangedGlyphTiles() swaps in the fresh outline, avoiding
+            // a blank-frame flash during the async worker round-trip.
             if (forceImmediateRefresh) {
                 immediateGlyphNames.add(glyphName);
                 this.pendingChangedGlyphNames.delete(glyphName);

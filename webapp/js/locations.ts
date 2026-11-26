@@ -64,8 +64,8 @@ function normalizeAxis(axis: Babelfont.Axis): FonttypesAxis {
     };
 }
 
-function normalizeAxes(axes: Babelfont.Axis[]): FonttypesAxis[] {
-    return axes.map(normalizeAxis);
+function normalizeAxes(axes?: Babelfont.Axis[] | null): FonttypesAxis[] {
+    return (axes || []).map(normalizeAxis);
 }
 
 export function userspaceToDesignspace(

@@ -116,6 +116,12 @@ struct CompiledTtfCacheEntry {
     options_compile_fp: u64,
     glyph_order: Vec<SmolStr>,
     ttf_bytes: Vec<u8>,
+    /// True if `ttf_bytes` contains an `HVAR` table.
+    has_hvar: bool,
+    /// Per-glyph non-background layer `(layer_id, width)` snapshot at the time
+    /// `ttf_bytes` was compiled, used to detect non-default master width edits
+    /// that require regenerating `HVAR` (Bug 1A).
+    glyph_master_widths: HashMap<SmolStr, Vec<(Option<String>, f32)>>,
     /// Dirty glyphs accumulated via pure visual outline edits since `ttf_bytes`
     /// was compiled (cleared once patched or invalidated).
     pending_dirty_glyphs: Vec<SmolStr>,
@@ -3131,11 +3137,72 @@ fn invalidate_last_compiled_ttf() {
     *LAST_COMPILED_TTF_CACHE.lock().unwrap() = None;
 }
 
+fn collect_glyph_master_widths(font: &babelfont::Font) -> HashMap<SmolStr, Vec<(Option<String>, f32)>> {
+    let mut widths = HashMap::with_capacity(font.glyphs.len());
+    for glyph in font.glyphs.iter() {
+        let layer_widths: Vec<(Option<String>, f32)> = glyph
+            .layers
+            .iter()
+            .filter(|l| !l.is_background)
+            .map(|l| (l.id.clone(), l.width))
+            .collect();
+        widths.insert(glyph.name.clone(), layer_widths);
+    }
+    widths
+}
+
+fn overlay_layers_change_anchors(
+    base_font: &babelfont::Font,
+    overlay_layers: &[(LayerTarget, serde_json::Value)],
+) -> bool {
+    for (target, layer_json) in overlay_layers {
+        let Some(glyph) = base_font.glyphs.get(target.glyph_name.as_str()) else {
+            return true;
+        };
+        let Some(existing_layer) = glyph
+            .layers
+            .iter()
+            .find(|l| l.id.as_deref() == Some(target.layer_id.as_str()))
+        else {
+            return true;
+        };
+        let incoming_anchors: Vec<(String, f64, f64)> = layer_json
+            .get("anchors")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|a| {
+                        let name = a.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                        let x = a.get("x").and_then(|v| v.as_f64())?;
+                        let y = a.get("y").and_then(|v| v.as_f64())?;
+                        Some((name, x, y))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if existing_layer.anchors.len() != incoming_anchors.len() {
+            return true;
+        }
+        for (existing, (inc_name, inc_x, inc_y)) in
+            existing_layer.anchors.iter().zip(incoming_anchors.iter())
+        {
+            if existing.name != *inc_name
+                || (existing.x - *inc_x).abs() > 1e-6
+                || (existing.y - *inc_y).abs() > 1e-6
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn store_last_compiled_ttf_with_overlay(
     subset_key: &str,
     filter_epoch: u64,
     base_font_cache_epoch: u64,
     options: &CompilationOptions,
+    source_font: &babelfont::Font,
     ttf_bytes: &[u8],
     overlay_dirty_glyphs: Vec<SmolStr>,
 ) {
@@ -3145,6 +3212,14 @@ fn store_last_compiled_ttf_with_overlay(
     let Some(glyph_order) = fast_ttf_patch::extract_ttf_glyph_order(ttf_bytes) else {
         return;
     };
+    let has_hvar = read_fonts::FontRef::new(ttf_bytes)
+        .ok()
+        .is_some_and(|f| f.table_data(read_fonts::types::Tag::new(b"HVAR")).is_some());
+    let glyph_master_widths = if has_hvar {
+        collect_glyph_master_widths(source_font)
+    } else {
+        HashMap::new()
+    };
     *LAST_COMPILED_TTF_CACHE.lock().unwrap() = Some(CompiledTtfCacheEntry {
         subset_key: subset_key.to_string(),
         filter_epoch,
@@ -3152,6 +3227,8 @@ fn store_last_compiled_ttf_with_overlay(
         options_compile_fp: options_compile_fingerprint(options),
         glyph_order,
         ttf_bytes: ttf_bytes.to_vec(),
+        has_hvar,
+        glyph_master_widths,
         pending_dirty_glyphs: Vec::new(),
         overlay_dirty_glyphs,
         patchable: true,
@@ -3163,6 +3240,7 @@ fn store_last_compiled_ttf(
     filter_epoch: u64,
     base_font_cache_epoch: u64,
     options: &CompilationOptions,
+    source_font: &babelfont::Font,
     ttf_bytes: &[u8],
 ) {
     store_last_compiled_ttf_with_overlay(
@@ -3170,6 +3248,7 @@ fn store_last_compiled_ttf(
         filter_epoch,
         base_font_cache_epoch,
         options,
+        source_font,
         ttf_bytes,
         Vec::new(),
     );
@@ -3202,16 +3281,79 @@ fn try_fast_patch_compiled_ttf(
     options: &CompilationOptions,
     base_ttf: &[u8],
     base_glyph_order: &[SmolStr],
+    base_has_hvar: bool,
+    base_glyph_master_widths: &HashMap<SmolStr, Vec<(Option<String>, f32)>>,
 ) -> Option<Vec<u8>> {
-    if options.skip_outlines || dirty_glyph_names.is_empty() || dirty_glyph_names.len() > 6 {
+    if options.skip_outlines || dirty_glyph_names.is_empty() || dirty_glyph_names.len() > 24 {
         return None;
     }
     if !can_compile_already_filtered(subset_font, options) {
         return None;
     }
+
+    // Bug 1B: Expand dirty glyphs to include any reverse composite dependents
+    // present in `subset_font` (e.g. manual composites referencing an edited
+    // base glyph whose xMin/lsb changed), so their glyf bbox and hmtx.lsb stay
+    // in sync with the edited base component.
+    let mut expanded_dirty_set: HashSet<SmolStr> = dirty_glyph_names.iter().cloned().collect();
+    loop {
+        let mut added = false;
+        for glyph in subset_font.glyphs.iter() {
+            if expanded_dirty_set.contains(&glyph.name) || !glyph.exported {
+                continue;
+            }
+            let refs_dirty = glyph.layers.iter().any(|layer| {
+                !layer.is_background
+                    && layer.shapes.iter().any(|shape| match shape {
+                        babelfont::Shape::Component(comp) => {
+                            expanded_dirty_set.contains(&comp.reference)
+                        }
+                        _ => false,
+                    })
+            });
+            if refs_dirty {
+                expanded_dirty_set.insert(glyph.name.clone());
+                added = true;
+            }
+        }
+        if !added || expanded_dirty_set.len() > 24 {
+            break;
+        }
+    }
+    if expanded_dirty_set.len() > 24 {
+        return None;
+    }
+    let expanded_dirty_glyphs: Vec<SmolStr> = expanded_dirty_set.iter().cloned().collect();
+
+    // Bug 1A: If base TTF has HVAR, verify that NO dirty glyph changed advance
+    // width at ANY master (including non-default stations like Fustat wght:400).
+    // If any master width changed, fall back to compile_filtered so HVAR is exact.
+    if base_has_hvar {
+        for name in &expanded_dirty_glyphs {
+            let glyph = subset_font.glyphs.get(name)?;
+            let Some(base_widths) = base_glyph_master_widths.get(name) else {
+                return None;
+            };
+            let cur_widths: Vec<(Option<String>, f32)> = glyph
+                .layers
+                .iter()
+                .filter(|l| !l.is_background)
+                .map(|l| (l.id.clone(), l.width))
+                .collect();
+            if cur_widths.len() != base_widths.len()
+                || cur_widths
+                    .iter()
+                    .zip(base_widths.iter())
+                    .any(|((cid, cw), (bid, bw))| cid != bid || (cw - bw).abs() > 1e-4)
+            {
+                return None;
+            }
+        }
+    }
+
     // Collect dirty glyphs + transitive component targets.
     let mut needed: HashSet<SmolStr> = HashSet::new();
-    let mut stack: Vec<SmolStr> = dirty_glyph_names.to_vec();
+    let mut stack: Vec<SmolStr> = expanded_dirty_glyphs.clone();
     while let Some(name) = stack.pop() {
         if !needed.insert(name.clone()) {
             continue;
@@ -3231,7 +3373,9 @@ fn try_fast_patch_compiled_ttf(
             }
         }
     }
-    if needed.len() > 16 {
+    if needed.len() > 32
+        || (subset_font.glyphs.len() > 8 && needed.len().saturating_mul(2) >= subset_font.glyphs.len())
+    {
         return None;
     }
     if let Some(notdef) = subset_font.glyphs.get(".notdef") {
@@ -3240,15 +3384,24 @@ fn try_fast_patch_compiled_ttf(
         }
     }
 
-    // Build a tiny mini-font with identical axes/masters (empty kerning & features).
-    let mut mini_font = subset_font.clone();
-    mini_font.features = babelfont::Features::default();
-    mini_font.first_kern_groups.clear();
-    mini_font.second_kern_groups.clear();
-    for master in &mut mini_font.masters {
-        master.kerning.clear();
-        master.kerning_rtl.clear();
-    }
+    // Build a tiny mini-font with ONLY `needed` glyphs and stripped kerning/features
+    // (avoiding cloning all 50–120 subset glyphs and kerning tables on every frame).
+    let mut mini_font = babelfont::Font::new();
+    mini_font.upm = subset_font.upm;
+    mini_font.version = subset_font.version;
+    mini_font.axes = subset_font.axes.clone();
+    mini_font.names = subset_font.names.clone();
+    mini_font.date = subset_font.date;
+    mini_font.masters = subset_font
+        .masters
+        .iter()
+        .map(|m| {
+            let mut copy = m.clone();
+            copy.kerning.clear();
+            copy.kerning_rtl.clear();
+            copy
+        })
+        .collect();
     mini_font.glyphs = babelfont::GlyphList(
         subset_font
             .glyphs
@@ -3284,7 +3437,7 @@ fn try_fast_patch_compiled_ttf(
         base_ttf,
         base_glyph_order,
         &mini_ttf,
-        dirty_glyph_names,
+        &expanded_dirty_glyphs,
     )?;
     Some(zero_head_timestamps(patched))
 }
@@ -8930,8 +9083,14 @@ pub fn compile_preview_cached_font_from_last_layout_closure(
                 }
                 names
             };
+            let anchors_changed_by_overlay = match get_or_rebuild_subset_font_cache(&prepared_subset_key)? {
+                Some(ref base_subset) => overlay_layers_change_anchors(base_subset, &overlay_layers),
+                None => true,
+            };
             let current_compile_fp = options_compile_fingerprint(&compilation_options);
-            let cached_base_ttf = {
+            let cached_base_ttf = if anchors_changed_by_overlay {
+                None
+            } else {
                 let ttf_guard = LAST_COMPILED_TTF_CACHE.lock().unwrap();
                 ttf_guard.as_ref().and_then(|entry| {
                     if entry.patchable
@@ -8946,7 +9105,12 @@ pub fn compile_preview_cached_font_from_last_layout_closure(
                             .iter()
                             .all(|g| dirty_glyph_names.contains(g))
                     {
-                        Some((entry.ttf_bytes.clone(), entry.glyph_order.clone()))
+                        Some((
+                            entry.ttf_bytes.clone(),
+                            entry.glyph_order.clone(),
+                            entry.has_hvar,
+                            entry.glyph_master_widths.clone(),
+                        ))
                     } else {
                         None
                     }
@@ -8957,13 +9121,15 @@ pub fn compile_preview_cached_font_from_last_layout_closure(
             // Overlay layers are already physical; bake remaining logical autos.
             let mut compile_font = subset_font;
             bake_automatic_sidebearing_offsets_in_font(&mut compile_font, &skip_layers);
-            if let Some((base_ttf, base_glyph_order)) = cached_base_ttf {
+            if let Some((base_ttf, base_glyph_order, base_has_hvar, base_widths)) = cached_base_ttf {
                 if let Some(patched) = try_fast_patch_compiled_ttf(
                     &compile_font,
                     &dirty_glyph_names,
                     &compilation_options,
                     &base_ttf,
                     &base_glyph_order,
+                    base_has_hvar,
+                    &base_widths,
                 ) {
                     return Ok(patched);
                 }
@@ -8980,6 +9146,7 @@ pub fn compile_preview_cached_font_from_last_layout_closure(
         }
     };
 
+    let compiled_source_widths = collect_glyph_master_widths(&filtered_font);
     let compiled = compile_filtered_with_feature_debug_context(
         filtered_font,
         &compilation_options,
@@ -9000,14 +9167,28 @@ pub fn compile_preview_cached_font_from_last_layout_closure(
             })
         };
         if should_store {
-            store_last_compiled_ttf_with_overlay(
-                &prepared_subset_key,
-                FILTER_EPOCH.load(Ordering::Relaxed),
-                current_base_epoch,
-                &compilation_options,
-                &compiled,
-                dirty_glyphs,
-            );
+            if let Some(glyph_order) = fast_ttf_patch::extract_ttf_glyph_order(&compiled) {
+                let has_hvar = read_fonts::FontRef::new(&compiled)
+                    .ok()
+                    .is_some_and(|f| f.table_data(read_fonts::types::Tag::new(b"HVAR")).is_some());
+                *LAST_COMPILED_TTF_CACHE.lock().unwrap() = Some(CompiledTtfCacheEntry {
+                    subset_key: prepared_subset_key.clone(),
+                    filter_epoch: FILTER_EPOCH.load(Ordering::Relaxed),
+                    base_font_cache_epoch: current_base_epoch,
+                    options_compile_fp: options_compile_fingerprint(&compilation_options),
+                    glyph_order,
+                    ttf_bytes: compiled.clone(),
+                    has_hvar,
+                    glyph_master_widths: if has_hvar {
+                        compiled_source_widths
+                    } else {
+                        HashMap::new()
+                    },
+                    pending_dirty_glyphs: Vec::new(),
+                    overlay_dirty_glyphs: dirty_glyphs,
+                    patchable: true,
+                });
+            }
         }
     }
     Ok(compiled)
@@ -9106,6 +9287,7 @@ pub fn compile_cached_font_from_last_layout_closure(options: &JsValue) -> Result
     let _filter_cache_span =
         PerfSpan::start("compile_cached_font_from_last_layout_closure.filter_cache");
     let filtered_font = if !overlay_layers.is_empty() {
+        let anchors_changed_by_overlay = overlay_layers_change_anchors(&subset_font, &overlay_layers);
         let compile_font = prepare_compile_facing_font(subset_font, &overlay_layers)?;
         let dirty_glyph_names: Vec<SmolStr> = {
             let mut seen = HashSet::new();
@@ -9117,7 +9299,9 @@ pub fn compile_cached_font_from_last_layout_closure(options: &JsValue) -> Result
             }
             names
         };
-        let cached_base_ttf = {
+        let cached_base_ttf = if anchors_changed_by_overlay {
+            None
+        } else {
             let ttf_guard = LAST_COMPILED_TTF_CACHE.lock().unwrap();
             ttf_guard.as_ref().and_then(|entry| {
                 if entry.patchable
@@ -9132,19 +9316,26 @@ pub fn compile_cached_font_from_last_layout_closure(options: &JsValue) -> Result
                         .iter()
                         .all(|g| dirty_glyph_names.contains(g))
                 {
-                    Some((entry.ttf_bytes.clone(), entry.glyph_order.clone()))
+                    Some((
+                        entry.ttf_bytes.clone(),
+                        entry.glyph_order.clone(),
+                        entry.has_hvar,
+                        entry.glyph_master_widths.clone(),
+                    ))
                 } else {
                     None
                 }
             })
         };
-        if let Some((base_ttf, base_glyph_order)) = cached_base_ttf {
+        if let Some((base_ttf, base_glyph_order, base_has_hvar, base_widths)) = cached_base_ttf {
             if let Some(patched) = try_fast_patch_compiled_ttf(
                 &compile_font,
                 &dirty_glyph_names,
                 &compilation_options,
                 &base_ttf,
                 &base_glyph_order,
+                base_has_hvar,
+                &base_widths,
             ) {
                 drop(_filter_cache_span);
                 return Ok(patched);
@@ -9221,6 +9412,8 @@ pub fn compile_cached_font_from_last_layout_closure(options: &JsValue) -> Result
                     Some((
                         entry.ttf_bytes.clone(),
                         entry.glyph_order.clone(),
+                        entry.has_hvar,
+                        entry.glyph_master_widths.clone(),
                         entry.pending_dirty_glyphs.clone(),
                     ))
                 } else {
@@ -9228,19 +9421,24 @@ pub fn compile_cached_font_from_last_layout_closure(options: &JsValue) -> Result
                 }
             })
         };
-        if let Some((base_ttf, base_glyph_order, dirty_glyphs)) = fast_patch_input {
+        if let Some((base_ttf, base_glyph_order, base_has_hvar, base_widths, dirty_glyphs)) =
+            fast_patch_input
+        {
             if let Some(patched) = try_fast_patch_compiled_ttf(
                 &filtered_font,
                 &dirty_glyphs,
                 &compilation_options,
                 &base_ttf,
                 &base_glyph_order,
+                base_has_hvar,
+                &base_widths,
             ) {
                 store_last_compiled_ttf(
                     &prepared_subset_key,
                     current_filter_epoch,
                     current_cache_epoch,
                     &compilation_options,
+                    &filtered_font,
                     &patched,
                 );
                 drop(_ir_compile_span);
@@ -9249,6 +9447,7 @@ pub fn compile_cached_font_from_last_layout_closure(options: &JsValue) -> Result
         }
     }
 
+    let source_widths_for_cache = collect_glyph_master_widths(&filtered_font);
     // A font fresh from the overlay path is not shared and moves in for free;
     // the cached filtered font stays cached for the next compile.
     let compiled_font = compile_filtered_with_feature_debug_context(
@@ -9257,13 +9456,28 @@ pub fn compile_cached_font_from_last_layout_closure(options: &JsValue) -> Result
         "compile_cached_font_from_last_layout_closure",
     )?;
     if overlay_layers.is_empty() {
-        store_last_compiled_ttf(
-            &prepared_subset_key,
-            current_filter_epoch,
-            current_cache_epoch,
-            &compilation_options,
-            &compiled_font,
-        );
+        if let Some(glyph_order) = fast_ttf_patch::extract_ttf_glyph_order(&compiled_font) {
+            let has_hvar = read_fonts::FontRef::new(&compiled_font)
+                .ok()
+                .is_some_and(|f| f.table_data(read_fonts::types::Tag::new(b"HVAR")).is_some());
+            *LAST_COMPILED_TTF_CACHE.lock().unwrap() = Some(CompiledTtfCacheEntry {
+                subset_key: prepared_subset_key.clone(),
+                filter_epoch: current_filter_epoch,
+                base_font_cache_epoch: current_cache_epoch,
+                options_compile_fp: current_compile_fp,
+                glyph_order,
+                ttf_bytes: compiled_font.clone(),
+                has_hvar,
+                glyph_master_widths: if has_hvar {
+                    source_widths_for_cache
+                } else {
+                    HashMap::new()
+                },
+                pending_dirty_glyphs: Vec::new(),
+                overlay_dirty_glyphs: Vec::new(),
+                patchable: true,
+            });
+        }
     } else if let Some(dirty_glyphs) = overlay_dirty_glyphs_for_cache {
         let should_store = {
             let guard = LAST_COMPILED_TTF_CACHE.lock().unwrap();
@@ -9275,14 +9489,28 @@ pub fn compile_cached_font_from_last_layout_closure(options: &JsValue) -> Result
             })
         };
         if should_store {
-            store_last_compiled_ttf_with_overlay(
-                &prepared_subset_key,
-                current_filter_epoch,
-                current_cache_epoch,
-                &compilation_options,
-                &compiled_font,
-                dirty_glyphs,
-            );
+            if let Some(glyph_order) = fast_ttf_patch::extract_ttf_glyph_order(&compiled_font) {
+                let has_hvar = read_fonts::FontRef::new(&compiled_font)
+                    .ok()
+                    .is_some_and(|f| f.table_data(read_fonts::types::Tag::new(b"HVAR")).is_some());
+                *LAST_COMPILED_TTF_CACHE.lock().unwrap() = Some(CompiledTtfCacheEntry {
+                    subset_key: prepared_subset_key.clone(),
+                    filter_epoch: current_filter_epoch,
+                    base_font_cache_epoch: current_cache_epoch,
+                    options_compile_fp: current_compile_fp,
+                    glyph_order,
+                    ttf_bytes: compiled_font.clone(),
+                    has_hvar,
+                    glyph_master_widths: if has_hvar {
+                        source_widths_for_cache
+                    } else {
+                        HashMap::new()
+                    },
+                    pending_dirty_glyphs: Vec::new(),
+                    overlay_dirty_glyphs: dirty_glyphs,
+                    patchable: true,
+                });
+            }
         }
     }
     drop(_ir_compile_span);
@@ -15540,12 +15768,15 @@ mod tests {
         let edited_font: babelfont::Font = serde_json::from_value(edited_json).unwrap();
         let filtered_edited = apply_filter_pipeline_owned(edited_font, &options, false).unwrap();
 
+        let base_widths = collect_glyph_master_widths(&base_font);
         let patched_ttf = try_fast_patch_compiled_ttf(
             &filtered_edited,
             &[SmolStr::from("A")],
             &options,
             &base_ttf,
             &base_order,
+            false,
+            &base_widths,
         )
         .expect("fast TTF patch should succeed for simple outline edit");
 
@@ -15611,6 +15842,7 @@ mod tests {
             options_compile_fingerprint(&outline_only_opts),
         ));
 
+        let base_widths = collect_glyph_master_widths(&subset_font);
         // Mutate a node x-coordinate on glyph A in its default layer (same width).
         let mut edited_font = subset_font;
         if let Some(glyph_a) = edited_font.glyphs.get_mut("A") {
@@ -15632,6 +15864,8 @@ mod tests {
             &outline_only_opts,
             &base_ttf,
             &base_order,
+            true,
+            &base_widths,
         )
         .expect("fast TTF patch must succeed on variable Fustat outline edit");
 
@@ -15693,6 +15927,7 @@ mod tests {
                 dont_use_production_names: true,
                 ..Default::default()
             };
+            let base_widths = collect_glyph_master_widths(&subset_font);
             let mut edited = subset_font;
             if let Some(g) = edited.glyphs.get_mut("H") {
                 if let Some(l) = g.layers.first_mut() {
@@ -15724,6 +15959,8 @@ mod tests {
                 &outline_opts,
                 &base_ttf,
                 &base_order,
+                true,
+                &base_widths,
             );
             let patch_ms = t1.elapsed();
             eprintln!(
@@ -15735,6 +15972,77 @@ mod tests {
             );
             assert!(patched.is_some(), "{label} fast TTF patch failed!");
         }
+        clear_font_cache();
+    }
+
+    #[test]
+    fn fast_ttf_patch_falls_back_on_non_default_master_width_change_fustat_wght400() {
+        clear_font_cache();
+
+        let fustat_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../webapp/examples/Fustat.glyphs");
+        let mut subset_font = babelfont::load(&fustat_path).expect("load Fustat.glyphs");
+        RetainGlyphs::new(vec![
+            ".notdef".to_string(),
+            "A".to_string(),
+            "H".to_string(),
+            "alef-ar.short.fina".to_string(),
+        ])
+        .apply(&mut subset_font)
+        .expect("retain subset");
+
+        let full_opts = CompilationOptions {
+            drop_incompatible_paths: true,
+            produce_varc_table: true,
+            dont_use_production_names: true,
+            ..Default::default()
+        };
+        let filtered_base =
+            apply_filter_pipeline_owned(subset_font.clone(), &full_opts, false).unwrap();
+        let base_widths = collect_glyph_master_widths(&filtered_base);
+        let base_ttf =
+            compile_filtered_with_feature_debug_context(filtered_base, &full_opts, "fustat_base")
+                .unwrap();
+        let base_order = fast_ttf_patch::extract_ttf_glyph_order(&base_ttf).unwrap();
+        let has_hvar = read_fonts::FontRef::new(&base_ttf)
+            .unwrap()
+            .table_data(read_fonts::types::Tag::new(b"HVAR"))
+            .is_some();
+        assert!(has_hvar, "Fustat variable TTF must have HVAR");
+
+        // Mutate width on a NON-DEFAULT master (index 1, wght:400) of alef-ar.short.fina
+        // while keeping default master (index 0, wght:200) width unchanged!
+        let mut edited_font = subset_font;
+        let glyph = edited_font
+            .glyphs
+            .get_mut("alef-ar.short.fina")
+            .expect("alef-ar.short.fina present");
+        assert!(glyph.layers.len() >= 2, "expected multiple masters");
+        glyph.layers[1].width += 50.0;
+
+        let outline_opts = CompilationOptions {
+            skip_features: true,
+            skip_kerning: true,
+            produce_varc_table: false,
+            drop_incompatible_paths: true,
+            dont_use_production_names: true,
+            ..Default::default()
+        };
+        // Must return None so caller falls back to compile_filtered and regenerates HVAR!
+        let patched = try_fast_patch_compiled_ttf(
+            &edited_font,
+            &[SmolStr::from("alef-ar.short.fina")],
+            &outline_opts,
+            &base_ttf,
+            &base_order,
+            has_hvar,
+            &base_widths,
+        );
+        assert!(
+            patched.is_none(),
+            "fast_ttf_patch must fall back when non-default master width changes with HVAR"
+        );
+
         clear_font_cache();
     }
 }

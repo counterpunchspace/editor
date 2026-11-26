@@ -498,6 +498,21 @@ function collectAutomaticAlignedDependentGlyphNames(
  *                                (a collaborator’s stored drawings): only
  *                                what depends on them is recomposed.
  */
+// Memoize visible-scope dependency topology across consecutive live-drag
+// frames of the same font revision + source glyph + visible set.
+let visibleTopologyCacheKey = '';
+let visibleTopologyCacheModel: WeakRef<FontModelLike> | null = null;
+let visibleTopologyCacheResult: {
+    invalidateGlyphNames: Set<string>;
+    visibleMetricsPrerequisites: Set<string>;
+} | null = null;
+
+export function resetVisibleRecompositionTopologyCache(): void {
+    visibleTopologyCacheKey = '';
+    visibleTopologyCacheModel = null;
+    visibleTopologyCacheResult = null;
+}
+
 export function computeDrawingRecompositionClosure(options: {
     sourceTargets: RecompositionSourceTarget[];
     editKinds: Set<RecompositionEditKind>;
@@ -568,36 +583,75 @@ export function computeDrawingRecompositionClosure(options: {
     // cache/redraw refresh, but only automatic/metrics edges may mutate
     // stored drawing data (handled below). Visible scope expands intermediates
     // that reach a retained visible glyph.
-    if (
-        touchesGeometry &&
-        typeof fontModel.collectComponentDependentGlyphs === 'function'
-    ) {
-        const collected = wrap(() =>
-            fontModel.collectComponentDependentGlyphs!(sourceGlyphNames, {
-                ...(scope === 'visible' && visibleSet
-                    ? { retainGlyphNames: visibleSet }
-                    : {})
-            })
-        );
-        for (const depGlyphName of collected) {
-            if (!sourceGlyphNames.has(depGlyphName)) {
-                invalidateGlyphNames.add(depGlyphName);
+    const fontChangeVersion =
+        typeof window !== 'undefined'
+            ? (window.fontManager?.currentFont?.changeVersion ?? -1)
+            : -1;
+    const canUseVisibleTopologyCache =
+        scope === 'visible' &&
+        !!visibleSet &&
+        fontChangeVersion >= 0 &&
+        touchesGeometry;
+    const visibleCacheKey = canUseVisibleTopologyCache
+        ? `${fontChangeVersion}\0${[...sourceGlyphNames].sort().join(',')}\0${[...visibleSet!].sort().join(',')}`
+        : '';
+    const cachedTopology =
+        canUseVisibleTopologyCache &&
+        visibleTopologyCacheKey === visibleCacheKey &&
+        visibleTopologyCacheModel?.deref() === fontModel
+            ? visibleTopologyCacheResult
+            : null;
+
+    let visibleMetricsPrerequisites: Set<string>;
+    if (cachedTopology) {
+        for (const depGlyphName of cachedTopology.invalidateGlyphNames) {
+            invalidateGlyphNames.add(depGlyphName);
+        }
+        visibleMetricsPrerequisites =
+            cachedTopology.visibleMetricsPrerequisites;
+    } else {
+        if (
+            touchesGeometry &&
+            typeof fontModel.collectComponentDependentGlyphs === 'function'
+        ) {
+            const collected = wrap(() =>
+                fontModel.collectComponentDependentGlyphs!(sourceGlyphNames, {
+                    ...(scope === 'visible' && visibleSet
+                        ? { retainGlyphNames: visibleSet }
+                        : {})
+                })
+            );
+            for (const depGlyphName of collected) {
+                if (!sourceGlyphNames.has(depGlyphName)) {
+                    invalidateGlyphNames.add(depGlyphName);
+                }
             }
         }
-    }
 
-    // Allowed set for live mutation:
-    // - component retain expansion (hidden intermediates → visible)
-    // - all currently visible glyphs (so metrics-key dependents like `n`
-    //   that reference the source without being component users still update)
-    const visibleMetricsPrerequisites =
-        scope === 'visible' &&
-        visibleSet &&
-        typeof fontModel.collectMetricsKeyPrerequisiteGlyphs === 'function'
-            ? wrap(() =>
-                  fontModel.collectMetricsKeyPrerequisiteGlyphs!(visibleSet)
-              )
-            : new Set<string>();
+        // Allowed set for live mutation:
+        // - component retain expansion (hidden intermediates → visible)
+        // - all currently visible glyphs (so metrics-key dependents like `n`
+        //   that reference the source without being component users still update)
+        visibleMetricsPrerequisites =
+            scope === 'visible' &&
+            visibleSet &&
+            typeof fontModel.collectMetricsKeyPrerequisiteGlyphs === 'function'
+                ? wrap(() =>
+                      fontModel.collectMetricsKeyPrerequisiteGlyphs!(visibleSet)
+                  )
+                : new Set<string>();
+
+        if (canUseVisibleTopologyCache) {
+            visibleTopologyCacheKey = visibleCacheKey;
+            visibleTopologyCacheModel = new WeakRef(fontModel);
+            visibleTopologyCacheResult = {
+                invalidateGlyphNames: new Set(invalidateGlyphNames),
+                visibleMetricsPrerequisites: new Set(
+                    visibleMetricsPrerequisites
+                )
+            };
+        }
+    }
 
     const allowedGlyphNames =
         scope === 'visible' && visibleSet
@@ -693,24 +747,19 @@ export function computeDrawingRecompositionClosure(options: {
                   ?.findDrawingById?.(activeDrawingId) ?? null)
             : null;
 
-    // Persist automatic composites / metrics-key dependents even when the
-    // rebuild/metrics pass is a no-op. Live drag may already have applied the
-    // derived state; omitting those drawings from changedDrawingTargets leaves
-    // stale Yjs data that post-commit overlay clear reveals as a rollback
-    // (e.g. Adieresis mark stuck at the pre-drag transform).
-    //
-    // Anchor edits must expand the same way as sidebearing/outline: after a
-    // live visible-scope converge, commit-time rebuild returns [] even when
-    // composition-relevant anchors moved. Gating on rebuild mutations here
-    // was the stale-compiled-mark bug.
+    // Persist automatic composites / metrics-key dependents on commit (`scope === 'all'`)
+    // even when the rebuild/metrics pass is a no-op. Live drag (`scope === 'visible'`)
+    // only needs drawings that actually mutated on that frame, keeping preview
+    // overlays lean and `fast_ttf_patch` hot.
     const shouldPersistAutomaticDependents =
-        editKinds.has('sidebearing') ||
-        editKinds.has('outline') ||
-        editKinds.has('component') ||
-        editKinds.has('anchor') ||
-        [...recomposeGlyphNames].some(
-            (glyphName) => !sourceGlyphNames.has(glyphName)
-        );
+        scope === 'all' &&
+        (editKinds.has('sidebearing') ||
+            editKinds.has('outline') ||
+            editKinds.has('component') ||
+            editKinds.has('anchor') ||
+            [...recomposeGlyphNames].some(
+                (glyphName) => !sourceGlyphNames.has(glyphName)
+            ));
     if (shouldPersistAutomaticDependents) {
         for (const glyphName of collectAutomaticAlignedDependentGlyphNames(
             fontModel,
@@ -722,6 +771,7 @@ export function computeDrawingRecompositionClosure(options: {
         }
     }
     if (
+        scope === 'all' &&
         (editKinds.has('sidebearing') ||
             editKinds.has('outline') ||
             editKinds.has('component')) &&

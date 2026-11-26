@@ -763,6 +763,11 @@ export class FontCompilation {
         return this.workerCacheDocumentReady;
     }
 
+    /** Return whether a live Web Worker is attached for fused preview+compile RPCs. */
+    supportsFusedPreviewCompile(): boolean {
+        return !!this.worker;
+    }
+
     hasPendingWorkerDocumentSync(): boolean {
         return this.pendingWorkerDocumentSyncCount > 0;
     }
@@ -1611,6 +1616,13 @@ export class FontCompilation {
         ) {
             data.featureOverlay = this.compileFeatureOverlay;
         }
+        if (
+            messageType === 'previewOverlayAndCompile' &&
+            data.compileRequest &&
+            typeof data.compileRequest.featureOverlay !== 'string'
+        ) {
+            data.compileRequest.featureOverlay = this.compileFeatureOverlay;
+        }
         const requestId = this.compilationId++;
         const traceContext: TimelineTraceContext = {
             process: 'main',
@@ -2330,6 +2342,17 @@ export class FontCompilation {
             };
             usePatchedWorkerCache?: boolean;
             usePreviewDrawingOverlay?: boolean;
+            previewOverlay?: {
+                layerUpdates: Array<{
+                    glyphName: string;
+                    layerId: string;
+                    layerData: unknown;
+                }>;
+                changedGlyphs: string[];
+                nonGlyphChangeHints?: string[];
+                layerTargets?: Array<{ glyphName: string; layerId: string }>;
+                invalidateLayoutClosure?: boolean;
+            };
         }
     ): Promise<{
         result: Uint8Array;
@@ -2393,8 +2416,7 @@ export class FontCompilation {
                 );
             }
 
-            const compileResult = await this.sendMessage({
-                type: 'compileEditingCached',
+            const compilePayload = {
                 babelfontJson: '__incremental_drawing__',
                 options,
                 subsetKey,
@@ -2406,7 +2428,18 @@ export class FontCompilation {
                 _compileSource: requestMeta?.compileSource,
                 _usePreviewDrawingOverlay:
                     requestMeta?.usePreviewDrawingOverlay === true
-            });
+            };
+            const compileResult =
+                requestMeta?.previewOverlay && this.worker
+                    ? await this.sendMessage({
+                          type: 'previewOverlayAndCompile',
+                          overlayLayers: requestMeta.previewOverlay,
+                          compileRequest: compilePayload
+                      })
+                    : await this.sendMessage({
+                          type: 'compileEditingCached',
+                          ...compilePayload
+                      });
 
             this.lastEditingSubsetKey = subsetKey;
 

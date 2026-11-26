@@ -5829,6 +5829,31 @@ describe('FontManager handleNewFont', () => {
         }
     });
 
+    test('handleNewFont skips clearCache when compile worker exists but is not yet initialized', async () => {
+        const previousWorker = fontCompilation.worker;
+        const previousInitialized = fontCompilation.isInitialized;
+        fontCompilation.worker = {};
+        fontCompilation.isInitialized = false;
+        const warn = jest.spyOn(console, 'warn');
+        try {
+            await fontManager.handleNewFont();
+
+            expect(sendMessageSpy).not.toHaveBeenCalledWith({
+                type: 'clearCache'
+            });
+            expect(
+                warn.mock.calls.some((args) =>
+                    String(args[0]).includes('clearCache failed')
+                )
+            ).toBe(false);
+            expect(fontManager.currentFont).not.toBeNull();
+        } finally {
+            warn.mockRestore();
+            fontCompilation.worker = previousWorker;
+            fontCompilation.isInitialized = previousInitialized;
+        }
+    });
+
     test('handleNewFont disconnects the previous cloud room before listeners observe the new untitled font', async () => {
         const fontData = cloneJson(intermediateFontData);
         const fakeCurrentFont = {

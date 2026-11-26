@@ -22312,21 +22312,15 @@ export class OutlineEditor {
                                     currentDrawingData.format_specific
                             })
                         });
-                        // Producers must already have run
-                        // computeDrawingRecompositionClosure before sync.
-                        // Do not rebuild again here — that reintroduces
-                        // live/commit divergence.
-                        const invalidationGlyphNames =
-                            typeof fontModel.collectComponentDependentGlyphs ===
-                            'function'
-                                ? fontModel.collectComponentDependentGlyphs(
-                                      new Set([editedGlyphName]),
-                                      { includeSourceGlyphNames: true }
-                                  )
-                                : new Set([editedGlyphName]);
-                        fontModel.invalidateLayoutCachesForGlyphs?.(
-                            invalidationGlyphNames
-                        );
+                        // Producers already ran computeDrawingRecompositionClosure
+                        // (which invalidated component dependents' layout caches)
+                        // before sync. Only invalidate the edited glyph itself here
+                        // when no downstream cascade targets were recomposed.
+                        if (changedDrawingTargets.length <= 1) {
+                            fontModel.invalidateLayoutCachesForGlyphs?.(
+                                new Set([editedGlyphName])
+                            );
+                        }
                     });
                 }
                 const snapshotTargets = normalizeWorkerReplayTargets([
@@ -22356,6 +22350,15 @@ export class OutlineEditor {
                     })
                 ]);
 
+                const storedGlyphByName = new Map<string, any>();
+                if (Array.isArray(storedGlyphs)) {
+                    for (const glyph of storedGlyphs) {
+                        if (glyph?.name) {
+                            storedGlyphByName.set(glyph.name, glyph);
+                        }
+                    }
+                }
+
                 for (const target of snapshotTargets) {
                     const modelGlyph = fontModel.findGlyph(target.glyphName);
                     const modelDrawing = modelGlyph?.findDrawingById?.(
@@ -22384,11 +22387,8 @@ export class OutlineEditor {
                     if (!serializedDrawing) {
                         continue;
                     }
-                    const storedGlyph = Array.isArray(storedGlyphs)
-                        ? storedGlyphs.find(
-                              (glyph: any) => glyph?.name === target.glyphName
-                          )
-                        : null;
+                    const storedGlyph =
+                        storedGlyphByName.get(target.glyphName) ?? null;
                     const storedDrawings = storedGlyph?.layers;
                     const storedDrawingIndex = Array.isArray(storedDrawings)
                         ? storedDrawings.findIndex(
