@@ -994,6 +994,12 @@ test('placeholder sample outlines punch counters with the nonzero rule', async (
             }
             if (!window.glyphCanvas?.outlineEditor?.active) {
                 await textRun.selectGlyphByIndex(0, true);
+                window.glyphCanvas?.resetZoomAndPosition?.();
+                const vmInit = (window.glyphCanvas as any)?.viewportManager;
+                if (vmInit && Number(vmInit.scale) < 0.35) {
+                    (window.glyphCanvas as any)?.setScaleTowardFocus?.(0.5);
+                }
+                window.glyphCanvas?.render?.();
             }
             const isInk = (
                 r: number,
@@ -1006,27 +1012,43 @@ test('placeholder sample outlines punch counters with the nonzero rule', async (
             };
             const hole = (
                 canvas: HTMLCanvasElement,
-                painted: (r: number, g: number, b: number, a: number) => boolean
+                painted: (
+                    r: number,
+                    g: number,
+                    b: number,
+                    a: number
+                ) => boolean,
+                region?: { x0: number; y0: number; x1: number; y1: number }
             ): string => {
                 const context = canvas.getContext('2d');
                 if (!context || canvas.width === 0) {
                     return '0,0,0';
                 }
-                const pixels = context.getImageData(
-                    0,
-                    0,
+                const x0 = Math.max(0, Math.floor(region?.x0 ?? 0));
+                const y0 = Math.max(0, Math.floor(region?.y0 ?? 0));
+                const x1 = Math.min(
                     canvas.width,
-                    canvas.height
-                ).data;
-                let minX = canvas.width;
-                let minY = canvas.height;
+                    Math.ceil(region?.x1 ?? canvas.width)
+                );
+                const y1 = Math.min(
+                    canvas.height,
+                    Math.ceil(region?.y1 ?? canvas.height)
+                );
+                const w = x1 - x0;
+                const h = y1 - y0;
+                if (w <= 0 || h <= 0) {
+                    return '0,0,0';
+                }
+                const pixels = context.getImageData(x0, y0, w, h).data;
+                let minX = w;
+                let minY = h;
                 let maxX = 0;
                 let maxY = 0;
                 let red = 0;
                 const hit: boolean[] = [];
-                for (let y = 0; y < canvas.height; y += 1) {
-                    for (let x = 0; x < canvas.width; x += 1) {
-                        const index = (y * canvas.width + x) * 4;
+                for (let y = 0; y < h; y += 1) {
+                    for (let x = 0; x < w; x += 1) {
+                        const index = (y * w + x) * 4;
                         const on = painted(
                             pixels[index],
                             pixels[index + 1],
@@ -1049,7 +1071,7 @@ test('placeholder sample outlines punch counters with the nonzero rule', async (
                 }
                 const cx = Math.round((minX + maxX) / 2);
                 const cy = Math.round((minY + maxY) / 2);
-                const center = hit[cy * canvas.width + cx] ? 1 : 0;
+                const center = hit[cy * w + cx] ? 1 : 0;
                 let edge = 0;
                 for (let y = minY; y <= maxY; y += 1) {
                     for (let x = minX; x <= maxX; x += 1) {
@@ -1058,7 +1080,7 @@ test('placeholder sample outlines punch counters with the nonzero rule', async (
                             x >= maxX - 1 ||
                             y <= minY + 1 ||
                             y >= maxY - 1;
-                        if (onBorder && hit[y * canvas.width + x]) {
+                        if (onBorder && hit[y * w + x]) {
                             edge += 1;
                         }
                     }
@@ -1066,9 +1088,47 @@ test('placeholder sample outlines punch counters with the nonzero rule', async (
                 return `${red},${center},${edge}`;
             };
             const editor = window.glyphCanvas?.canvas;
+            let editorRegion:
+                { x0: number; y0: number; x1: number; y1: number } | undefined;
+            const vm = (window.glyphCanvas as any)?.viewportManager;
+            const oe = (window.glyphCanvas as any)?.outlineEditor;
+            if (
+                editor &&
+                oe?.active &&
+                typeof vm?.fontToScreenCoordinates === 'function'
+            ) {
+                const rect = editor.getBoundingClientRect();
+                const scaleX = rect.width > 0 ? editor.width / rect.width : 1;
+                const scaleY =
+                    rect.height > 0 ? editor.height / rect.height : 1;
+                const originX = Number(oe.glyphOriginX ?? 0);
+                const originY = Number(oe.glyphOriginY ?? 0);
+                const width = Number(
+                    oe.getCurrentDrawingData?.()?.width ??
+                        window.currentFontModel?.findGlyph?.('heh-ar')
+                            ?.drawings?.[0]?.width ??
+                        600
+                );
+                const topLeft = vm.fontToScreenCoordinates(
+                    originX,
+                    originY + 900
+                );
+                const bottomRight = vm.fontToScreenCoordinates(
+                    originX + width,
+                    originY - 300
+                );
+                // Inset by 3 backing pixels horizontally to exclude the 1px vertical
+                // sidebearing metrics lines and the "ascender+capheight" metrics label.
+                editorRegion = {
+                    x0: Math.min(topLeft.x, bottomRight.x) * scaleX + 3,
+                    y0: Math.min(topLeft.y, bottomRight.y) * scaleY,
+                    x1: Math.max(topLeft.x, bottomRight.x) * scaleX - 3,
+                    y1: Math.max(topLeft.y, bottomRight.y) * scaleY
+                };
+            }
             const editorSample =
                 editor && window.glyphCanvas?.outlineEditor?.active
-                    ? hole(editor, isInk)
+                    ? hole(editor, isInk, editorRegion)
                     : 'inactive';
             const tiles = document.querySelectorAll(
                 '#glyph-overview-container [data-glyph-name="heh-ar"] canvas'

@@ -13924,6 +13924,8 @@ export class Font extends ModelBase {
      */
     private _metricsKeyDependencyEntries: MetricsKeyDependencyEntry[] | null =
         null;
+    private _metricsKeyDependencyLookup: MetricsKeyDependencyLookup | null =
+        null;
     /**
      * Cache of glyph names sorted by length descending. Used as a longest-prefix
      * lookup table by metrics-key parsing (`getGlyphNamePrefixMatch`). Invalidated
@@ -14274,6 +14276,7 @@ export class Font extends ModelBase {
             this.rawFontDeclaresMetricsKeys();
         if (cached === null || cacheIsStaleEmpty) {
             const built = this._buildMetricsKeyDependencyEntries();
+            this._metricsKeyDependencyLookup = null;
             // Never permanently cache an empty graph while the font still
             // declares metrics keys. That happens when the filtered drawing view
             // is not ready yet; caching [] disables =| / keyed cascades until
@@ -14297,7 +14300,35 @@ export class Font extends ModelBase {
         if (!allowedGlyphNames) {
             return cached;
         }
-        return cached.filter((entry) => allowedGlyphNames.has(entry.glyphName));
+        // Fast O(|allowedGlyphNames|) lookup using the cached full graph
+        // instead of scanning every metrics-key entry in the font on every tick.
+        const fullLookup = this._getFullMetricsKeyDependencyLookup(cached);
+        const scoped: MetricsKeyDependencyEntry[] = [];
+        for (const glyphName of allowedGlyphNames) {
+            const entriesForGlyph =
+                fullLookup.keyedEntriesByGlyph.get(glyphName);
+            if (entriesForGlyph) {
+                for (const entry of entriesForGlyph) {
+                    scoped.push(entry);
+                }
+            }
+        }
+        return scoped;
+    }
+
+    private _getFullMetricsKeyDependencyLookup(
+        entries?: MetricsKeyDependencyEntry[]
+    ): MetricsKeyDependencyLookup {
+        if (this._metricsKeyDependencyLookup) {
+            return this._metricsKeyDependencyLookup;
+        }
+        const resolvedEntries =
+            entries ?? this.collectMetricsKeyDependencyEntries();
+        const lookup = this.buildMetricsKeyDependencyLookup(resolvedEntries);
+        if (this._metricsKeyDependencyEntries !== null) {
+            this._metricsKeyDependencyLookup = lookup;
+        }
+        return lookup;
     }
 
     private _buildMetricsKeyDependencyEntries(): MetricsKeyDependencyEntry[] {
@@ -14703,8 +14734,9 @@ export class Font extends ModelBase {
             const dependencyEntries = this.collectMetricsKeyDependencyEntries({
                 allowedGlyphNames
             });
-            const dependencyLookup =
-                this.buildMetricsKeyDependencyLookup(dependencyEntries);
+            const dependencyLookup = allowedGlyphNames
+                ? this.buildMetricsKeyDependencyLookup(dependencyEntries)
+                : this._getFullMetricsKeyDependencyLookup(dependencyEntries);
             const reverseComponentIndex = this._ensureReverseComponentIndex();
             const getDirectComponentDependents = (
                 glyphName: string
@@ -15575,6 +15607,7 @@ export class Font extends ModelBase {
         this._reverseComponentIndex = null;
         this._glyphNamesByLengthDesc = null;
         this._metricsKeyDependencyEntries = null;
+        this._metricsKeyDependencyLookup = null;
     }
 
     /**
@@ -15583,6 +15616,7 @@ export class Font extends ModelBase {
      */
     invalidateMetricsKeyDependencyEntries(): void {
         this._metricsKeyDependencyEntries = null;
+        this._metricsKeyDependencyLookup = null;
     }
 
     /**

@@ -13080,11 +13080,14 @@ function setupFontLoadingListener() {
                         if (isSidebearingSession) {
                             // Keep live-patched advances; do not reshape or
                             // race the interaction frame with an independent
-                            // compile repaint. Re-anchor keyboard sessions
-                            // after the blob swap before one owned paint.
+                            // compile repaint. Present immediately on blob swap
+                            // (no extra rAF hop) so outlines, advances, and pan
+                            // update in one atomic frame.
                             gc.outlineEditor.reapplyLastLiveSidebearingAdvances();
                             gc.outlineEditor.reapplyPendingSidebearingBboxCenterAnchor();
-                            gc.outlineEditor.scheduleSidebearingOwnedRepaint();
+                            gc.outlineEditor.scheduleSidebearingOwnedRepaint({
+                                immediate: true
+                            });
                         } else {
                             if (deferredIdleViewLock && didReshapeOutlineOnly) {
                                 gc.consumeIdleViewLockAfterReshape();
@@ -13092,6 +13095,9 @@ function setupFontLoadingListener() {
                             gc.requestRepaintAfterCompile({
                                 immediate: isLivePreview
                             });
+                            if (isLivePreview) {
+                                gc.outlineEditor.markLiveOutlinePreviewPresented();
+                            }
                         }
                         return;
                     }
@@ -13118,6 +13124,9 @@ function setupFontLoadingListener() {
                         gc.requestRepaintAfterCompile({
                             immediate: isLivePreview
                         });
+                        if (isLivePreview) {
+                            gc.outlineEditor.markLiveAnchorPreviewPresented();
+                        }
                         return;
                     }
 

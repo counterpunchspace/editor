@@ -8,9 +8,22 @@
 
 use std::collections::HashMap;
 
-use read_fonts::{types::Tag, FontRef, TableProvider};
+use read_fonts::{
+    tables::variations::DeltaSetIndex,
+    types::Tag,
+    FontRef, TableProvider,
+};
 use smol_str::SmolStr;
-use write_fonts::FontBuilder;
+use write_fonts::{
+    tables::{
+        hvar::Hvar,
+        variations::{
+            ivs_builder::VariationStoreBuilder, DeltaSetIndexMap, RegionAxisCoordinates,
+            VariationRegion,
+        },
+    },
+    FontBuilder,
+};
 
 const TAG_GLYF: Tag = Tag::new(b"glyf");
 const TAG_LOCA: Tag = Tag::new(b"loca");
@@ -98,23 +111,11 @@ pub fn splice_glyphs_into_ttf(
         return None;
     }
 
-    // 1. Check HVAR safety: if base has HVAR and any dirty glyph's default advance width changed,
-    //    fall back to full compile so HVAR advance-width deltas stay 100% exact.
+    // 1. Read hmtx tables (HVAR advance-width deltas are spliced in step 4b below).
     let base_hmtx_raw = base_font.table_data(TAG_HMTX)?.as_bytes();
     let mini_hmtx_raw = mini_font.table_data(TAG_HMTX)?.as_bytes();
     let base_num_h_metrics = base_font.hhea().ok()?.number_of_h_metrics() as usize;
     let mini_num_h_metrics = mini_font.hhea().ok()?.number_of_h_metrics() as usize;
-    let has_hvar = base_font.table_data(TAG_HVAR).is_some();
-
-    if has_hvar {
-        for (&base_gid, &mini_gid) in &dirty_base_to_mini {
-            let (base_adv, _) = read_hmtx_entry(base_hmtx_raw, base_num_h_metrics, base_gid)?;
-            let (mini_adv, _) = read_hmtx_entry(mini_hmtx_raw, mini_num_h_metrics, mini_gid)?;
-            if base_adv != mini_adv {
-                return None;
-            }
-        }
-    }
 
     // 2. Rebuild glyf + loca (long 32-bit offsets).
     let (new_glyf, new_loca) = splice_glyf_and_loca(
@@ -152,6 +153,23 @@ pub fn splice_glyphs_into_ttf(
         _ => return None,
     };
 
+    // 4b. Rebuild HVAR if present in base_font so advance-width deltas stay
+    //     100% exact at every master and interpolated location (including wght:400).
+    let new_hvar = match (
+        base_font.table_data(TAG_HVAR),
+        mini_font.table_data(TAG_HVAR),
+    ) {
+        (Some(_), Some(_)) => Some(splice_hvar(
+            &base_font,
+            &mini_font,
+            num_glyphs,
+            &dirty_base_to_mini,
+        )?),
+        (None, None) => None,
+        // Mismatch in variable vs static status — fall back cleanly.
+        _ => return None,
+    };
+
     // 5. Patch head (indexToLocFormat = 1, checkSumAdjustment = 0 for FontBuilder) and maxp.
     let mut new_head = base_font.table_data(TAG_HEAD)?.as_bytes().to_vec();
     if new_head.len() < 54 {
@@ -175,6 +193,9 @@ pub fn splice_glyphs_into_ttf(
     builder.add_raw(TAG_MAXP, new_maxp);
     if let Some(gvar_bytes) = new_gvar {
         builder.add_raw(TAG_GVAR, gvar_bytes);
+    }
+    if let Some(hvar_bytes) = new_hvar {
+        builder.add_raw(TAG_HVAR, hvar_bytes);
     }
     builder.copy_missing_tables(base_font);
     Some(builder.build())
@@ -581,4 +602,107 @@ fn merge_maxp(base_maxp: &[u8], mini_maxp: &[u8]) -> Option<Vec<u8>> {
         }
     }
     Some(out)
+}
+
+fn convert_variation_regions(
+    region_list: &read_fonts::tables::variations::VariationRegionList<'_>,
+) -> Option<Vec<VariationRegion>> {
+    let mut out = Vec::with_capacity(region_list.region_count() as usize);
+    for region in region_list.variation_regions().iter() {
+        let region = region.ok()?;
+        let coords = region
+            .region_axes()
+            .iter()
+            .map(|axis| {
+                RegionAxisCoordinates::new(
+                    axis.start_coord(),
+                    axis.peak_coord(),
+                    axis.end_coord(),
+                )
+            })
+            .collect();
+        out.push(VariationRegion::new(coords));
+    }
+    Some(out)
+}
+
+fn extract_hvar_advance_deltas(
+    hvar: &read_fonts::tables::hvar::Hvar<'_>,
+    ivs: &read_fonts::tables::variations::ItemVariationStore<'_>,
+    regions: &[VariationRegion],
+    gid: u16,
+) -> Option<Vec<(VariationRegion, i32)>> {
+    let idx = match hvar.advance_width_mapping() {
+        Some(Ok(map)) => map.get(gid as u32).ok()?,
+        Some(Err(_)) => return None,
+        None => DeltaSetIndex {
+            outer: 0,
+            inner: gid,
+        },
+    };
+    if idx == DeltaSetIndex::NO_VARIATION_INDEX {
+        return Some(Vec::new());
+    }
+    let data = match ivs.item_variation_data().get(idx.outer as usize) {
+        Some(d) => d.ok()?,
+        None => return Some(Vec::new()),
+    };
+    let region_indices = data.region_indexes();
+    let mut deltas = Vec::with_capacity(region_indices.len());
+    for (region_idx, delta) in region_indices.iter().zip(data.delta_set(idx.inner)) {
+        if delta != 0 {
+            let region = regions.get(region_idx.get() as usize)?.clone();
+            deltas.push((region, delta));
+        }
+    }
+    Some(deltas)
+}
+
+fn splice_hvar(
+    base_font: &FontRef<'_>,
+    mini_font: &FontRef<'_>,
+    num_glyphs: usize,
+    dirty_base_to_mini: &HashMap<u16, u16>,
+) -> Option<Vec<u8>> {
+    let base_hvar = base_font.hvar().ok()?;
+    let mini_hvar = mini_font.hvar().ok()?;
+    if base_hvar.lsb_mapping().is_some()
+        || base_hvar.rsb_mapping().is_some()
+        || mini_hvar.lsb_mapping().is_some()
+        || mini_hvar.rsb_mapping().is_some()
+    {
+        return None;
+    }
+
+    let base_ivs = base_hvar.item_variation_store().ok()?;
+    let mini_ivs = mini_hvar.item_variation_store().ok()?;
+    let base_region_list = base_ivs.variation_region_list().ok()?;
+    let mini_region_list = mini_ivs.variation_region_list().ok()?;
+    let axis_count = base_region_list.axis_count();
+    if axis_count != mini_region_list.axis_count() {
+        return None;
+    }
+
+    let base_regions = convert_variation_regions(&base_region_list)?;
+    let mini_regions = convert_variation_regions(&mini_region_list)?;
+
+    let mut builder = VariationStoreBuilder::new(axis_count);
+    let mut var_idxes = Vec::with_capacity(num_glyphs);
+    for gid in 0..num_glyphs {
+        let gid16 = gid as u16;
+        let deltas = if let Some(&mini_gid) = dirty_base_to_mini.get(&gid16) {
+            extract_hvar_advance_deltas(&mini_hvar, &mini_ivs, &mini_regions, mini_gid)?
+        } else {
+            extract_hvar_advance_deltas(&base_hvar, &base_ivs, &base_regions, gid16)?
+        };
+        var_idxes.push(builder.add_deltas(deltas));
+    }
+
+    let (varstore, varidx_map) = builder.build();
+    let varidx_map: DeltaSetIndexMap = var_idxes
+        .into_iter()
+        .map(|idx| varidx_map.get(idx).unwrap())
+        .collect();
+    let hvar = Hvar::new(varstore, Some(varidx_map), None, None);
+    write_fonts::dump_table(&hvar).ok()
 }

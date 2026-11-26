@@ -1512,6 +1512,29 @@ export class OutlineEditor {
     private _sidebearingPreviewPending: boolean = false;
     /** When the in-flight preview was requested, for the staleness valve. */
     private _sidebearingPreviewRequestedAt: number = 0;
+    /** True when the active sidebearing drag has visible dependent glyphs. */
+    private _sidebearingDragHasCascadeDependents: boolean = false;
+    /** True when a pointer sample arrived while a sidebearing cascade compile was in flight. */
+    private _sidebearingDragDirtyWhilePending: boolean = false;
+    /** Safety fallback timer so a failed/dropped sidebearing compile never stalls paint. */
+    private _sidebearingPreviewFallbackTimer: number | null = null;
+    /** True while a cascading anchor preview compile is in flight. */
+    private _anchorPreviewPending: boolean = false;
+    /** True when the active anchor drag has visible dependent glyphs. */
+    private _anchorDragHasCascadeDependents: boolean = false;
+    /** True when a pointer sample arrived while an anchor cascade compile was in flight. */
+    private _anchorDragDirtyWhilePending: boolean = false;
+    private _anchorDragLatestEvent: MouseEvent | null = null;
+    private _anchorPreviewFallbackTimer: number | null = null;
+    /** True while a cascading outline/component preview compile is in flight. */
+    private _outlinePreviewPending: boolean = false;
+    /** Cached per-drag check for whether the edited glyph has visible cascade dependents. */
+    private _outlineDragHasCascadeDependents: boolean | null = null;
+    /** True when a pointer sample arrived while an outline cascade compile was in flight. */
+    private _outlineDragDirtyWhilePending: boolean = false;
+    private _outlineDragLatestEvent: MouseEvent | null = null;
+    private _outlinePreviewFallbackTimer: number | null = null;
+    private static readonly CASCADE_PREVIEW_FALLBACK_TIMEOUT_MS = 150;
     /** Timestamp of the last pointer-driven drag tick, for idle detection. */
     private _lastSidebearingTickAt: number = 0;
     /** Glyphs whose stored width changed (source ∪ recompose) for live advances. */
@@ -4157,6 +4180,102 @@ export class OutlineEditor {
         this.liveDragEditFunnel.clearQueued();
         this._liveOutlineRefreshGlyphNames = new Set();
         this._liveOutlineRefreshChangeSource = null;
+        this._outlinePreviewPending = false;
+        this._outlineDragHasCascadeDependents = null;
+        this._outlineDragDirtyWhilePending = false;
+        this._outlineDragLatestEvent = null;
+        if (this._outlinePreviewFallbackTimer !== null) {
+            window.clearTimeout(this._outlinePreviewFallbackTimer);
+            this._outlinePreviewFallbackTimer = null;
+        }
+    }
+
+    private hasVisibleOutlineCascadeDependents(): boolean {
+        if (this._outlineDragHasCascadeDependents !== null) {
+            return this._outlineDragHasCascadeDependents;
+        }
+        const fontModel = fontManager.currentFont?.fontModel;
+        const parsed = this.parseGlyphStack();
+        const glyphName =
+            parsed.length > 0
+                ? parsed[parsed.length - 1].glyphName
+                : this.glyphCanvas.getCurrentGlyphName();
+        if (!fontModel || !glyphName) {
+            this._outlineDragHasCascadeDependents = false;
+            return false;
+        }
+        const visibleGlyphNames = new Set(
+            this.getVisibleGlyphNamesForDragMetricsRefresh(glyphName)
+        );
+        const metricsDeps = fontModel.collectMetricsKeyDependentGlyphs?.(
+            new Set([glyphName])
+        );
+        if (metricsDeps) {
+            for (const dep of metricsDeps) {
+                if (dep !== glyphName && visibleGlyphNames.has(dep)) {
+                    this._outlineDragHasCascadeDependents = true;
+                    return true;
+                }
+            }
+        }
+        const compDeps =
+            fontManager.getAutomaticCompositionDragScopeGlyphNames?.(
+                glyphName,
+                fontModel
+            );
+        if (compDeps) {
+            for (const dep of compDeps) {
+                if (dep !== glyphName && visibleGlyphNames.has(dep)) {
+                    this._outlineDragHasCascadeDependents = true;
+                    return true;
+                }
+            }
+        }
+        this._outlineDragHasCascadeDependents = false;
+        return false;
+    }
+
+    private armOutlinePreviewFallbackTimer(): void {
+        if (this._outlinePreviewFallbackTimer !== null) {
+            window.clearTimeout(this._outlinePreviewFallbackTimer);
+        }
+        this._outlinePreviewFallbackTimer = window.setTimeout(() => {
+            this._outlinePreviewFallbackTimer = null;
+            if (!this._outlinePreviewPending) {
+                return;
+            }
+            this._outlinePreviewPending = false;
+            this.glyphCanvas.render();
+            this.drainCoalescedOutlineDragEvent();
+        }, OutlineEditor.CASCADE_PREVIEW_FALLBACK_TIMEOUT_MS);
+    }
+
+    private drainCoalescedOutlineDragEvent(): void {
+        if (!this._outlineDragDirtyWhilePending) {
+            return;
+        }
+        const latestEvent = this._outlineDragLatestEvent;
+        this._outlineDragDirtyWhilePending = false;
+        this._outlineDragLatestEvent = null;
+        if (latestEvent && (this.isDraggingPoint || this.isDraggingComponent)) {
+            queueMicrotask(() => {
+                if (
+                    (this.isDraggingPoint || this.isDraggingComponent) &&
+                    !this._outlinePreviewPending
+                ) {
+                    this.onMouseMove(latestEvent);
+                }
+            });
+        }
+    }
+
+    markLiveOutlinePreviewPresented(): void {
+        if (this._outlinePreviewFallbackTimer !== null) {
+            window.clearTimeout(this._outlinePreviewFallbackTimer);
+            this._outlinePreviewFallbackTimer = null;
+        }
+        this._outlinePreviewPending = false;
+        this.drainCoalescedOutlineDragEvent();
     }
 
     private getCurrentExplicitDrawingCacheInput(): {
@@ -5617,8 +5736,56 @@ export class OutlineEditor {
         this._cachedAnchorDragScopeGlyphNames = null;
         this._lastLiveAnchorPreviewTargets = [];
         this._lastLiveAnchorRecomposeTargets = [];
+        this._anchorPreviewPending = false;
+        this._anchorDragHasCascadeDependents = false;
+        this._anchorDragDirtyWhilePending = false;
+        this._anchorDragLatestEvent = null;
+        if (this._anchorPreviewFallbackTimer !== null) {
+            window.clearTimeout(this._anchorPreviewFallbackTimer);
+            this._anchorPreviewFallbackTimer = null;
+        }
         this.resetLiveOutlineRefreshState();
         this.resetLiveSidebearingRefreshState();
+    }
+
+    private armAnchorPreviewFallbackTimer(): void {
+        if (this._anchorPreviewFallbackTimer !== null) {
+            window.clearTimeout(this._anchorPreviewFallbackTimer);
+        }
+        this._anchorPreviewFallbackTimer = window.setTimeout(() => {
+            this._anchorPreviewFallbackTimer = null;
+            if (!this._anchorPreviewPending) {
+                return;
+            }
+            this._anchorPreviewPending = false;
+            this.glyphCanvas.render();
+            this.drainCoalescedAnchorDragEvent();
+        }, OutlineEditor.CASCADE_PREVIEW_FALLBACK_TIMEOUT_MS);
+    }
+
+    private drainCoalescedAnchorDragEvent(): void {
+        if (!this._anchorDragDirtyWhilePending) {
+            return;
+        }
+        const latestEvent = this._anchorDragLatestEvent;
+        this._anchorDragDirtyWhilePending = false;
+        this._anchorDragLatestEvent = null;
+        if (latestEvent && this.isDraggingAnchor) {
+            queueMicrotask(() => {
+                if (this.isDraggingAnchor && !this._anchorPreviewPending) {
+                    this.onMouseMove(latestEvent);
+                }
+            });
+        }
+    }
+
+    markLiveAnchorPreviewPresented(): void {
+        if (this._anchorPreviewFallbackTimer !== null) {
+            window.clearTimeout(this._anchorPreviewFallbackTimer);
+            this._anchorPreviewFallbackTimer = null;
+        }
+        this._anchorPreviewPending = false;
+        this.drainCoalescedAnchorDragEvent();
     }
 
     private getCachedAnchorDragScopeGlyphNames(
@@ -5682,6 +5849,8 @@ export class OutlineEditor {
             scope: 'visible'
         });
         this._anchorAffectedGlyphNames = closure.affectedGlyphNames;
+        this._anchorDragHasCascadeDependents =
+            closure.dependentTargets.length > 0;
         this._lastLiveAnchorPreviewTargets = closure.allTargets;
         // Union across ticks: the final live prepare can be a no-op once the
         // model has already converged, but earlier ticks still mutated
@@ -5702,6 +5871,15 @@ export class OutlineEditor {
         const currentDrawingId = this.getCurrentDrawingId();
         if (!currentDrawingId || previewTargets.length === 0) {
             return;
+        }
+
+        if (
+            this.isDraggingAnchor &&
+            this._anchorDragHasCascadeDependents &&
+            window.fontCompilation?.isInitialized
+        ) {
+            this._anchorPreviewPending = true;
+            this.armAnchorPreviewFallbackTimer();
         }
 
         this.liveDragEditFunnel.queue({
@@ -5952,6 +6130,12 @@ export class OutlineEditor {
         }
         this._sidebearingPreviewPending = false;
         this._sidebearingPreviewRequestedAt = 0;
+        this._sidebearingDragHasCascadeDependents = false;
+        this._sidebearingDragDirtyWhilePending = false;
+        if (this._sidebearingPreviewFallbackTimer !== null) {
+            window.clearTimeout(this._sidebearingPreviewFallbackTimer);
+            this._sidebearingPreviewFallbackTimer = null;
+        }
         this._lastSidebearingTickAt = 0;
     }
 
@@ -6143,6 +6327,41 @@ export class OutlineEditor {
         await this.liveDragEditFunnel.drainAndClearQueued();
     }
 
+    private armSidebearingPreviewFallbackTimer(): void {
+        if (this._sidebearingPreviewFallbackTimer !== null) {
+            window.clearTimeout(this._sidebearingPreviewFallbackTimer);
+        }
+        this._sidebearingPreviewFallbackTimer = window.setTimeout(() => {
+            this._sidebearingPreviewFallbackTimer = null;
+            if (!this._sidebearingPreviewPending) {
+                return;
+            }
+            this._sidebearingPreviewPending = false;
+            this.reapplyLastLiveSidebearingAdvances();
+            this.reapplyPendingSidebearingBboxCenterAnchor();
+            this.glyphCanvas.render();
+            this.drainCoalescedSidebearingDragFrame();
+        }, OutlineEditor.CASCADE_PREVIEW_FALLBACK_TIMEOUT_MS);
+    }
+
+    private drainCoalescedSidebearingDragFrame(): void {
+        if (!this._sidebearingDragDirtyWhilePending) {
+            return;
+        }
+        this._sidebearingDragDirtyWhilePending = false;
+        if (this.isDraggingSidebearing && this.drawingData) {
+            queueMicrotask(() => {
+                if (
+                    this.isDraggingSidebearing &&
+                    this.drawingData &&
+                    !this._sidebearingPreviewPending
+                ) {
+                    this.processSidebearingDragFrame();
+                }
+            });
+        }
+    }
+
     private queueLiveVisibleSidebearingDependentRefresh(): void {
         const previewTargets = [...this._lastLiveSidebearingPreviewTargets];
         const currentDrawingId = this.getCurrentDrawingId();
@@ -6150,19 +6369,15 @@ export class OutlineEditor {
             return;
         }
 
-        // Rate gate: at most one preview generation in flight. Ticks keep
-        // mutating the model meanwhile, so the next stage after the compile
-        // returns carries the latest state — "latest generation wins" without
-        // issuing one worker compile per pointer sample.
-        if (
-            this._sidebearingPreviewPending &&
-            performance.now() - this._sidebearingPreviewRequestedAt <
-                OutlineEditor.SIDEBEARING_PREVIEW_PAINT_BUDGET_MS
-        ) {
+        // Strict 1-in-flight gate: while a cascading sidebearing preview is in
+        // flight, pointer moves coalesce without mutating ahead of the compiled
+        // blob, and the next generation fires immediately on atomic paint.
+        if (this._sidebearingPreviewPending) {
             return;
         }
         this._sidebearingPreviewPending = true;
         this._sidebearingPreviewRequestedAt = performance.now();
+        this.armSidebearingPreviewFallbackTimer();
 
         this.liveDragEditFunnel.queue({
             kind: 'sidebearing',
@@ -6254,10 +6469,26 @@ export class OutlineEditor {
     }
 
     /** Paint the live preview blob after it has replaced the previous outline. */
-    scheduleSidebearingOwnedRepaint(): void {
-        // The preview result has landed; release the rate gate so the next
-        // pointer tick may stage a new generation.
+    scheduleSidebearingOwnedRepaint(options?: { immediate?: boolean }): void {
+        // The preview result has landed; release the 1-in-flight gate so any
+        // coalesced pointer sample may stage the next generation immediately.
         this._sidebearingPreviewPending = false;
+        if (this._sidebearingPreviewFallbackTimer !== null) {
+            window.clearTimeout(this._sidebearingPreviewFallbackTimer);
+            this._sidebearingPreviewFallbackTimer = null;
+        }
+
+        if (options?.immediate) {
+            if (this._sidebearingPaintFrame !== null) {
+                cancelAnimationFrame(this._sidebearingPaintFrame);
+                this._sidebearingPaintFrame = null;
+            }
+            this.reapplyLastLiveSidebearingAdvances();
+            this.reapplyPendingSidebearingBboxCenterAnchor();
+            this.glyphCanvas.render();
+            this.drainCoalescedSidebearingDragFrame();
+            return;
+        }
 
         if (this.isDraggingSidebearing) {
             // Do not wait for another pointer tick: those ticks deliberately
@@ -6286,11 +6517,20 @@ export class OutlineEditor {
             cancelAnimationFrame(this._sidebearingPaintFrame);
             this._sidebearingPaintFrame = null;
         }
-        if (this._sidebearingDragFrame === null) {
+        if (this._sidebearingPreviewFallbackTimer !== null) {
+            window.clearTimeout(this._sidebearingPreviewFallbackTimer);
+            this._sidebearingPreviewFallbackTimer = null;
+        }
+        const hadDirtySample = this._sidebearingDragDirtyWhilePending;
+        this._sidebearingDragDirtyWhilePending = false;
+        this._sidebearingPreviewPending = false;
+        if (this._sidebearingDragFrame === null && !hadDirtySample) {
             return;
         }
-        cancelAnimationFrame(this._sidebearingDragFrame);
-        this._sidebearingDragFrame = null;
+        if (this._sidebearingDragFrame !== null) {
+            cancelAnimationFrame(this._sidebearingDragFrame);
+            this._sidebearingDragFrame = null;
+        }
         if (this.isDraggingSidebearing && this.drawingData) {
             this.processSidebearingDragFrame();
         }
@@ -6314,6 +6554,11 @@ export class OutlineEditor {
     }
 
     private processSidebearingDragFrame(): void {
+        if (this._sidebearingPreviewPending) {
+            this._sidebearingDragDirtyWhilePending = true;
+            return;
+        }
+
         const { glyphX, glyphY } = this.transformMouseToComponentSpace();
         const previousGlyphX = this.lastGlyphX;
         const deltaX =
@@ -13780,6 +14025,23 @@ export class OutlineEditor {
             return;
         }
 
+        // Strict 1-in-flight coalescing for cascading anchor and outline drags:
+        // keep active glyph vector, model, and compiled dependents locked to
+        // the exact same generation until the in-flight preview presents.
+        if (this.isDraggingAnchor && this._anchorPreviewPending) {
+            this._anchorDragDirtyWhilePending = true;
+            this._anchorDragLatestEvent = e;
+            return;
+        }
+        if (
+            (this.isDraggingPoint || this.isDraggingComponent) &&
+            this._outlinePreviewPending
+        ) {
+            this._outlineDragDirtyWhilePending = true;
+            this._outlineDragLatestEvent = e;
+            return;
+        }
+
         const rawPointer = this.isDraggingGuide
             ? this.transformMouseToRootSpace()
             : this.transformMouseToComponentSpace();
@@ -13935,7 +14197,29 @@ export class OutlineEditor {
             (this.isDraggingPoint && !this.isSlidingSmoothPointAlongCurve) ||
             this.isDraggingAnchor
         ) {
-            this.schedulePendingDragMetricsUpdate();
+            if (
+                !this.isDraggingAnchor &&
+                this.hasVisibleOutlineCascadeDependents() &&
+                window.fontCompilation?.isInitialized
+            ) {
+                // Cascading outline/component drag: flush immediately (no 50 ms
+                // setTimeout) and hold paint until the compiled preview lands so
+                // outline, metrics-key widths, and composites paint atomically.
+                const flushResult =
+                    this.flushPendingDragMetricsUpdate('mouse-drag-outline');
+                if (flushResult && typeof flushResult.catch === 'function') {
+                    void flushResult.catch((error) => {
+                        console.error(
+                            '[OutlineEditor] Error flushing cascading outline drag update:',
+                            error
+                        );
+                    });
+                }
+                this._outlinePreviewPending = true;
+                this.armOutlinePreviewFallbackTimer();
+            } else {
+                this.schedulePendingDragMetricsUpdate();
+            }
         }
 
         // Throttle saveDrawingData during drag (every 50ms) — final save on mouseUp
@@ -13974,7 +14258,9 @@ export class OutlineEditor {
             this._lastPropertyPanelUpdateTime = now;
             this.glyphCanvas.updatePropertyPanel();
         }
-        this.glyphCanvas.render();
+        if (!this._anchorPreviewPending && !this._outlinePreviewPending) {
+            this.glyphCanvas.render();
+        }
     }
 
     _updateDraggedGuide(deltaX: number, deltaY: number): void {
@@ -14348,6 +14634,35 @@ export class OutlineEditor {
         // Apply the last coalesced pointer sample before clearing drag flags.
         if (this.isDraggingSidebearing) {
             this.flushSidebearingDragFrame();
+        }
+        if (this.isDraggingAnchor && this._anchorDragDirtyWhilePending) {
+            const latestAnchorEvent = this._anchorDragLatestEvent;
+            this._anchorDragDirtyWhilePending = false;
+            this._anchorDragLatestEvent = null;
+            this._anchorPreviewPending = false;
+            if (this._anchorPreviewFallbackTimer !== null) {
+                window.clearTimeout(this._anchorPreviewFallbackTimer);
+                this._anchorPreviewFallbackTimer = null;
+            }
+            if (latestAnchorEvent) {
+                this.onMouseMove(latestAnchorEvent);
+            }
+        }
+        if (
+            (this.isDraggingPoint || this.isDraggingComponent) &&
+            this._outlineDragDirtyWhilePending
+        ) {
+            const latestOutlineEvent = this._outlineDragLatestEvent;
+            this._outlineDragDirtyWhilePending = false;
+            this._outlineDragLatestEvent = null;
+            this._outlinePreviewPending = false;
+            if (this._outlinePreviewFallbackTimer !== null) {
+                window.clearTimeout(this._outlinePreviewFallbackTimer);
+                this._outlinePreviewFallbackTimer = null;
+            }
+            if (latestOutlineEvent) {
+                this.onMouseMove(latestOutlineEvent);
+            }
         }
 
         // Capture drag state before clearing drag flags
@@ -19696,6 +20011,8 @@ export class OutlineEditor {
                 scope: this.isDraggingSidebearing ? 'visible' : 'all'
             });
             affectedGlyphNames = closure.affectedGlyphNames;
+            this._sidebearingDragHasCascadeDependents =
+                closure.dependentTargets.length > 0;
 
             // Keyboard and property-panel edits persist immediately after this
             // method. Replace their working copy with the authoritative
