@@ -1197,7 +1197,7 @@ def _cp_compile_filters_run(payload_json):
         }
         for item in payload.get('drawings') or []:
             glyph_name = item['glyphName']
-            working = json.loads(json.dumps(item['drawing']))
+            working = item['drawing']
             key = f"{glyph_name}\x1f{working.get('id') or ''}"
             for plugin in plugins:
                 ctx = _cp_compile_filter_ctx(plugin, font, working)
@@ -1226,7 +1226,9 @@ def _cp_compile_filters_run(payload_json):
             current_drawings[key] = working
 
         # The font JSON is Babelfont data, so its glyphs keep their `layers` key.
-        compile_font = json.loads(json.dumps(font))
+        # `payload` was freshly parsed above, so mutating `font` in place avoids
+        # a second full-font deep copy in WASM linear memory.
+        compile_font = font
         for glyph in compile_font.get('glyphs') or []:
             drawings = []
             for drawing in glyph.get('layers') or []:

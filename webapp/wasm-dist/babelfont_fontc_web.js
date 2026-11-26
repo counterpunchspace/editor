@@ -474,6 +474,29 @@ export function dump_worker_cache_state_json() {
 }
 
 /**
+ * Serialize the worker's complete cached `FONT_CACHE` directly as `.babelfont` JSON.
+ * @returns {string}
+ */
+export function export_cached_font_as_babelfont_json() {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ret = wasm.export_cached_font_as_babelfont_json();
+        var ptr1 = ret[0];
+        var len1 = ret[1];
+        if (ret[3]) {
+            ptr1 = 0; len1 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred2_0 = ptr1;
+        deferred2_1 = len1;
+        return getStringFromWasm0(ptr1, len1);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Run FIP001 boolean subtraction on the cached font and return per-layer
  * outline fingerprints for `glyph_name`. Does not run DropIncompatiblePaths.
  * @param {string} glyph_name
@@ -706,6 +729,32 @@ export function get_glyph_order(font_bytes) {
 }
 
 /**
+ * Hydrate a batch of glyphs directly from `FONT_CACHE` as a JSON array string.
+ * @param {string} glyph_names_json
+ * @returns {string}
+ */
+export function get_glyphs_json_batch(glyph_names_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(glyph_names_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.get_glyphs_json_batch(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Get outlines for multiple glyphs with optional component flattening
  *
  * Requires that a font has been stored via store_font() first.
@@ -743,6 +792,27 @@ export function get_glyphs_outlines(glyph_names_json, location_json, flatten_com
     } finally {
         wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
     }
+}
+
+/**
+ * Compact binary overview outlines (direct Canvas2D path commands + bounds),
+ * eliminating JSON serialization/parsing and duplicate component flattening.
+ * @param {string} glyph_names_json
+ * @param {string} location_json
+ * @returns {Uint8Array}
+ */
+export function get_glyphs_overview_binary(glyph_names_json, location_json) {
+    const ptr0 = passStringToWasm0(glyph_names_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(location_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.get_glyphs_overview_binary(ptr0, len0, ptr1, len1);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v3;
 }
 
 /**
@@ -1100,17 +1170,18 @@ export function load_ufo_glyphs(layout_entries_json, glifs_json, glyph_names_jso
 }
 
 /**
- * Open a font file from various formats
- *
- * Supports .glyphs, .glyphspackage, .ufo, .designspace, .vfj, .sfd, .ttf and .babelfont formats.
- * Loads the font, stores it in cache, and returns the babelfont JSON representation.
- *
- * # Arguments
- * * `filename` - The name of the font file (used to determine format)
- * * `contents` - File contents as a JS string (text formats) or `Uint8Array` (raw bytes)
- *
- * # Returns
- * * `String` - Babelfont JSON representation
+ * Merge `font-core` metadata + seeded glyph shards into the existing complete
+ * `FONT_CACHE` (used for local sparse opens so untouched local glyphs remain
+ * resident for compilation, overview rendering, and local save).
+ */
+export function merge_ydoc_set_into_font_cache() {
+    const ret = wasm.merge_ydoc_set_into_font_cache();
+    if (ret[1]) {
+        throw takeFromExternrefTable0(ret[0]);
+    }
+}
+
+/**
  * @param {string} filename
  * @param {any} contents
  * @returns {string}
@@ -1133,6 +1204,49 @@ export function open_font_file(filename, contents) {
         return getStringFromWasm0(ptr2, len2);
     } finally {
         wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Zero-monolithic-JSON local sparse open: parses the source ONCE into
+ * `FONT_CACHE`, populates `CANONICAL_GLYPH_INDEX_CACHE` & feature caches,
+ * and returns only `{ coreFontJson, glyphOrder, glyphCatalog }` (no drawings).
+ * @param {string} filename
+ * @param {any} contents
+ * @returns {string}
+ */
+export function open_font_file_sparse(filename, contents) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(filename, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.open_font_file_sparse(ptr0, len0, contents);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Patch only the named seeded glyph shards into the existing `FONT_CACHE`
+ * in O(k) without rebuilding untouched local glyphs.
+ * @param {string} glyph_ids_json
+ */
+export function patch_seeded_glyph_shards_into_font_cache(glyph_ids_json) {
+    const ptr0 = passStringToWasm0(glyph_ids_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.patch_seeded_glyph_shards_into_font_cache(ptr0, len0);
+    if (ret[1]) {
+        throw takeFromExternrefTable0(ret[0]);
     }
 }
 
@@ -1264,6 +1378,69 @@ export function reset_ydoc_set() {
 }
 
 /**
+ * Reset Y.Doc state without clearing `FONT_CACHE`, so a local sparse open can
+ * bind `font-core` + initial working-set shards while keeping all untouched
+ * local glyphs resident in `FONT_CACHE`.
+ */
+export function reset_ydoc_set_preserving_font_cache() {
+    wasm.reset_ydoc_set_preserving_font_cache();
+}
+
+/**
+ * Serialize the worker's complete cached `FONT_CACHE` directly as a Glyphs 3
+ * source file (zero JS→Rust monolithic JSON round-trip).
+ * @returns {string}
+ */
+export function save_cached_font_as_glyphs() {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ret = wasm.save_cached_font_as_glyphs();
+        var ptr1 = ret[0];
+        var len1 = ret[1];
+        if (ret[3]) {
+            ptr1 = 0; len1 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred2_0 = ptr1;
+        deferred2_1 = len1;
+        return getStringFromWasm0(ptr1, len1);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Serialize the worker's complete cached `FONT_CACHE` as folder source entries
+ * (`"ufo"`, `"glyphspackage"`, or `"designspace"`) without JS→Rust JSON transfer.
+ * @param {string} format
+ * @param {string} request_json
+ * @returns {string}
+ */
+export function save_cached_font_source_entries(format, request_json) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(request_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.save_cached_font_source_entries(ptr0, len0, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
  * Serialize a babelfont JSON string as a Glyphs 3 source file.
  *
  * Input: a babelfont JSON string (as produced by `open_font_file`).
@@ -1293,19 +1470,6 @@ export function save_font_as_glyphs(babelfont_json) {
 }
 
 /**
- * Serialize a babelfont JSON string as the files of a folder source.
- *
- * `format` is `"ufo"`, `"glyphspackage"` or `"designspace"`; a designspace
- * project's paths are relative to the document's folder, and its request
- * names the `document`. `request_json` is
- * `{ "glyphs": [names] | null, "fontLevel": bool, "layoutEntries": { path: text } }`:
- * with `glyphs`, only those glyphs' files are written (and the font-level
- * files with `fontLevel`), so that a change to one glyph saves one file.
- *
- * Returns `{ "files": { path: text }, "removed": [path] }` with paths relative
- * to the source folder; `removed` lists files a partial save made obsolete.
- * A partial UFO save that would change the UFO's glyph set or layers returns
- * `{ "needsFullSave": reason }` instead.
  * @param {string} format
  * @param {string} babelfont_json
  * @param {string} request_json

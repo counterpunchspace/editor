@@ -8,7 +8,23 @@ function sleep(s: number) {
     return new Promise((resolve) => setTimeout(resolve, s));
 }
 
+let consoleInitPromise: Promise<void> | null = null;
+
 async function initPyodideConsole() {
+    'use strict';
+
+    if (consoleInitPromise) {
+        return consoleInitPromise;
+    }
+
+    consoleInitPromise = initPyodideConsoleInternal().catch((error) => {
+        consoleInitPromise = null;
+        throw error;
+    });
+    return consoleInitPromise;
+}
+
+async function initPyodideConsoleInternal() {
     'use strict';
 
     const { timelineMark, timelineSpanEnd, timelineSpanStart } =
@@ -27,7 +43,7 @@ async function initPyodideConsole() {
     let namespace: any;
     let await_fut: any;
 
-    // Hide loading spinner initially
+    // Show loading spinner while Pyodide loads
     const loadingEl = document.getElementById('loading') as HTMLElement | null;
     if (loadingEl) {
         loadingEl.style.display = 'block';
@@ -35,6 +51,12 @@ async function initPyodideConsole() {
 
     try {
         const loadPyodideSpanId = timelineSpanStart('python.loadPyodide');
+        if (
+            !window.pyodide &&
+            typeof window.ensurePyodideReady === 'function'
+        ) {
+            await window.ensurePyodideReady();
+        }
         pyodide = window.pyodide
             ? window.pyodide
             : await (window.__pyodideLoadPromise ||
@@ -224,7 +246,15 @@ async function initPyodideConsole() {
                 command: string,
                 callback: (items: any[]) => void
             ) {
-                callback(pyconsole.complete(command).toJs()[0]);
+                const completionProxy = pyconsole.complete(command);
+                try {
+                    const jsCompletion = completionProxy?.toJs
+                        ? completionProxy.toJs()
+                        : completionProxy;
+                    callback(jsCompletion?.[0] ?? []);
+                } finally {
+                    completionProxy?.destroy?.();
+                }
             },
             keymap: {
                 'CTRL+C': async function (_event: Event, _original: unknown) {
@@ -448,7 +478,7 @@ async function initPyodideConsole() {
             term.pause();
         };
 
-        // Wrap pyodide.runPython to handle errors properly
+        // Wrap pyodide.runPython to handle errors properly and release PyProxies
         const pyodide_py = pyodide.runPython;
         pyodide.runPython = (...args: any[]) => {
             try {
@@ -457,7 +487,11 @@ async function initPyodideConsole() {
                     return result
                         .then((r: any) => {
                             if (r && r.toJs) {
-                                r = r.toJs();
+                                try {
+                                    return r.toJs();
+                                } finally {
+                                    r.destroy?.();
+                                }
                             }
                             return r;
                         })
@@ -472,7 +506,11 @@ async function initPyodideConsole() {
                         });
                 } else {
                     if (result && result.toJs) {
-                        return result.toJs();
+                        try {
+                            return result.toJs();
+                        } finally {
+                            result.destroy?.();
+                        }
                     }
                     return result;
                 }
@@ -685,13 +723,15 @@ document.addEventListener('keydown', (event) => {
     }
 });
 
+window.initPyodideConsole = initPyodideConsole;
+
 // Initialize when DOM is ready and container exists
 document.addEventListener('DOMContentLoaded', () => {
     performance.mark('cp:python.consoleInit.scheduled');
     // Wait a bit for the view to be properly rendered
     setTimeout(() => {
         if (document.getElementById('console-container')) {
-            initPyodideConsole();
+            void initPyodideConsole();
         }
     }, 100);
 

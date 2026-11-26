@@ -134,6 +134,6 @@ function scheduleAutoInitialization(): void {
     runAutoInitialization();
 }
 
-// Auto-initialize on module load
-console.log('[WasmInit]', 'Auto-initializing WASM...');
-scheduleAutoInitialization();
+// Lazy initialization only: do NOT auto-initialize the 20 MB babelfont WASM
+// module on the main thread at boot. Main-thread OpenType reads use the
+// zero-WASM opentype-table-reader, and source I/O routes through fontc-worker.

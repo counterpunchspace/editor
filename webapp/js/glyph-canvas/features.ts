@@ -1,9 +1,8 @@
 import {
     get_font_features_with_tables,
     get_stylistic_set_names
-} from '../../wasm-dist/babelfont_fontc_web';
+} from '../opentype-table-reader';
 import { getOpentypeFeatureInfo } from '../opentype-features';
-import { ensureWasmInitialized } from '../wasm-init';
 import { Logger } from '../logger';
 
 const console = new Logger('OpentypeFeatures');
@@ -382,15 +381,6 @@ export class FeaturesManager {
             let editingFeaturesWithTables: Record<string, string[]> = {};
             let stylisticSetNames: Record<string, string> = {};
             if (this.editingFontBytes) {
-                try {
-                    await ensureWasmInitialized();
-                } catch (error) {
-                    console.warn(
-                        '[Features]',
-                        'Could not initialize WASM for feature names:',
-                        error
-                    );
-                }
                 try {
                     const editingFeaturesWithTablesJson =
                         get_font_features_with_tables(this.editingFontBytes);

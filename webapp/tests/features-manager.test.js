@@ -1,3 +1,9 @@
+jest.mock('../js/opentype-table-reader', () => ({
+    ...jest.requireActual('../js/opentype-table-reader'),
+    get_stylistic_set_names: jest.fn(() => JSON.stringify({})),
+    get_font_features_with_tables: jest.fn(() => JSON.stringify({}))
+}));
+
 describe('FeaturesManager setEnabledFeatures', () => {
     let FeaturesManager;
     let originalRequestAnimationFrame;
@@ -80,7 +86,7 @@ describe('FeaturesManager setEnabledFeatures', () => {
         const {
             get_stylistic_set_names,
             get_font_features_with_tables
-        } = require('../wasm-dist/babelfont_fontc_web');
+        } = require('../js/opentype-table-reader');
         get_stylistic_set_names.mockReturnValue(
             JSON.stringify({ ss03: 'Geometric a g' })
         );
@@ -125,7 +131,7 @@ describe('FeaturesManager setEnabledFeatures', () => {
         const {
             get_stylistic_set_names,
             get_font_features_with_tables
-        } = require('../wasm-dist/babelfont_fontc_web');
+        } = require('../js/opentype-table-reader');
         get_stylistic_set_names.mockReturnValue(JSON.stringify({}));
         get_font_features_with_tables.mockReturnValue(
             JSON.stringify({
@@ -177,7 +183,7 @@ describe('FeaturesManager setEnabledFeatures', () => {
         const {
             get_stylistic_set_names,
             get_font_features_with_tables
-        } = require('../wasm-dist/babelfont_fontc_web');
+        } = require('../js/opentype-table-reader');
         get_stylistic_set_names.mockReturnValue(JSON.stringify({}));
         get_font_features_with_tables.mockReturnValue(
             JSON.stringify({
@@ -220,7 +226,7 @@ describe('FeaturesManager setEnabledFeatures', () => {
         const {
             get_stylistic_set_names,
             get_font_features_with_tables
-        } = require('../wasm-dist/babelfont_fontc_web');
+        } = require('../js/opentype-table-reader');
         get_stylistic_set_names.mockReturnValue(
             JSON.stringify({ ss03: 'From binary' })
         );
@@ -249,7 +255,7 @@ describe('FeaturesManager setEnabledFeatures', () => {
     test('enables URL-restored features even when the subset button is disabled', async () => {
         const {
             get_font_features_with_tables
-        } = require('../wasm-dist/babelfont_fontc_web');
+        } = require('../js/opentype-table-reader');
         get_font_features_with_tables.mockReturnValue(
             JSON.stringify({
                 liga: ['GSUB']

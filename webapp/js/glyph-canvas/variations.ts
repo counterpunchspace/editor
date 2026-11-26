@@ -1,6 +1,5 @@
-import { get_font_axes } from '../../wasm-dist/babelfont_fontc_web';
+import { get_font_axes } from '../opentype-table-reader';
 import Babelfont from '../babelfont';
-import { ensureWasmInitialized } from '../wasm-init';
 import { Logger } from '../logger';
 import {
     clampToAxisRange,
@@ -447,7 +446,6 @@ export class AxesManager {
                 'Getting axes from WASM, fontBytes length:',
                 this.fontBytes.length
             );
-            await ensureWasmInitialized();
             const axesJson = get_font_axes(this.fontBytes);
             console.log('[AxesManager]', 'Axes JSON:', axesJson);
             return JSON.parse(axesJson);

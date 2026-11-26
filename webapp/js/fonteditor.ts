@@ -1,5 +1,5 @@
 // FontEditor initialization
-// Loads and initializes Python packages for font editing
+// Decouples pure-JS app startup from Pyodide so Python loads lazily on first need.
 
 const {
     markFontEditorReady,
@@ -10,6 +10,7 @@ import { fontDestinationPluginManager } from './font-destination-plugin-manager'
 import { discoverCompileFilters } from './compile-filter-host';
 import { getFocusViewId } from './window-ui-state';
 import { notifyLoadingOverlayHiding } from './welcome-screen';
+import { runHostPythonAsync } from './skills/host-python';
 import {
     timelineMark,
     timelineSpanEnd,
@@ -28,133 +29,284 @@ type ExtendedWindow = Window & {
     };
 };
 
-async function initFontEditor() {
-    'use strict';
+let pyodideReadyPromise: Promise<unknown> | null = null;
+let pyodideEnvironmentInitialized = false;
 
-    let initSpanId: string | null = null;
+function checkCrossOriginIsolation(): boolean {
+    if (typeof SharedArrayBuffer !== 'undefined') {
+        return true;
+    }
 
-    try {
-        // Ensure pyodide is available
-        if (!window.pyodide) {
-            console.error(
-                '[FontEditor]',
-                "Pyodide not available. Make sure it's loaded first."
+    const alreadyReloaded =
+        window.sessionStorage.getItem('coiReloadedBySelf') === 'true';
+
+    const isIOS =
+        /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
+        /iPad|iPhone|iPod/.test(navigator.platform);
+
+    if (isIOS) {
+        console.warn(
+            '[FontEditor]',
+            '[COI] iOS detected - SharedArrayBuffer not supported on iOS (all browsers). Some features may be limited.'
+        );
+        return true;
+    }
+
+    if (!alreadyReloaded) {
+        console.log(
+            '[FontEditor]',
+            '[COI] SharedArrayBuffer not available - reloading to enable service worker headers...'
+        );
+        if (window.updateLoadingStatus) {
+            window.updateLoadingStatus('Enabling cross-origin isolation...');
+        }
+        setTimeout(() => {
+            window.sessionStorage.setItem('coiReloadedBySelf', 'true');
+            window.location.reload();
+        }, 500);
+        return false;
+    }
+
+    console.error(
+        '[FontEditor]',
+        '[COI] SharedArrayBuffer still unavailable after reload. Browser may not support it.'
+    );
+    return true;
+}
+
+function hideStartupOverlay(): void {
+    const shouldWaitForUnsupportedBrowserContinue = () => {
+        const extendedWindow = window as ExtendedWindow;
+        return (
+            extendedWindow.__unsupportedBrowserWarningRequired === true &&
+            extendedWindow.__unsupportedBrowserWarningAcknowledged !== true
+        );
+    };
+
+    const hideLoadingOverlayNow = () => {
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const loadingLogo = document.querySelector('.loading-logo');
+
+        if (loadingLogo) {
+            (loadingLogo as HTMLElement).classList.add('fade-out');
+        }
+
+        if (loadingOverlay) {
+            loadingOverlay.classList.add('hidden');
+        }
+        notifyLoadingOverlayHiding();
+    };
+
+    const hideLoadingOverlay = () =>
+        whenLoadingScreenFree(hideLoadingOverlayNow);
+
+    const hideLoadingOverlayWhenAllowed = () => {
+        if (!shouldWaitForUnsupportedBrowserContinue()) {
+            hideLoadingOverlay();
+            return;
+        }
+
+        window.addEventListener(
+            'unsupportedBrowserContinue',
+            () => {
+                hideLoadingOverlay();
+            },
+            { once: true }
+        );
+    };
+
+    setTimeout(() => {
+        const extendedWindow = window as ExtendedWindow;
+        if (extendedWindow.WarpSpeedAnimation) {
+            let callbackFired = false;
+
+            extendedWindow.WarpSpeedAnimation.requestStop(() => {
+                if (!callbackFired) {
+                    callbackFired = true;
+                    hideLoadingOverlayWhenAllowed();
+                }
+            });
+
+            setTimeout(() => {
+                if (!callbackFired) {
+                    console.warn(
+                        '[FontEditor]',
+                        'Animation drain timeout, forcing overlay hide'
+                    );
+                    callbackFired = true;
+                    hideLoadingOverlayWhenAllowed();
+                }
+            }, 5000);
+        } else {
+            hideLoadingOverlayWhenAllowed();
+        }
+    }, 200);
+}
+
+/**
+ * Lazily load Pyodide, boot wheels (excluding Hyperglot), fonteditor.py,
+ * stored third-party wheels, and Python plugins on first Python need.
+ */
+export function ensurePyodideReady(): Promise<unknown> {
+    if (pyodideEnvironmentInitialized && window.pyodide) {
+        return Promise.resolve(window.pyodide);
+    }
+    if (pyodideReadyPromise) {
+        return pyodideReadyPromise;
+    }
+
+    pyodideReadyPromise = (async () => {
+        const initSpanId = timelineSpanStart('python.initFontEditor');
+        try {
+            if (!window.pyodide) {
+                if (typeof window.__startPyodideLoad === 'function') {
+                    window.__startPyodideLoad();
+                }
+                if (window.__pyodideLoadPromise) {
+                    await window.__pyodideLoadPromise;
+                } else {
+                    const started = performance.now();
+                    while (!window.pyodide) {
+                        if (performance.now() - started > 30_000) {
+                            throw new Error('Timed out waiting for Pyodide.');
+                        }
+                        await new Promise((resolve) => setTimeout(resolve, 50));
+                    }
+                }
+            }
+
+            // Ensure execution wrapper & lazy package loader attach immediately.
+            window.dispatchEvent(new CustomEvent('pyodideLoaded'));
+
+            // micropip and all bundled wheels load in one parallel loadPackage call.
+            // Large static data files (Hyperglot, Arabic) are stored gzipped inside
+            // their wheels so MEMFS stays <0.5 MB with all wheels loaded at boot.
+            const wheelsSpanId = timelineSpanStart('python.installWheels');
+            const manifestResponse = await fetch('./wheels/wheels.json');
+            const manifest = (await manifestResponse.json()) as WheelsManifest;
+            const wheelUrls = manifest.wheels.map((wheelFile) =>
+                new URL(
+                    `./wheels/${wheelFile}`,
+                    window.location.href
+                ).toString()
             );
+            console.log('[FontEditor]', 'Found wheel files:', manifest.wheels);
+            await window.pyodide.loadPackage(['micropip', ...wheelUrls]);
+            timelineSpanEnd(wheelsSpanId);
+
+            // Load the fonteditor Python module without triggering user-edit snapshots.
+            const fonteditorModuleSpanId = timelineSpanStart(
+                'python.loadFonteditorModule'
+            );
+            const fonteditorModule = await fetch(
+                './py/fonteditor.py?rev=glyph-filter-batch-1'
+            );
+            const fonteditorCode = await fonteditorModule.text();
+            await runHostPythonAsync(fonteditorCode);
+            timelineSpanEnd(fonteditorModuleSpanId);
+            console.log('[FontEditor]', 'fonteditor.py module loaded');
+
+            // Stored third-party wheels are restored only when their Disk permission persists.
+            const restorePluginsSpanId = timelineSpanStart(
+                'python.restorePlugins'
+            );
+            try {
+                const { revokeBeforeReinstall, startPluginRevocationWatch } =
+                    await import('./installed-plugin-manager');
+                await revokeBeforeReinstall();
+                startPluginRevocationWatch();
+            } catch (error) {
+                console.warn(
+                    '[FontEditor]',
+                    'Could not check refunded plugins before restore:',
+                    error
+                );
+            }
+            try {
+                await fontDestinationPluginManager.reinstallStoredPlugins();
+                const { refreshPluginUpdateCount } =
+                    await import('./installed-plugin-manager');
+                void refreshPluginUpdateCount();
+            } catch (error) {
+                console.warn(
+                    '[FontEditor]',
+                    'Failed to restore stored Font Destination plugins:',
+                    error
+                );
+            }
+            timelineSpanEnd(restorePluginsSpanId);
+
+            pyodideEnvironmentInitialized = true;
+            timelineSpanEnd(initSpanId);
+            timelineMark('python.initFontEditor.ready');
+
+            if (window.canvasPluginManager) {
+                try {
+                    await window.canvasPluginManager.discoverPlugins();
+                } catch (error) {
+                    console.error(
+                        '[FontEditor]',
+                        'Failed to discover canvas plugins:',
+                        error
+                    );
+                }
+            }
+            if (window.glyphOverviewFilterManager?.discoverPythonPlugins) {
+                try {
+                    await window.glyphOverviewFilterManager.discoverPythonPlugins();
+                } catch (error) {
+                    console.error(
+                        '[FontEditor]',
+                        'Failed to discover Python glyph filter plugins:',
+                        error
+                    );
+                }
+            }
+            try {
+                await discoverCompileFilters();
+            } catch (error) {
+                console.error(
+                    '[FontEditor]',
+                    'Failed to discover compile filter plugins:',
+                    error
+                );
+            }
+            if (
+                document.getElementById('console-container') &&
+                typeof window.initPyodideConsole === 'function'
+            ) {
+                void window.initPyodideConsole();
+            }
+
+            // Reclaim temporary import/wheel-install objects from CPython heap.
+            try {
+                await runHostPythonAsync('import gc; gc.collect()');
+            } catch {
+                // Non-fatal cleanup.
+            }
+
+            return window.pyodide;
+        } catch (error) {
+            timelineSpanEnd(initSpanId);
+            timelineMark('python.initFontEditor.failed');
+            pyodideReadyPromise = null;
+            throw error;
+        }
+    })();
+
+    return pyodideReadyPromise;
+}
+
+/**
+ * Pure-JS app startup: runs immediately on DOMContentLoaded without loading Pyodide.
+ */
+async function initAppStartup(): Promise<boolean> {
+    try {
+        if (!checkCrossOriginIsolation()) {
             return false;
         }
 
-        // Check if SharedArrayBuffer is available (needed for WASM threading)
-        if (typeof SharedArrayBuffer === 'undefined') {
-            // Check if we already tried reloading
-            const alreadyReloaded =
-                window.sessionStorage.getItem('coiReloadedBySelf') === 'true';
-
-            // Detect iOS (including all browsers on iOS which use WebKit)
-            const isIOS =
-                /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-                (navigator.platform === 'MacIntel' &&
-                    navigator.maxTouchPoints > 1) ||
-                /iPad|iPhone|iPod/.test(navigator.platform);
-
-            if (isIOS) {
-                console.warn(
-                    '[FontEditor]',
-                    '[COI] iOS detected - SharedArrayBuffer not supported on iOS (all browsers). Some features may be limited.'
-                );
-                // Don't reload on iOS, just continue without SAB
-            } else if (!alreadyReloaded) {
-                console.log(
-                    '[FontEditor]',
-                    '[COI] SharedArrayBuffer not available - reloading to enable service worker headers...'
-                );
-                if (window.updateLoadingStatus) {
-                    window.updateLoadingStatus(
-                        'Enabling cross-origin isolation...'
-                    );
-                }
-                // Wait a moment for status to show, then reload
-                setTimeout(() => {
-                    window.sessionStorage.setItem('coiReloadedBySelf', 'true');
-                    window.location.reload();
-                }, 500);
-                return false;
-            } else {
-                console.error(
-                    '[FontEditor]',
-                    '[COI] SharedArrayBuffer still unavailable after reload. Browser may not support it.'
-                );
-                // Already reloaded once, don't try again (prevents infinite loop)
-            }
-        }
-
-        console.log('[FontEditor]', 'Initializing FontEditor...');
-        initSpanId = timelineSpanStart('python.initFontEditor');
-        if (window.updateLoadingStatus) {
-            window.updateLoadingStatus('Initializing Python environment...');
-        }
-
-        // micropip and the bundled wheels load in one parallel loadPackage
-        // call. The bundled wheels declare no dependencies, so they need no
-        // micropip resolution; micropip stays loaded for plugin installs.
-        const wheelsSpanId = timelineSpanStart('python.installWheels');
-        const manifestResponse = await fetch('./wheels/wheels.json');
-        const manifest = (await manifestResponse.json()) as WheelsManifest;
-        const wheelUrls = manifest.wheels.map((wheelFile) =>
-            new URL(`./wheels/${wheelFile}`, window.location.href).toString()
-        );
-        console.log('[FontEditor]', 'Found wheel files:', manifest.wheels);
-        if (window.updateLoadingStatus) {
-            window.updateLoadingStatus('Loading package manager...');
-        }
-        await window.pyodide.loadPackage(['micropip', ...wheelUrls]);
-        timelineSpanEnd(wheelsSpanId);
-
-        // Load the fonteditor Python module
-        const fonteditorModuleSpanId = timelineSpanStart(
-            'python.loadFonteditorModule'
-        );
-        if (window.updateLoadingStatus) {
-            window.updateLoadingStatus('Loading font editor...');
-        }
-        const fonteditorModule = await fetch(
-            './py/fonteditor.py?rev=glyph-filter-batch-1'
-        );
-        const fonteditorCode = await fonteditorModule.text();
-        await window.pyodide.runPythonAsync(fonteditorCode);
-        timelineSpanEnd(fonteditorModuleSpanId);
-        console.log('[FontEditor]', 'fonteditor.py module loaded');
-
-        // Stored third-party wheels are restored only when their Disk permission persists.
-        const restorePluginsSpanId = timelineSpanStart('python.restorePlugins');
-        try {
-            const { revokeBeforeReinstall, startPluginRevocationWatch } =
-                await import('./installed-plugin-manager');
-            await revokeBeforeReinstall();
-            startPluginRevocationWatch();
-        } catch (error) {
-            console.warn(
-                '[FontEditor]',
-                'Could not check refunded plugins before restore:',
-                error
-            );
-        }
-        try {
-            await fontDestinationPluginManager.reinstallStoredPlugins();
-            const { refreshPluginUpdateCount } =
-                await import('./installed-plugin-manager');
-            void refreshPluginUpdateCount();
-        } catch (error) {
-            console.warn(
-                '[FontEditor]',
-                'Failed to restore stored Font Destination plugins:',
-                error
-            );
-        }
-
-        timelineSpanEnd(restorePluginsSpanId);
-        console.log('[FontEditor]', 'FontEditor initialized successfully');
-
-        // Load example fonts into /user folder
         const exampleFontsSpanId = timelineSpanStart('python.loadExampleFonts');
         if (window.loadExampleFonts) {
             try {
@@ -165,7 +317,6 @@ async function initFontEditor() {
                     'Failed to load example fonts:',
                     error
                 );
-                // Continue anyway - this is not critical
             }
         }
         timelineSpanEnd(exampleFontsSpanId);
@@ -174,114 +325,15 @@ async function initFontEditor() {
             window.updateLoadingStatus('READY', true);
         }
 
-        // Restore the last active view (Editing View by default)
         const lastActiveView = getFocusViewId() || 'view-editor';
         if (window.focusView) {
             window.focusView(lastActiveView);
         }
 
-        const shouldWaitForUnsupportedBrowserContinue = () => {
-            const extendedWindow = window as ExtendedWindow;
-            return (
-                extendedWindow.__unsupportedBrowserWarningRequired === true &&
-                extendedWindow.__unsupportedBrowserWarningAcknowledged !== true
-            );
-        };
-
-        // Hide loading overlay with animation
-        const hideLoadingOverlay = () =>
-            whenLoadingScreenFree(hideLoadingOverlayNow);
-        const hideLoadingOverlayNow = () => {
-            const loadingOverlay = document.getElementById('loading-overlay');
-            const loadingLogo = document.querySelector('.loading-logo');
-
-            // Fade logo color back to red before hiding overlay
-            if (loadingLogo) {
-                (loadingLogo as HTMLElement).classList.add('fade-out');
-            }
-
-            if (loadingOverlay) {
-                loadingOverlay.classList.add('hidden');
-            }
-            notifyLoadingOverlayHiding();
-        };
-
-        const hideLoadingOverlayWhenAllowed = () => {
-            if (!shouldWaitForUnsupportedBrowserContinue()) {
-                hideLoadingOverlay();
-                return;
-            }
-
-            window.addEventListener(
-                'unsupportedBrowserContinue',
-                () => {
-                    hideLoadingOverlay();
-                },
-                { once: true }
-            );
-        };
-
-        // Wait briefly after "Ready" appears before starting fadeout
-        setTimeout(() => {
-            // Request animation to stop (it will drain particles first, then trigger fade)
-            const extendedWindow = window as ExtendedWindow;
-            if (extendedWindow.WarpSpeedAnimation) {
-                let callbackFired = false;
-
-                extendedWindow.WarpSpeedAnimation.requestStop(() => {
-                    if (!callbackFired) {
-                        callbackFired = true;
-                        hideLoadingOverlayWhenAllowed();
-                    }
-                });
-
-                // Fallback timeout in case animation callback doesn't fire (e.g., particles stuck)
-                setTimeout(() => {
-                    if (!callbackFired) {
-                        console.warn(
-                            '[FontEditor]',
-                            'Animation drain timeout, forcing overlay hide'
-                        );
-                        callbackFired = true;
-                        hideLoadingOverlayWhenAllowed();
-                    }
-                }, 5000); // 5 second timeout
-            } else {
-                // Fallback if animation not available
-                hideLoadingOverlayWhenAllowed();
-            }
-        }, 200); // Wait 200ms after "Ready" appears
-
+        hideStartupOverlay();
         markFontEditorReady();
-        if (initSpanId) {
-            timelineSpanEnd(initSpanId);
-        }
-        timelineMark('python.initFontEditor.ready');
 
-        if (window.canvasPluginManager) {
-            try {
-                await window.canvasPluginManager.discoverPlugins();
-            } catch (error) {
-                console.error(
-                    '[FontEditor]',
-                    'Failed to discover canvas plugins:',
-                    error
-                );
-            }
-        }
-        try {
-            const { skillManager } = await import('./skills/skill-manager');
-            const { featureGeneratorEngine } =
-                await import('./skills/feature-generator-engine');
-            await skillManager.ensureReady();
-            await featureGeneratorEngine.ensureReady();
-        } catch (error) {
-            console.error(
-                '[FontEditor]',
-                'Failed to load skill plugins:',
-                error
-            );
-        }
+        // Discover built-in JS glyph filters immediately (no Pyodide required).
         if (window.glyphOverviewFilterManager) {
             try {
                 await window.glyphOverviewFilterManager.discoverPlugins();
@@ -293,68 +345,43 @@ async function initFontEditor() {
                 );
             }
         }
-        try {
-            await discoverCompileFilters();
-        } catch (error) {
+
+        // Eagerly initialize Pyodide so all Python features, console, skills,
+        // and plugins are ready immediately at startup.
+        void ensurePyodideReady().catch((error) => {
             console.error(
                 '[FontEditor]',
-                'Failed to discover compile filter plugins:',
+                'Pyodide startup initialization failed:',
                 error
             );
-        }
+        });
 
         return true;
     } catch (error) {
-        if (initSpanId) {
-            timelineSpanEnd(initSpanId);
-        }
-        timelineMark('python.initFontEditor.failed');
-        const message = error instanceof Error ? error.message : String(error);
-        console.error('[FontEditor]', 'Error initializing FontEditor:', error);
+        console.error('[FontEditor]', 'Error during app startup:', error);
         markFontEditorReadyFailed(error);
-        if (window.term) {
-            window.term.error('Failed to initialize FontEditor: ' + message);
-        }
-
-        // Hide loading overlay even on error (unless waiting for unsupported-browser acknowledgment)
-        const extendedWindow = window as ExtendedWindow;
-        if (
-            extendedWindow.__unsupportedBrowserWarningRequired !== true ||
-            extendedWindow.__unsupportedBrowserWarningAcknowledged === true
-        ) {
-            whenLoadingScreenFree(() => {
-                const loadingOverlay =
-                    document.getElementById('loading-overlay');
-                if (loadingOverlay) {
-                    loadingOverlay.classList.add('hidden');
-                }
-                notifyLoadingOverlayHiding();
-            });
-        }
-
+        hideStartupOverlay();
         return false;
     }
 }
 
-// Initialize FontEditor when Pyodide is ready
-document.addEventListener('DOMContentLoaded', () => {
-    timelineMark('python.waitForPyodide.started');
-    const waitThenInit = async () => {
-        if (!window.pyodide) {
-            if (window.__pyodideLoadPromise) {
-                await window.__pyodideLoadPromise;
-            } else {
-                while (!window.pyodide) {
-                    timelineMark('python.waitForPyodide.pollMiss');
-                    await new Promise((resolve) => setTimeout(resolve, 100));
-                }
-            }
+async function initFontEditor(): Promise<boolean> {
+    try {
+        await ensurePyodideReady();
+        return true;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[FontEditor]', 'Error initializing FontEditor:', error);
+        if (window.term) {
+            window.term.error('Failed to initialize FontEditor: ' + message);
         }
-        timelineMark('python.waitForPyodide.available');
-        await initFontEditor();
-    };
-    void waitThenInit();
+        return false;
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    void initAppStartup();
 });
 
-// Export for manual initialization if needed
+window.ensurePyodideReady = ensurePyodideReady;
 window.initFontEditor = initFontEditor;

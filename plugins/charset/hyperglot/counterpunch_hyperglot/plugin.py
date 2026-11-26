@@ -1,5 +1,6 @@
 """Expose Hyperglot character sets without runtime third-party dependencies."""
 
+import gzip
 import json
 from importlib.resources import files
 
@@ -15,6 +16,22 @@ def _union_categories(left, right):
     return categories
 
 
+_CACHED_DATA = None
+
+
+def _load_data():
+    global _CACHED_DATA
+    if _CACHED_DATA is None:
+        pkg = files("counterpunch_hyperglot")
+        gz_path = pkg.joinpath("data.json.gz")
+        if gz_path.is_file():
+            raw = gzip.decompress(gz_path.read_bytes()).decode("utf-8")
+        else:
+            raw = pkg.joinpath("data.json").read_text(encoding="utf-8")
+        _CACHED_DATA = json.loads(raw)
+    return _CACHED_DATA
+
+
 class HyperglotCharacterSetProvider:
     """Read the build-time-resolved Hyperglot character-set catalogue."""
 
@@ -22,8 +39,13 @@ class HyperglotCharacterSetProvider:
     display_name = "Hyperglot"
 
     def __init__(self):
-        data_path = files("counterpunch_hyperglot").joinpath("data.json")
-        self._data = json.loads(data_path.read_text(encoding="utf-8"))
+        self._data_cache = None
+
+    @property
+    def _data(self):
+        if self._data_cache is None:
+            self._data_cache = _load_data()
+        return self._data_cache
 
     def metadata(self):
         return {

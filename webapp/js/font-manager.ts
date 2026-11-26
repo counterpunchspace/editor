@@ -16,9 +16,9 @@ import {
     markTerminalWorkerDocumentError,
     terminalWorkerErrorDocumentId
 } from './font-compilation';
-import { get_glyph_order } from '../wasm-dist/babelfont_fontc_web';
+import { get_glyph_order } from './opentype-table-reader';
 import { prepareCompileFilters } from './compile-filter-host';
-import * as babelfontWasm from '../wasm-dist/babelfont_fontc_web';
+import { callSourceWasmOp } from './source-wasm-ops';
 import type { Babelfont } from './babelfont';
 import { designspaceToUserspace, userspaceToDesignspace } from './locations';
 import type { DesignspaceLocation, UserspaceLocation } from './locations';
@@ -73,6 +73,11 @@ import type { FilesystemPlugin } from './filesystem-plugins';
 import type { FontModelReadyDetail } from './change-bridge-init';
 import { FONT_DEPS_DOCUMENT_ID } from './filesystem-plugins/cloud-document-set';
 import { catalogBucketOfDocument } from './filesystem-plugins/cloud-room-layout';
+import {
+    LocalSparseHydrator,
+    sanitizeGlyphEmptyReferenceComponents,
+    type LocalSparseBootstrapPayload
+} from './local-sparse-hydrator';
 import { Logger } from './logger';
 import type {
     LivePreviewCompile,
@@ -121,7 +126,6 @@ import {
     beginStartupInteractionLock,
     endStartupInteractionLock
 } from './startup-interaction-lock';
-import { ensureWasmInitialized } from './wasm-init';
 import {
     cancelManagedFileInternalWrite,
     markManagedFileInternalWrite,
@@ -130,48 +134,6 @@ import {
 import tippy, { Instance as TippyInstance } from 'tippy.js';
 import 'tippy.js/dist/tippy.css';
 import { getTheme } from './tippy-utils';
-
-const {
-    save_font_as_glyphs,
-    save_font_source_entries,
-    ufo_glyph_files_for_paths,
-    load_ufo_glyphs,
-    load_glyphspackage_glyphs,
-    designspace_glyph_files_for_paths,
-    load_designspace_glyphs
-} = babelfontWasm as object as {
-    save_font_as_glyphs: (babelfontJson: string) => string;
-    save_font_source_entries: (
-        format: string,
-        babelfontJson: string,
-        requestJson: string
-    ) => string;
-    ufo_glyph_files_for_paths: (
-        layoutEntriesJson: string,
-        pathsJson: string
-    ) => string;
-    load_ufo_glyphs: (
-        layoutEntriesJson: string,
-        glifsJson: string,
-        glyphNamesJson: string,
-        stationId: string
-    ) => string;
-    load_glyphspackage_glyphs: (
-        fontinfo: string,
-        glyphFilesJson: string
-    ) => string;
-    designspace_glyph_files_for_paths: (
-        document: string,
-        layoutEntriesJson: string,
-        pathsJson: string
-    ) => string;
-    load_designspace_glyphs: (
-        document: string,
-        layoutEntriesJson: string,
-        glifsJson: string,
-        glyphNamesJson: string
-    ) => string;
-};
 
 /** Files written for a folder source, by path relative to its folder. */
 type FolderSourceEntries = { files: Record<string, string>; removed: string[] };
@@ -324,6 +286,26 @@ export function fileContentsBytes(contents: string | Uint8Array): Uint8Array {
         : contents;
 }
 
+/**
+ * Serialize a local sparse font directly from `fontc-worker`'s complete
+ * resident `FONT_CACHE`, avoiding any main-thread full-font JSON build.
+ */
+export async function serializeCachedLocalFontForSourceSave(
+    path: string
+): Promise<string> {
+    const extension = path.split('.').pop()?.toLowerCase();
+    await fontCompilation.awaitWorkerDocumentReadyForCompile();
+    if (extension === 'babelfont') {
+        return callSourceWasmOp('export_cached_font_as_babelfont_json', []);
+    }
+    if (extension === 'glyphs') {
+        return callSourceWasmOp('save_cached_font_as_glyphs', []);
+    }
+    throw new Error(
+        `Cannot save ${path} in its original format: source saving supports .babelfont, .glyphs, .glyphspackage, .ufo and .designspace sources. Use Save As to save it in one of those.`
+    );
+}
+
 export async function serializeFontForSourceSave(
     path: string,
     source: BabelfontJsonSource,
@@ -336,14 +318,15 @@ export async function serializeFontForSourceSave(
     }
 
     if (extension === 'glyphs') {
-        await ensureWasmInitialized();
         const glyphsSerializationInput = JSON.stringify(
             withGlyphsSaveVersion(
                 stampPathBooleanFlagsForGlyphsSave(babelfontSourceData(source)),
                 glyphsVersion
             )
         );
-        return save_font_as_glyphs(glyphsSerializationInput);
+        return callSourceWasmOp('save_font_as_glyphs', [
+            glyphsSerializationInput
+        ]);
     }
 
     throw new Error(
@@ -368,7 +351,6 @@ export async function serializeFolderSourceEntries(
     },
     glyphsVersion: GlyphsFormatVersion | null = null
 ): Promise<FolderSourceEntries | null> {
-    await ensureWasmInitialized();
     const input =
         format === 'glyphspackage'
             ? JSON.stringify(
@@ -381,7 +363,11 @@ export async function serializeFolderSourceEntries(
               )
             : rustBabelfontInput(source);
     const result = JSON.parse(
-        save_font_source_entries(format, input, JSON.stringify(request))
+        await callSourceWasmOp('save_font_source_entries', [
+            format,
+            input,
+            JSON.stringify(request)
+        ])
     ) as FolderSourceEntries | { needsFullSave: string };
     if ('needsFullSave' in result) {
         console.log(`Saving the whole source: ${result.needsFullSave}`);
@@ -779,12 +765,12 @@ class OpenedFont {
      * for any font uses `babelfontJsonSource` or `serializedFontData`.
      */
     get babelfontJson(): string {
-        if (this._babelfontJson === null) {
-            this._babelfontJson = this.fontModel.toJSONString({
-                compileFacing: false
-            });
+        if (this._babelfontJson !== null) {
+            return this._babelfontJson;
         }
-        return this._babelfontJson;
+        return this.fontModel.toJSONString({
+            compileFacing: false
+        });
     }
 
     set babelfontJson(json: string) {
@@ -1003,13 +989,20 @@ class OpenedFont {
             await this.saveFolderSource(folderFormat);
             return;
         }
-        this.syncJsonFromModel();
         const pluginId = this.sourcePlugin.getId();
-        const serializedFont = await serializeFontForSourceSave(
-            this.path,
-            this.babelfontJsonSource(),
-            this.glyphsSaveVersion
-        );
+        let serializedFont: string | Uint8Array<ArrayBuffer>;
+        if (window.fontManager?.isLocalSparseFont?.()) {
+            serializedFont = await serializeCachedLocalFontForSourceSave(
+                this.path
+            );
+        } else {
+            this.syncJsonFromModel();
+            serializedFont = await serializeFontForSourceSave(
+                this.path,
+                this.babelfontJsonSource(),
+                this.glyphsSaveVersion
+            );
+        }
 
         // For disk plugin, need file handle and permission check
         if (pluginId === 'disk') {
@@ -1092,18 +1085,35 @@ class OpenedFont {
         const layoutEntries = state.layoutEntries();
         const document = state.layout.document;
         let entries: FolderSourceEntries | null = null;
+        const useCachedLocalSparse =
+            window.fontManager?.isLocalSparseFont?.() === true;
         if (!plan.full) {
-            entries = await serializeFolderSourceEntries(
-                format,
-                this.folderSourceJson(new Set(plan.glyphs)),
-                {
-                    glyphs: plan.glyphs,
-                    fontLevel: plan.fontLevel,
-                    layoutEntries,
-                    document
-                },
-                this.glyphsSaveVersion
-            );
+            if (useCachedLocalSparse) {
+                const parsed = JSON.parse(
+                    await callSourceWasmOp('save_cached_font_source_entries', [
+                        format,
+                        JSON.stringify({
+                            glyphs: plan.glyphs,
+                            fontLevel: plan.fontLevel,
+                            layoutEntries,
+                            document
+                        })
+                    ])
+                ) as FolderSourceEntries | { needsFullSave: string };
+                entries = 'needsFullSave' in parsed ? null : parsed;
+            } else {
+                entries = await serializeFolderSourceEntries(
+                    format,
+                    this.folderSourceJson(new Set(plan.glyphs)),
+                    {
+                        glyphs: plan.glyphs,
+                        fontLevel: plan.fontLevel,
+                        layoutEntries,
+                        document
+                    },
+                    this.glyphsSaveVersion
+                );
+            }
         }
         let stale: string[];
         if (entries) {
@@ -1124,12 +1134,26 @@ class OpenedFont {
                 );
             }
         } else {
-            entries = (await serializeFolderSourceEntries(
-                format,
-                this.folderSourceJson(null),
-                { glyphs: null, fontLevel: true, layoutEntries, document },
-                this.glyphsSaveVersion
-            )) as FolderSourceEntries;
+            if (useCachedLocalSparse) {
+                entries = JSON.parse(
+                    await callSourceWasmOp('save_cached_font_source_entries', [
+                        format,
+                        JSON.stringify({
+                            glyphs: null,
+                            fontLevel: true,
+                            layoutEntries,
+                            document
+                        })
+                    ])
+                ) as FolderSourceEntries;
+            } else {
+                entries = (await serializeFolderSourceEntries(
+                    format,
+                    this.folderSourceJson(null),
+                    { glyphs: null, fontLevel: true, layoutEntries, document },
+                    this.glyphsSaveVersion
+                )) as FolderSourceEntries;
+            }
             const written = new Set(Object.keys(entries.files));
             stale = state.managedPaths().filter((path) => !written.has(path));
         }
@@ -1239,6 +1263,7 @@ class FontManager {
     editingSubsetSnapshotGlyphs: string[];
     editingSubsetSnapshotKey: string;
     coveredSparseHydrationKey: string | null = null;
+    private localSparseHydrator: LocalSparseHydrator | null = null;
     private editingCompileInFlight: Promise<unknown> | null = null;
     private editingCompileEnqueueGen = 0;
     isExternalReloading: boolean = false;
@@ -1331,6 +1356,7 @@ class FontManager {
         this.editingSubsetSnapshotGlyphs = [];
         this.editingSubsetSnapshotKey = '';
         this.coveredSparseHydrationKey = null;
+        this.localSparseHydrator = null;
         this.isExternalReloading = false;
         this.pendingDebugEditingFontSaveAfterDrag = false;
         this.pendingBabelfontJsonSyncAfterDrag = false;
@@ -2442,6 +2468,7 @@ class FontManager {
         this.editingSubsetSnapshotGlyphs = [];
         this.editingSubsetSnapshotKey = '';
         this.coveredSparseHydrationKey = null;
+        this.localSparseHydrator = null;
         this.clearEditingCompileContext();
         this.lastCompilationMode = 'full';
         this.lastFullCompiledDataVersion = -1;
@@ -2450,6 +2477,9 @@ class FontManager {
         this.pendingCommittedKeyboardDriftCheckAfterDrag = false;
         this.forceFullEditingCacheRefresh = false;
         this.workerDrawingFingerprintCache.clear();
+        this.editingCompileContextsByRevision.clear();
+        this._validatedFontSerialization = null;
+        fontCompilation.lastStoredFontJson = null;
         this.workerMirrorQuarantined = false;
         this.workerBrokenDocumentErrors.clear();
         window.currentFontModel = null;
@@ -2776,7 +2806,6 @@ class FontManager {
         if (!bridge) {
             return false;
         }
-        await ensureWasmInitialized();
         const decoder = new TextDecoder();
         const liveData = font.babelfontData as Babelfont.Font;
         const liveGlyph = (name: string) =>
@@ -2797,12 +2826,14 @@ class FontManager {
             );
             const located = JSON.parse(
                 format === 'designspace'
-                    ? designspace_glyph_files_for_paths(
-                          document!,
+                    ? await callSourceWasmOp(
+                          'designspace_glyph_files_for_paths',
+                          [document!, layoutJson, changedPaths]
+                      )
+                    : await callSourceWasmOp('ufo_glyph_files_for_paths', [
                           layoutJson,
                           changedPaths
-                      )
-                    : ufo_glyph_files_for_paths(layoutJson, changedPaths)
+                      ])
             ) as { glyphs: Record<string, string[]>; unknown: string[] };
             if (located.unknown.length > 0) {
                 return false;
@@ -2826,18 +2857,18 @@ class FontManager {
             const names = JSON.stringify(Object.keys(located.glyphs));
             const fromDisk = JSON.parse(
                 format === 'designspace'
-                    ? load_designspace_glyphs(
+                    ? await callSourceWasmOp('load_designspace_glyphs', [
                           document!,
                           layoutJson,
                           JSON.stringify(glifs),
                           names
-                      )
-                    : load_ufo_glyphs(
+                      ])
+                    : await callSourceWasmOp('load_ufo_glyphs', [
                           layoutJson,
                           JSON.stringify(glifs),
                           names,
                           stationId!
-                      )
+                      ])
             ) as Babelfont.Glyph[];
             glyphs = [];
             for (const diskGlyph of fromDisk) {
@@ -2859,7 +2890,7 @@ class FontManager {
                 return false;
             }
             const loaded = JSON.parse(
-                load_glyphspackage_glyphs(
+                await callSourceWasmOp('load_glyphspackage_glyphs', [
                     fontinfo,
                     JSON.stringify(
                         Object.fromEntries(
@@ -2869,7 +2900,7 @@ class FontManager {
                             ])
                         )
                     )
-                )
+                ])
             ) as {
                 glyphs: Babelfont.Glyph[];
                 kernGroups: Record<string, [string | null, string | null]>;
@@ -3037,6 +3068,7 @@ class FontManager {
             this.editingSubsetSnapshotGlyphs = [];
             this.editingSubsetSnapshotKey = '';
             this.coveredSparseHydrationKey = null;
+            this.localSparseHydrator = null;
             this.setEditingCompileContext('external-reload', null);
 
             const subsetGlyphs =
@@ -3124,6 +3156,7 @@ class FontManager {
         this.editingSubsetSnapshotGlyphs = [];
         this.editingSubsetSnapshotKey = '';
         this.coveredSparseHydrationKey = null;
+        this.localSparseHydrator = null;
 
         // Reset initialFontLoaded flag in glyphCanvas when new font is loaded
         if (window.glyphCanvas) {
@@ -3176,6 +3209,7 @@ class FontManager {
         this.editingSubsetSnapshotGlyphs = [];
         this.editingSubsetSnapshotKey = '';
         this.coveredSparseHydrationKey = null;
+        this.localSparseHydrator = null;
         this.pendingBabelfontJsonSyncAfterDrag = true;
         if (window.glyphCanvas) {
             window.glyphCanvas.initialFontLoaded = false;
@@ -3185,6 +3219,93 @@ class FontManager {
             path,
             babelfontData: newFont.babelfontData,
             linkedSnapshot: true
+        };
+        window.dispatchEvent(
+            new CustomEvent('fontModelReady', { detail: readyDetail })
+        );
+        this.abandonOpenWithoutBridge(readyDetail);
+    }
+
+    /**
+     * Install a locally opened font from `openFontSparse`'s compact core +
+     * catalog + initial working-set glyphs without serializing or parsing a
+     * monolithic full-font JSON string.
+     */
+    async loadFontSparse(
+        bootstrap: LocalSparseBootstrapPayload,
+        initialGlyphs: Array<Record<string, unknown>>,
+        path: string,
+        sourcePlugin: FilesystemPlugin,
+        fileHandle?: FileSystemFileHandle,
+        directoryHandle?: FileSystemDirectoryHandle
+    ): Promise<void> {
+        this.resetStateForNewFont();
+
+        const canonicalizeSpanId = timelineSpanStart(
+            'font.loadFont.canonicalize'
+        );
+        const coreData = bootstrap.coreData;
+        const preparedGlyphs: Array<Record<string, unknown>> = [];
+        for (const glyph of initialGlyphs) {
+            const name = typeof glyph.name === 'string' ? glyph.name : '';
+            const glyphId = bootstrap.glyphIdByName.get(name);
+            if (!name || !glyphId) continue;
+            sanitizeGlyphEmptyReferenceComponents(glyph);
+            glyph.id = glyphId;
+            preparedGlyphs.push(glyph);
+        }
+        coreData.glyphs = preparedGlyphs;
+        const fontModel = new Font(coreData as unknown as Babelfont.Font);
+        const newFont = OpenedFont.fromResidentData(
+            coreData,
+            fontModel,
+            path,
+            sourcePlugin,
+            fileHandle,
+            directoryHandle
+        );
+        timelineSpanEnd(canonicalizeSpanId);
+
+        const newid = `font-${Date.now()}`;
+        this.openedFonts.set(newid, newFont);
+        this.currentFontId = newid;
+        window.currentFontModel = newFont.fontModel;
+        this.localSparseHydrator = bootstrap.isSparse
+            ? new LocalSparseHydrator(bootstrap)
+            : null;
+
+        this.editingFont = null;
+        this.glyphOrderCache = null;
+        this.closureCache = null;
+        this.editingSubsetSnapshotGlyphs = [];
+        this.editingSubsetSnapshotKey = '';
+        this.coveredSparseHydrationKey = null;
+
+        if (window.glyphCanvas) {
+            window.glyphCanvas.initialFontLoaded = false;
+        }
+
+        this.updateWindowTitle();
+
+        const workingGlyphIds = preparedGlyphs
+            .map((g) => (typeof g.id === 'string' ? g.id : ''))
+            .filter(Boolean);
+        const readyDetail: FontModelReadyDetail & {
+            localSparseBootstrap?: {
+                workingGlyphIds: string[];
+                fontDeps: LocalSparseBootstrapPayload['fontDeps'];
+            };
+        } = {
+            path,
+            babelfontData: newFont.babelfontData,
+            ...(bootstrap.isSparse
+                ? {
+                      localSparseBootstrap: {
+                          workingGlyphIds,
+                          fontDeps: bootstrap.fontDeps
+                      }
+                  }
+                : undefined)
         };
         window.dispatchEvent(
             new CustomEvent('fontModelReady', { detail: readyDetail })
@@ -3769,10 +3890,125 @@ class FontManager {
         return false;
     }
 
-    async ensureSparseHydrationForCompile(): Promise<void> {
+    isLocalSparseFont(): boolean {
+        return !!this.localSparseHydrator?.isActive();
+    }
+
+    /**
+     * Look up a glyph by Unicode codepoint across both resident glyphs and
+     * the sparse glyph catalog (local or cloud), so typing an unhydrated
+     * character waits for hydration + compile rather than flashing `.notdef`.
+     */
+    findCatalogGlyphByCodepoint(
+        codepoint: number
+    ): { name: string; exported: boolean } | null {
+        const resident =
+            this.currentFont?.fontModel?.findGlyphByCodepoint?.(codepoint);
+        if (resident) {
+            return {
+                name: resident.name,
+                exported: resident.exported !== false
+            };
+        }
+        if (this.localSparseHydrator?.isActive()) {
+            const bootstrap = this.localSparseHydrator.getBootstrap();
+            const ids = bootstrap.codepointIndex[String(codepoint)];
+            if (ids && ids.length > 0) {
+                for (const id of ids) {
+                    const entry = bootstrap.glyphCatalog[id];
+                    if (entry?.name) {
+                        return {
+                            name: entry.name,
+                            exported: entry.exported !== false
+                        };
+                    }
+                }
+            }
+            return null;
+        }
+        const rawCatalog = (
+            this.currentFont?.babelfontData as
+                | {
+                      glyph_catalog?: Record<
+                          string,
+                          {
+                              name?: string;
+                              codepoints?: number[];
+                              exported?: boolean;
+                          }
+                      >;
+                  }
+                | undefined
+        )?.glyph_catalog;
+        if (rawCatalog && typeof rawCatalog === 'object') {
+            for (const entry of Object.values(rawCatalog)) {
+                if (
+                    Array.isArray(entry?.codepoints) &&
+                    entry.codepoints.includes(codepoint) &&
+                    entry.name
+                ) {
+                    return {
+                        name: entry.name,
+                        exported: entry.exported !== false
+                    };
+                }
+            }
+        }
+        return null;
+    }
+
+    async ensureLocalGlyphsHydrated(names: string[]): Promise<void> {
+        if (!this.localSparseHydrator?.isActive() || !names.length) {
+            return;
+        }
+        await this.localSparseHydrator.ensureHydrated({
+            glyphNames: names,
+            purpose: 'ui'
+        });
+    }
+
+    async hydrateAllLocalGlyphs(): Promise<void> {
+        if (!this.localSparseHydrator?.isActive()) {
+            return;
+        }
+        await this.localSparseHydrator.hydrateAll();
+    }
+
+    async ensureSparseHydration(input: {
+        text?: string;
+        glyphNames?: string[];
+        purpose?: 'ui' | 'compile';
+    }): Promise<string[]> {
+        if (this.localSparseHydrator?.isActive()) {
+            return this.localSparseHydrator.ensureHydrated(input);
+        }
+        const plugin = window.cloudPlugin as
+            | {
+                  activeAssetId?: string | null;
+                  ensureSparseHydration?: (req: {
+                      text?: string;
+                      glyphNames?: string[];
+                      purpose?: 'ui' | 'compile';
+                  }) => Promise<string[]>;
+              }
+            | undefined;
+        if (
+            typeof plugin?.ensureSparseHydration === 'function' &&
+            plugin.activeAssetId
+        ) {
+            return plugin.ensureSparseHydration(input);
+        }
+        return [];
+    }
+
+    async ensureSparseHydrationForCompile(
+        textOverride?: string,
+        explicitGlyphNames?: string[]
+    ): Promise<void> {
         if (!this.isHydrationSparse()) {
             return;
         }
+        const isLocal = this.localSparseHydrator?.isActive() === true;
         const plugin = window.cloudPlugin as
             | {
                   activeAssetId?: string | null;
@@ -3784,8 +4020,9 @@ class FontManager {
               }
             | undefined;
         if (
-            typeof plugin?.ensureSparseHydration !== 'function' ||
-            !plugin.activeAssetId
+            !isLocal &&
+            (typeof plugin?.ensureSparseHydration !== 'function' ||
+                !plugin.activeAssetId)
         ) {
             return;
         }
@@ -3793,21 +4030,36 @@ class FontManager {
             window.glyphCanvas?.outlineEditor?.currentGlyphName ||
             window.glyphCanvas?.getCurrentGlyphName?.() ||
             null;
-        const text = this.resolveEditingTextForCompile();
-        const coverageKey = `${this.currentFont?.changeVersion ?? 0}\0${text}\0${currentGlyphName || ''}`;
+        const text =
+            typeof textOverride === 'string' && textOverride.length > 0
+                ? textOverride
+                : this.resolveEditingTextForCompile();
+        const explicitList = Array.isArray(explicitGlyphNames)
+            ? explicitGlyphNames.filter(Boolean)
+            : [];
+        const coverageKey = `${this.currentFont?.changeVersion ?? 0}\0${text}\0${currentGlyphName || ''}\0${explicitList.join(',')}`;
         if (this.coveredSparseHydrationKey === coverageKey) {
             return;
         }
-        await plugin.ensureSparseHydration({
+        const request = {
             text,
             glyphNames: [
+                ...explicitList,
                 ...(currentGlyphName ? [currentGlyphName] : []),
                 ...this.getLiveVisibleGlyphNames()
             ],
-            // Same closure as sparse open. Compile planning only walks
-            // forward, so a newly typed base would load without its composites.
-            purpose: 'ui'
-        });
+            // Local sparse fonts only need forward prerequisites to compile and
+            // render the active text; composites hydrate on demand in <3 ms when
+            // edited. Cloud sparse rooms keep `ui` to match sparse open.
+            purpose: (isLocal ? 'compile' : 'ui') as 'compile' | 'ui'
+        };
+        if (typeof this.ensureSparseHydration === 'function') {
+            await this.ensureSparseHydration(request);
+        } else if (isLocal && this.localSparseHydrator) {
+            await this.localSparseHydrator.ensureHydrated(request);
+        } else if (typeof plugin?.ensureSparseHydration === 'function') {
+            await plugin.ensureSparseHydration(request);
+        }
         this.coveredSparseHydrationKey = coverageKey;
     }
 
@@ -4374,10 +4626,18 @@ class FontManager {
         let consumedStartupCompileSlot = false;
 
         try {
-            await this.ensureSparseHydrationForCompile();
+            await this.ensureSparseHydrationForCompile(
+                resolvedText,
+                subsetGlyphs
+            );
             // Compute layout closure subset
             let glyphsToInclude = subsetGlyphs;
-            if (this.isHydrationSparse()) {
+            if (this.isLocalSparseFont()) {
+                glyphsToInclude = this.normalizeSubsetGlyphs([
+                    ...(glyphsToInclude || []),
+                    ...this.deriveSubsetGlyphsFromText(resolvedText)
+                ]);
+            } else if (this.isHydrationSparse()) {
                 glyphsToInclude = this.normalizeSubsetGlyphs([
                     ...(glyphsToInclude || []),
                     ...this.deriveSubsetGlyphsFromText(resolvedText),
@@ -4889,7 +5149,11 @@ class FontManager {
 
             const codepoint = text.codePointAt(index);
             if (codepoint !== undefined) {
-                const glyph = fontModel.findGlyphByCodepoint(codepoint);
+                const glyph =
+                    fontModel.findGlyphByCodepoint(codepoint) ??
+                    (typeof this.findCatalogGlyphByCodepoint === 'function'
+                        ? this.findCatalogGlyphByCodepoint(codepoint)
+                        : null);
                 pushMappedGlyph(glyph?.name);
                 index += codepoint > 0xffff ? 2 : 1;
             } else {
@@ -4899,7 +5163,10 @@ class FontManager {
 
         const fontJson = this.currentFont?.babelfontData as
             Record<string, unknown> | undefined;
-        if (fontJson) {
+        const isLocalSparse =
+            typeof this.isLocalSparseFont === 'function' &&
+            this.isLocalSparseFont();
+        if (fontJson && !isLocalSparse) {
             const catalog = catalogEntriesForDepsParse(fontJson);
             const idToName = new Map(
                 catalog.map((entry) => [entry.glyphId, entry.name])
@@ -8065,6 +8332,14 @@ window.addEventListener('fontLoaded', async (event: Event) => {
         const residentFontData = (
             detail as { residentFontData?: Record<string, unknown> }
         ).residentFontData;
+        const localSparse = (
+            detail as {
+                localSparse?: {
+                    bootstrap: LocalSparseBootstrapPayload;
+                    initialGlyphs: Array<Record<string, unknown>>;
+                };
+            }
+        ).localSparse;
         if (residentFontData) {
             fontManager!.adoptResidentFont(
                 residentFontData,
@@ -8073,6 +8348,21 @@ window.addEventListener('fontLoaded', async (event: Event) => {
                 detail.fileHandle,
                 detail.directoryHandle
             );
+        } else if (localSparse) {
+            await fontManager!.loadFontSparse(
+                localSparse.bootstrap,
+                localSparse.initialGlyphs,
+                detail.path,
+                detail.sourcePlugin,
+                detail.fileHandle,
+                detail.directoryHandle
+            );
+            const sourceSnapshot = (
+                detail as { sourceSnapshot?: SourceSnapshot }
+            ).sourceSnapshot;
+            if (sourceSnapshot && fontManager!.currentFont) {
+                applySourceSnapshot(fontManager!.currentFont, sourceSnapshot);
+            }
         } else {
             await fontManager!.loadFont(
                 detail.babelfontJson,

@@ -5,7 +5,8 @@ use crate::drawing_geometry::{
 use crate::interpolation::interpolate_glyph_layer;
 use crate::update_integrity::apply_update_with_integrity;
 use crate::{
-    get_or_rebuild_font_cache, ydoc_get_layer_json_with_txn, ydoc_get_top_level_json_with_txn,
+    decode_glyph_doc_from_bytes, get_or_rebuild_font_cache, has_any_glyph_shards,
+    ydoc_get_layer_json_with_txn, ydoc_get_top_level_json_with_txn, DORMANT_GLYPH_STATES,
     FONT_CORE_DOCUMENT_ID, GLYPH_DOCS, GLYPH_ID_BY_NAME, Y_DOC,
 };
 use babelfont::{Layer, LayerType, Master};
@@ -162,7 +163,7 @@ fn clone_current_ydoc() -> Result<(Doc, EditRecorder), JsValue> {
 }
 
 fn glyph_shards_active() -> bool {
-    !GLYPH_DOCS.lock().unwrap().is_empty()
+    has_any_glyph_shards()
 }
 
 struct ClonedGlyphDoc {
@@ -183,30 +184,48 @@ fn clone_glyph_doc(glyph_id: &str, glyph_name: &str, src: &Doc) -> Result<Cloned
 }
 
 fn clone_all_glyph_docs() -> Result<Vec<ClonedGlyphDoc>, JsValue> {
-    let docs = GLYPH_DOCS.lock().unwrap();
-    let ids = GLYPH_ID_BY_NAME.lock().unwrap();
+    let ids = GLYPH_ID_BY_NAME.lock().unwrap().clone();
     let mut clones = Vec::new();
     for (name, glyph_id) in ids.iter() {
-        let Some(src) = docs.get(glyph_id) else {
-            continue;
+        let live_clone = {
+            let docs = GLYPH_DOCS.lock().unwrap();
+            docs.get(glyph_id)
+                .map(|src| clone_glyph_doc(glyph_id, name, src))
         };
-        clones.push(clone_glyph_doc(glyph_id, name, src)?);
+        if let Some(res) = live_clone {
+            clones.push(res?);
+            continue;
+        }
+        let dormant_bytes = DORMANT_GLYPH_STATES.lock().unwrap().get(glyph_id).cloned();
+        if let Some(bytes) = dormant_bytes {
+            let temp_doc = decode_glyph_doc_from_bytes(glyph_id, &bytes)?;
+            clones.push(clone_glyph_doc(glyph_id, name, &temp_doc)?);
+        }
     }
     Ok(clones)
 }
 
 fn clone_named_glyph_docs(names: &HashSet<String>) -> Result<Vec<ClonedGlyphDoc>, JsValue> {
-    let docs = GLYPH_DOCS.lock().unwrap();
-    let ids = GLYPH_ID_BY_NAME.lock().unwrap();
+    let ids = GLYPH_ID_BY_NAME.lock().unwrap().clone();
     let mut clones = Vec::new();
     for name in names {
         let Some(glyph_id) = ids.get(name) else {
             continue;
         };
-        let Some(src) = docs.get(glyph_id) else {
-            continue;
+        let live_clone = {
+            let docs = GLYPH_DOCS.lock().unwrap();
+            docs.get(glyph_id)
+                .map(|src| clone_glyph_doc(glyph_id, name, src))
         };
-        clones.push(clone_glyph_doc(glyph_id, name, src)?);
+        if let Some(res) = live_clone {
+            clones.push(res?);
+            continue;
+        }
+        let dormant_bytes = DORMANT_GLYPH_STATES.lock().unwrap().get(glyph_id).cloned();
+        if let Some(bytes) = dormant_bytes {
+            let temp_doc = decode_glyph_doc_from_bytes(glyph_id, &bytes)?;
+            clones.push(clone_glyph_doc(glyph_id, name, &temp_doc)?);
+        }
     }
     Ok(clones)
 }

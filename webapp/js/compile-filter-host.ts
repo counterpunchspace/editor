@@ -41,9 +41,22 @@ interface DrawingJob {
 }
 
 const discovered: CompileFilterInfo[] = [];
-const drawingCache = new Map<string, string>();
-let cachedFeatureKey = '';
+let cachedFeatureKeyHash = '';
 let cachedFeatures = '';
+
+function hashString(input: string): string {
+    // Dual 32-bit FNV-1a hash + length so we never retain a multi-MB font JSON string as a cache key.
+    let h1 = 0x811c9dc5;
+    let h2 = 0x811c9dc5;
+    for (let i = 0; i < input.length; i += 1) {
+        const code = input.charCodeAt(i);
+        h1 ^= code;
+        h1 = Math.imul(h1, 0x01000193);
+        h2 ^= code + ((i & 0xff) << 1);
+        h2 = Math.imul(h2, 0x01000193);
+    }
+    return `${input.length}:${(h1 >>> 0).toString(16)}:${(h2 >>> 0).toString(16)}`;
+}
 
 function pyodide(): { runPythonAsync(code: string): Promise<unknown> } | null {
     return (
@@ -301,6 +314,9 @@ export async function retireLegacyCompileFilterGuides(): Promise<void> {
 }
 
 export async function setupCompileFilter(pluginId: string): Promise<void> {
+    if (!pyodide() && typeof window.ensurePyodideReady === 'function') {
+        await window.ensurePyodideReady();
+    }
     const python = pyodide();
     if (!python) {
         return;
@@ -311,6 +327,9 @@ export async function setupCompileFilter(pluginId: string): Promise<void> {
 }
 
 export async function takedownCompileFilter(pluginId: string): Promise<void> {
+    if (!pyodide() && typeof window.ensurePyodideReady === 'function') {
+        await window.ensurePyodideReady();
+    }
     const python = pyodide();
     if (!python) {
         return;
@@ -321,8 +340,7 @@ export async function takedownCompileFilter(pluginId: string): Promise<void> {
 }
 
 export function invalidateCompileFilterCache(): void {
-    drawingCache.clear();
-    cachedFeatureKey = '';
+    cachedFeatureKeyHash = '';
     cachedFeatures = '';
 }
 
@@ -1056,7 +1074,13 @@ export async function prepareCompileFilters(
         }
     ).currentFontModel;
     const ids = activeCompileFilterIds(font);
-    if (!font || ids.length === 0 || !pyodide()) {
+    if (!font || ids.length === 0) {
+        return { drawingUpdates: [], features: '' };
+    }
+    if (!pyodide() && typeof window.ensurePyodideReady === 'function') {
+        await window.ensurePyodideReady();
+    }
+    if (!pyodide()) {
         return { drawingUpdates: [], features: '' };
     }
     if (discovered.length === 0) {
@@ -1191,8 +1215,8 @@ export async function prepareCompileFilters(
         }))
     };
     if (!needsDrawingData) {
-        const featureKey = JSON.stringify(fontJson);
-        if (featureKey === cachedFeatureKey) {
+        const featureKeyHash = hashString(JSON.stringify(fontJson));
+        if (featureKeyHash === cachedFeatureKeyHash) {
             return { drawingUpdates: [], features: cachedFeatures };
         }
         const raw = await runHostPythonAsync(
@@ -1207,7 +1231,7 @@ export async function prepareCompileFilters(
                 dx: number;
             }>;
         };
-        cachedFeatureKey = featureKey;
+        cachedFeatureKeyHash = featureKeyHash;
         cachedFeatures = parsed.features || '';
         return {
             drawingUpdates: anchorShiftDrawingUpdates(
@@ -1229,7 +1253,6 @@ export async function prepareCompileFilters(
             dx: number;
         }>;
     };
-    drawingCache.set('last', JSON.stringify(parsed));
 
     const drawingUpdates = [
         ...Object.entries(parsed.drawings || {}).map(([key, drawingData]) => {

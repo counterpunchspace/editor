@@ -4,11 +4,16 @@
 // that glyph instead of switching to .notdef (fuzz seed 129931909, step 18:
 // “M glyph-property p exported = false” moved M’s live socket from p to
 // .notdef and resent p’s edit over HTTP).
-const wasm = require('../wasm-dist/babelfont_fontc_web');
+jest.mock('../js/opentype-table-reader', () => ({
+    __esModule: true,
+    ...jest.requireActual('../js/opentype-table-reader'),
+    get_glyph_name: jest.fn()
+}));
+jest.resetModules();
+const opentypeReader = require('../js/opentype-table-reader');
 const { TextRunEditor } = require('../js/glyph-canvas/textrun');
 
 describe('TextRunEditor names unexported glyphs shaped as .notdef', () => {
-    const originalGetGlyphName = wasm.get_glyph_name.getMockImplementation();
     const originalModel = window.currentFontModel;
 
     const makeEditor = (text, shapedGlyphs) => {
@@ -26,7 +31,7 @@ describe('TextRunEditor names unexported glyphs shaped as .notdef', () => {
 
     beforeEach(() => {
         // gid 0 is .notdef; the others are named by the compiled font.
-        wasm.get_glyph_name.mockImplementation((_font, gid) =>
+        opentypeReader.get_glyph_name.mockImplementation((_font, gid) =>
             gid === 0 ? '.notdef' : { 1: 'o', 2: 'q' }[gid] || ''
         );
         const glyphs = {
@@ -40,7 +45,7 @@ describe('TextRunEditor names unexported glyphs shaped as .notdef', () => {
     });
 
     afterEach(() => {
-        wasm.get_glyph_name.mockImplementation(originalGetGlyphName);
+        opentypeReader.get_glyph_name.mockReset();
         window.currentFontModel = originalModel;
     });
 

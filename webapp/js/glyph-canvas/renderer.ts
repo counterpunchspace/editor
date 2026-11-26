@@ -10,7 +10,7 @@ import { pathHasSubtractionFlag } from '../path-boolean-flag';
 import { fillPunchFillContoursOnContext } from '../punch-fill-contours';
 import { Logger } from '../logger';
 import { getPathFillOpacity } from '../path-fill-opacity-pref';
-import { get_glyph_name } from '../../wasm-dist/babelfont_fontc_web';
+import { get_glyph_name } from '../opentype-table-reader';
 import { isCcmpShellGlyph } from '../skills/ccmp-shells';
 import {
     buildPlaceholderPath,
@@ -2634,16 +2634,52 @@ export class GlyphCanvasRenderer {
 
         const main = this.ctx;
         const canvas = main.canvas;
-        if (
-            !this.punchOutScratch ||
-            this.punchOutScratch.width !== canvas.width ||
-            this.punchOutScratch.height !== canvas.height
-        ) {
+        const transform = main.getTransform();
+
+        // Compute the clipped screen-space bounding box of all punch-out
+        // contours so the scratch canvas only covers the active glyph
+        // instead of allocating a permanent 23 MB full-viewport bitmap.
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        for (const contour of contours) {
+            for (const node of contour.nodes) {
+                const sx =
+                    transform.a * node.x + transform.c * node.y + transform.e;
+                const sy =
+                    transform.b * node.x + transform.d * node.y + transform.f;
+                if (sx < minX) minX = sx;
+                if (sy < minY) minY = sy;
+                if (sx > maxX) maxX = sx;
+                if (sy > maxY) maxY = sy;
+            }
+        }
+        if (!Number.isFinite(minX) || !Number.isFinite(minY)) {
+            return;
+        }
+        const pad = 2;
+        const clipMinX = Math.max(0, Math.floor(minX - pad));
+        const clipMinY = Math.max(0, Math.floor(minY - pad));
+        const clipMaxX = Math.min(canvas.width, Math.ceil(maxX + pad));
+        const clipMaxY = Math.min(canvas.height, Math.ceil(maxY + pad));
+        const scratchWidth = clipMaxX - clipMinX;
+        const scratchHeight = clipMaxY - clipMinY;
+        if (scratchWidth <= 0 || scratchHeight <= 0) {
+            return;
+        }
+
+        if (!this.punchOutScratch) {
             this.punchOutScratch = document.createElement('canvas');
-            this.punchOutScratch.width = canvas.width;
-            this.punchOutScratch.height = canvas.height;
         }
         const offscreen = this.punchOutScratch;
+        if (
+            offscreen.width !== scratchWidth ||
+            offscreen.height !== scratchHeight
+        ) {
+            offscreen.width = scratchWidth;
+            offscreen.height = scratchHeight;
+        }
         const offscreenCtx = offscreen.getContext('2d');
         if (!offscreenCtx) {
             this.fillPunchFillContoursOnContext(contours);
@@ -2651,8 +2687,15 @@ export class GlyphCanvasRenderer {
         }
 
         offscreenCtx.setTransform(1, 0, 0, 1, 0, 0);
-        offscreenCtx.clearRect(0, 0, offscreen.width, offscreen.height);
-        offscreenCtx.setTransform(main.getTransform());
+        offscreenCtx.clearRect(0, 0, scratchWidth, scratchHeight);
+        offscreenCtx.setTransform(
+            transform.a,
+            transform.b,
+            transform.c,
+            transform.d,
+            transform.e - clipMinX,
+            transform.f - clipMinY
+        );
 
         const previous = this.ctx;
         this.ctx = offscreenCtx;
@@ -2664,8 +2707,15 @@ export class GlyphCanvasRenderer {
 
         main.save();
         main.setTransform(1, 0, 0, 1, 0, 0);
-        main.drawImage(offscreen, 0, 0);
+        main.drawImage(offscreen, clipMinX, clipMinY);
         main.restore();
+
+        // Release backing store immediately if this scratch exceeds 1 MB
+        // (512×512×4) so zoomed-in glyphs never retain multi-MB bitmaps.
+        if (scratchWidth * scratchHeight > 512 * 512) {
+            offscreen.width = 0;
+            offscreen.height = 0;
+        }
     }
 
     private placeholderGlyphName(): string {

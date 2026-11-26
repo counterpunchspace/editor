@@ -2607,6 +2607,12 @@ def classify_glyph(glyph):
                 const code = args.code;
                 if (!code) throw new Error('Missing required parameter: code');
 
+                if (
+                    !window.pyodide &&
+                    typeof window.ensurePyodideReady === 'function'
+                ) {
+                    await window.ensurePyodideReady();
+                }
                 const pyodide = (window as any).pyodide;
                 if (!pyodide)
                     throw new Error(
@@ -2667,11 +2673,14 @@ output
                             const execution =
                                 getActiveAssistantPythonExecution();
                             await awaitActiveAssistantPythonExecutionSettled();
-                            // Restore stdout on error
+                            // Restore stdout and drop temporary buffer on error
                             try {
                                 await runInternalPythonAsync(`
 if '_assistant_original_stdout' in dir():
     sys.stdout = _assistant_original_stdout
+    del _assistant_original_stdout
+if '_assistant_output_buffer' in dir():
+    del _assistant_output_buffer
                         `);
                             } catch (cleanupError) {
                                 console.warn(

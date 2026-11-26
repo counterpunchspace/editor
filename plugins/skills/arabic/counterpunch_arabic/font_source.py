@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import json
 from importlib.resources import files
 from typing import Any
@@ -92,8 +93,24 @@ def _split(name: str) -> tuple[str, str]:
 
 
 def _load() -> dict[str, Any]:
-    path = files("counterpunch_arabic").joinpath("data/arabic.babelfont")
-    return json.loads(path.read_text(encoding="utf-8"))
+    pkg = files("counterpunch_arabic")
+    gz_path = pkg.joinpath("data/arabic.babelfont.gz")
+    if gz_path.is_file():
+        raw = gzip.decompress(gz_path.read_bytes()).decode("utf-8")
+    else:
+        raw = pkg.joinpath("data/arabic.babelfont").read_text(encoding="utf-8")
+    return json.loads(raw)
+
+
+_SHARED_FONT_SOURCE: ArabicFontSource | None = None
+
+
+def get_arabic_font_source() -> ArabicFontSource:
+    """Return a shared, lazily-loaded ArabicFontSource singleton."""
+    global _SHARED_FONT_SOURCE
+    if _SHARED_FONT_SOURCE is None:
+        _SHARED_FONT_SOURCE = ArabicFontSource()
+    return _SHARED_FONT_SOURCE
 
 
 class ArabicFontSource:

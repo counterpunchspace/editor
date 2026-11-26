@@ -6,9 +6,33 @@ import { Logger } from './logger';
 
 const console = new Logger('StackMapper');
 
-// Source maps by script URL. The in-flight promise is cached, so every frame
-// of a stack (and every concurrent stack) shares one fetch and parse.
+// Source maps by script URL. Cached only while mapping is active and for a
+// short idle window so concurrent stack frames share one fetch/parse, then
+// evicted so parsed Mapping tables (~50 MB) are not retained in JS heap.
+const SOURCE_MAP_CACHE_TTL_MS = 5000;
 const sourceMapCache = new Map<string, Promise<SourceMapConsumer | null>>();
+let activeMapCalls = 0;
+let evictionTimer: ReturnType<typeof setTimeout> | null = null;
+
+function cancelEviction(): void {
+    if (evictionTimer !== null) {
+        clearTimeout(evictionTimer);
+        evictionTimer = null;
+    }
+}
+
+function scheduleEviction(): void {
+    if (activeMapCalls > 0 || sourceMapCache.size === 0) {
+        return;
+    }
+    cancelEviction();
+    evictionTimer = setTimeout(() => {
+        evictionTimer = null;
+        if (activeMapCalls === 0) {
+            sourceMapCache.clear();
+        }
+    }, SOURCE_MAP_CACHE_TTL_MS);
+}
 
 const HELPER_FRAME_PATTERNS = [
     /\bGenerator\.next\b/,
@@ -105,8 +129,17 @@ async function fetchSourceMap(
             return null;
         }
 
-        const mapData = await response.json();
-        return await new SourceMapConsumer(mapData);
+        const mapData = (await response.json()) as Record<string, unknown>;
+        // originalPositionFor() never reads sourcesContent; dropping it before
+        // constructing SourceMapConsumer avoids retaining megabytes of source text.
+        if ('sourcesContent' in mapData) {
+            delete mapData.sourcesContent;
+        }
+        return await new SourceMapConsumer(
+            mapData as unknown as ConstructorParameters<
+                typeof SourceMapConsumer
+            >[0]
+        );
     } catch (error) {
         console.warn(`Failed to load source map for ${normalizedUrl}:`, error);
         return null;
@@ -160,18 +193,25 @@ function isHelperFrame(line: string): boolean {
  * Returns a promise that resolves to the mapped stack
  */
 export async function mapStackTrace(stack: string): Promise<string> {
-    const lines = stack.split('\n');
-    const mappedLines = await Promise.all(
-        lines.map((line) => mapStackLine(line))
-    );
-    const filteredLines = mappedLines.filter((line) => {
-        if (!line.trim()) {
-            return false;
-        }
-        return !isHelperFrame(line);
-    });
+    activeMapCalls += 1;
+    cancelEviction();
+    try {
+        const lines = stack.split('\n');
+        const mappedLines = await Promise.all(
+            lines.map((line) => mapStackLine(line))
+        );
+        const filteredLines = mappedLines.filter((line) => {
+            if (!line.trim()) {
+                return false;
+            }
+            return !isHelperFrame(line);
+        });
 
-    return filteredLines.join('\n');
+        return filteredLines.join('\n');
+    } finally {
+        activeMapCalls -= 1;
+        scheduleEviction();
+    }
 }
 
 /**

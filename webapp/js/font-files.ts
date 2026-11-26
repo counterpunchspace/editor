@@ -36,7 +36,17 @@ import {
 } from './filesystem-plugins';
 import { Logger } from './logger';
 const { waitForFontEditorReady } = require('./editor-startup-ready.js');
-import { requestOpenFontConversion } from './font-compilation';
+import {
+    fontCompilation,
+    requestOpenFontConversion,
+    requestOpenFontSparse,
+    type OpenFontSparseResult
+} from './font-compilation';
+import {
+    buildLocalSparseBootstrap,
+    computeLocalWorkingSetNames,
+    type LocalSparseBootstrapPayload
+} from './local-sparse-hydrator';
 import {
     timelineMark,
     timelineSpanEnd,
@@ -54,6 +64,7 @@ import { TOUR_FUSTAT_PATH, TOUR_SAMPLE_TEXT } from './tour-slides';
 import { shouldHandleOpenPathBeforeEditorReady } from './open-font-readiness';
 import {
     fileContentsBytes,
+    serializeCachedLocalFontForSourceSave,
     serializeFontForSourceSave,
     type BabelfontJsonSource,
     type GlyphsFormatVersion,
@@ -211,6 +222,72 @@ async function convertSourceToBabelfontViaWorker(
     throw new Error('Font conversion failed after retries');
 }
 
+async function openSourceSparseViaWorker(
+    path: string,
+    extension: string,
+    contents: string | Uint8Array | undefined,
+    packageEntries: Record<string, Uint8Array> | undefined,
+    projectEntries: Record<string, Uint8Array> | undefined,
+    sourcePlugin: FilesystemPlugin
+): Promise<OpenFontSparseResult> {
+    const shouldRetryGlyphsParse = extension === 'glyphs';
+    const maxAttempts = shouldRetryGlyphsParse ? 2 : 1;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            return await requestOpenFontSparse({
+                filename: path.split('/').pop() || path,
+                contents,
+                packageEntries,
+                projectEntries
+            });
+        } catch (error: unknown) {
+            const errorMessage = getErrorMessage(error);
+
+            if (
+                attempt < maxAttempts &&
+                isTransientGlyphsParseError(errorMessage)
+            ) {
+                console.warn(
+                    'Transient glyphs parse failure; retrying sparse open',
+                    {
+                        attempt,
+                        maxAttempts,
+                        pluginId: sourcePlugin.getId(),
+                        path,
+                        extension,
+                        debugPrefix: describeBinaryPrefix(contents)
+                    }
+                );
+                await new Promise((resolve) => setTimeout(resolve, 150));
+                continue;
+            }
+
+            throw error;
+        }
+    }
+
+    throw new Error('Sparse font open failed after retries');
+}
+
+async function fetchLocalSparseInitialGlyphs(
+    glyphNames: string[]
+): Promise<Array<Record<string, unknown>>> {
+    if (glyphNames.length === 0) {
+        return [];
+    }
+    const BATCH_SIZE = 256;
+    const allGlyphs: Array<Record<string, unknown>> = [];
+    for (let offset = 0; offset < glyphNames.length; offset += BATCH_SIZE) {
+        const chunk = glyphNames.slice(offset, offset + BATCH_SIZE);
+        const batch = await fontCompilation.requestGlyphsJsonBatch(chunk);
+        if (batch.length > 0) {
+            allGlyphs.push(...batch);
+        }
+    }
+    return allGlyphs;
+}
+
 let diskFontReloadDebounceTimer: number | null = null;
 const pendingDiskChangePaths = new Set<string>();
 let memoryFilesystemReadyPromise: Promise<void> | null = null;
@@ -229,24 +306,6 @@ async function ensureMemoryFilesystemReady(): Promise<void> {
 }
 
 async function waitForPythonEnvironmentReady(): Promise<void> {
-    if (!window.pyodide) {
-        await new Promise<void>((resolve) => {
-            const checkReadiness = () => {
-                if (window.pyodide) {
-                    resolve();
-                    return;
-                }
-
-                window.setTimeout(
-                    checkReadiness,
-                    PYTHON_READY_POLL_INTERVAL_MS
-                );
-            };
-
-            checkReadiness();
-        });
-    }
-
     await waitForFontEditorReady();
 }
 
@@ -692,10 +751,61 @@ async function openFont(
             timelineSpanEnd(readSpan);
         }
 
-        let babelfontJson: string;
+        let babelfontJson = '';
+        let localSparse:
+            | {
+                  bootstrap: LocalSparseBootstrapPayload;
+                  initialGlyphs: Array<Record<string, unknown>>;
+              }
+            | undefined;
 
-        // For non-.babelfont files, use Rust loader to convert
-        if (extension !== 'babelfont') {
+        // For non-.babelfont local files, parse into fontc-worker's FONT_CACHE
+        // and stream only the core metadata + catalog + initial working set.
+        if (
+            extension !== 'babelfont' &&
+            sourcePluginId !== 'cloud' &&
+            typeof Worker !== 'undefined'
+        ) {
+            const convertSpan = timelineSpanStart(
+                'font.open.convertToBabelfont'
+            );
+            try {
+                console.log(
+                    `Detected ${extension} format, opening sparse via Rust worker...`
+                );
+
+                const sparseResult = await openSourceSparseViaWorker(
+                    path,
+                    extension,
+                    contents,
+                    packageEntries,
+                    projectEntries,
+                    sourcePlugin
+                );
+                const bootstrap = buildLocalSparseBootstrap(sparseResult);
+                const initialText =
+                    readUrlState().text ||
+                    window.localStorage?.getItem('editor_text_buffer') ||
+                    'Hamburgevons';
+                const initialNames = bootstrap.isSparse
+                    ? computeLocalWorkingSetNames(
+                          bootstrap,
+                          [],
+                          initialText,
+                          false
+                      )
+                    : bootstrap.glyphOrder;
+                const initialGlyphs =
+                    await fetchLocalSparseInitialGlyphs(initialNames);
+                localSparse = { bootstrap, initialGlyphs };
+            } finally {
+                timelineSpanEnd(convertSpan);
+            }
+
+            console.log(
+                `Successfully opened ${extension} via Rust sparse path (${localSparse.initialGlyphs.length}/${localSparse.bootstrap.glyphOrder.length} glyphs hydrated)`
+            );
+        } else if (extension !== 'babelfont') {
             const convertSpan = timelineSpanStart(
                 'font.open.convertToBabelfont'
             );
@@ -767,6 +877,7 @@ async function openFont(
                 detail: {
                     path: path,
                     babelfontJson: babelfontJson,
+                    ...(localSparse ? { localSparse } : undefined),
                     sourcePlugin,
                     fileHandle: actualFileHandle,
                     directoryHandle: directoryHandle,
@@ -898,6 +1009,9 @@ async function saveCurrentFontAsIn(
 ): Promise<void> {
     const pluginId = plugin.getId();
     const adapter = plugin.getAdapter();
+    if (pluginId === 'cloud' && window.fontManager?.isLocalSparseFont?.()) {
+        await window.fontManager.hydrateAllLocalGlyphs();
+    }
     const targetFolderFormat = folderSourceFormatForPath(path);
     if (targetFolderFormat) {
         await saveCurrentFontAsFolderSource(
@@ -908,26 +1022,35 @@ async function saveCurrentFontAsIn(
             options.exists
         );
     } else {
-        currentFont.syncJsonFromModel();
         const sourcePlugin = currentFont.sourcePlugin;
-        let babelfontJson: BabelfontJsonSource =
-            currentFont.babelfontJsonSource();
-        if (
-            sourcePlugin &&
+        const needsStripOwned =
+            Boolean(sourcePlugin) &&
             sourcePlugin.getId() !== pluginId &&
-            typeof sourcePlugin.stripOwnedFontData === 'function'
+            typeof sourcePlugin.stripOwnedFontData === 'function';
+        let serializedFont: string | Uint8Array<ArrayBuffer>;
+        if (
+            pluginId !== 'cloud' &&
+            !needsStripOwned &&
+            window.fontManager?.isLocalSparseFont?.()
         ) {
-            babelfontJson = JSON.stringify(
-                sourcePlugin.stripOwnedFontData(
-                    currentFont.serializedFontData()
-                )
+            serializedFont = await serializeCachedLocalFontForSourceSave(path);
+        } else {
+            currentFont.syncJsonFromModel();
+            let babelfontJson: BabelfontJsonSource =
+                currentFont.babelfontJsonSource();
+            if (needsStripOwned) {
+                babelfontJson = JSON.stringify(
+                    sourcePlugin.stripOwnedFontData!(
+                        currentFont.serializedFontData()
+                    )
+                );
+            }
+            serializedFont = await serializeFontForSourceSave(
+                path,
+                babelfontJson,
+                currentFont.glyphsSaveVersion
             );
         }
-        const serializedFont = await serializeFontForSourceSave(
-            path,
-            babelfontJson,
-            currentFont.glyphsSaveVersion
-        );
         if (pluginId === 'disk') {
             markManagedFileInternalWrite(pluginId, path);
         }

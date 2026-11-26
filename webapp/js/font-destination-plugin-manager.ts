@@ -2,6 +2,7 @@ import type { FileSystemAdapter, FileInfo } from './file-system-adapter';
 import { settingsFolder, SETTINGS_FOLDER_PATHS } from './settings-folder';
 import { Logger } from './logger';
 import { resolveWebsiteURL } from './website-url';
+import { runHostPythonAsync } from './skills/host-python';
 
 const console = new Logger('FontDestinationPlugins');
 
@@ -73,6 +74,7 @@ type ExportedBinaryFontMetadata = {
 type PyodideFileSystem = {
     mkdirTree: (path: string) => void;
     writeFile: (path: string, contents: Uint8Array) => void;
+    unlink?: (path: string) => void;
 };
 
 type PyodideProxy = {
@@ -597,7 +599,7 @@ export class FontDestinationPluginManager {
             return;
         }
 
-        const result = (await pyodide.runPythonAsync(`
+        const result = (await runHostPythonAsync(`
 import importlib
 import re
 from importlib.metadata import entry_points
@@ -750,6 +752,9 @@ for entry in entries:
         filename: string,
         bytes: Uint8Array
     ): Promise<void> {
+        if (!getPyodide() && typeof window.ensurePyodideReady === 'function') {
+            await window.ensurePyodideReady();
+        }
         const pyodide = getPyodide();
         if (!pyodide?.FS) {
             throw new Error('Python is not ready to install plugins.');
@@ -757,7 +762,8 @@ for entry in entries:
         const path = `/tmp/counterpunch-plugins/${filename}`;
         pyodide.FS.mkdirTree('/tmp/counterpunch-plugins');
         pyodide.FS.writeFile(path, bytes);
-        await pyodide.runPythonAsync(`
+        try {
+            await runHostPythonAsync(`
 import importlib
 import micropip
 
@@ -765,6 +771,13 @@ importlib.invalidate_caches()
 await micropip.install(${JSON.stringify(`emfs:${path}`)}, reinstall=True)
 importlib.invalidate_caches()
 `);
+        } finally {
+            try {
+                pyodide.FS.unlink?.(path);
+            } catch {
+                // Ignore if already removed or not supported in mock FS.
+            }
+        }
     }
 
     /** Remove a wheel-installed distribution and its cached entry-point modules. */
@@ -774,7 +787,7 @@ importlib.invalidate_caches()
         if (!pyodide || !distribution) {
             return;
         }
-        await pyodide.runPythonAsync(`
+        await runHostPythonAsync(`
 import importlib
 import re
 import sys

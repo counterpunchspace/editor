@@ -31,10 +31,17 @@ export async function loadSparseRenameDependents(
         return [];
     }
     try {
-        await window.cloudPlugin?.ensureSparseHydration?.({
-            glyphNames: oldNames,
-            purpose: 'ui'
-        });
+        if (typeof window.fontManager?.ensureSparseHydration === 'function') {
+            await window.fontManager.ensureSparseHydration({
+                glyphNames: oldNames,
+                purpose: 'ui'
+            });
+        } else {
+            await window.cloudPlugin?.ensureSparseHydration?.({
+                glyphNames: oldNames,
+                purpose: 'ui'
+            });
+        }
     } catch (error) {
         console.warn('Could not load the glyphs a rename touches', error);
     }

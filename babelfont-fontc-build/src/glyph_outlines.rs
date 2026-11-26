@@ -6,10 +6,10 @@
 
 use babelfont::{Layer, Node, Shape, Tag};
 use fontdrasil::coords::{DesignCoord, DesignLocation, UserCoord};
-use kurbo::{Affine, Point, Shape as KurboShape};
+use kurbo::{Affine, PathEl, Point, Shape as KurboShape};
 use serde_json::Value as JsonValue;
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::str::FromStr;
 use std::sync::Mutex;
 use wasm_bindgen::prelude::*;
@@ -23,6 +23,10 @@ use crate::interpolation::{
 // Key: glyph_name, Value: complete result JSON object
 static OUTLINE_CACHE: Mutex<Option<OutlineCache>> = Mutex::new(None);
 
+// Global persistent cache for compact binary overview glyph records
+// Key: glyph_name, Value: encoded binary record (ready to concatenate)
+static OVERVIEW_BINARY_CACHE: Mutex<Option<OverviewBinaryCache>> = Mutex::new(None);
+
 // Global persistent cache for interpolated layers (components)
 // This dramatically speeds up composite glyphs that share base components
 static LAYER_CACHE: Mutex<Option<LayerCache>> = Mutex::new(None);
@@ -31,14 +35,26 @@ static LAYER_CACHE: Mutex<Option<LayerCache>> = Mutex::new(None);
 // Built lazily from OUTLINE_CACHE results (which contain flattened shapes).
 static COMPONENT_DEPENDENTS: Mutex<Option<HashMap<String, HashSet<String>>>> = Mutex::new(None);
 
+const MAX_OUTLINE_CACHE_ENTRIES: usize = 600;
+const MAX_OVERVIEW_BINARY_CACHE_ENTRIES: usize = 600;
+const MAX_LAYER_CACHE_ENTRIES: usize = 600;
+
 struct OutlineCache {
     location_json: String,
     results: HashMap<String, JsonValue>,
+    order: VecDeque<String>,
+}
+
+struct OverviewBinaryCache {
+    location_json: String,
+    records: HashMap<String, Vec<u8>>,
+    order: VecDeque<String>,
 }
 
 struct LayerCache {
     cache_key: String,
     layers: HashMap<String, Layer>,
+    order: VecDeque<String>,
 }
 
 fn layer_cache_key(location_json: &str, extrapolate: bool, domain: &str) -> String {
@@ -50,22 +66,24 @@ fn layer_cache_key(location_json: &str, extrapolate: bool, domain: &str) -> Stri
 
 fn ensure_layer_cache_for_key(cache_key: &str) -> RefCell<HashMap<String, Layer>> {
     let mut cache_guard = LAYER_CACHE.lock().unwrap();
-    if let Some(ref cache) = *cache_guard {
+    if let Some(ref mut cache) = *cache_guard {
         if cache.cache_key == cache_key {
-            return RefCell::new(cache.layers.clone());
+            // Move the map out in O(1) instead of deep-cloning every Layer on each lookup.
+            return RefCell::new(std::mem::take(&mut cache.layers));
         }
     }
 
     *cache_guard = Some(LayerCache {
         cache_key: cache_key.to_string(),
         layers: HashMap::new(),
+        order: VecDeque::new(),
     });
     RefCell::new(HashMap::new())
 }
 
 fn persist_layer_cache(cache_key: &str, layer_cache: &RefCell<HashMap<String, Layer>>) {
-    let layer_map = layer_cache.borrow();
-    if layer_map.is_empty() {
+    let incoming = std::mem::take(&mut *layer_cache.borrow_mut());
+    if incoming.is_empty() {
         return;
     }
 
@@ -77,12 +95,33 @@ fn persist_layer_cache(cache_key: &str, layer_cache: &RefCell<HashMap<String, La
         *cache_guard = Some(LayerCache {
             cache_key: cache_key.to_string(),
             layers: HashMap::new(),
+            order: VecDeque::new(),
         });
     }
 
     if let Some(ref mut cache) = *cache_guard {
-        for (name, layer) in layer_map.iter() {
-            cache.layers.insert(name.clone(), layer.clone());
+        if cache.layers.is_empty() {
+            cache.layers = incoming;
+            cache.order.retain(|name| cache.layers.contains_key(name));
+            let known: HashSet<String> = cache.order.iter().cloned().collect();
+            for name in cache.layers.keys() {
+                if !known.contains(name) {
+                    cache.order.push_back(name.clone());
+                }
+            }
+        } else {
+            for (name, layer) in incoming {
+                if !cache.layers.contains_key(&name) {
+                    cache.order.push_back(name.clone());
+                }
+                cache.layers.insert(name, layer);
+            }
+        }
+        while cache.layers.len() > MAX_LAYER_CACHE_ENTRIES {
+            let Some(oldest) = cache.order.pop_front() else {
+                break;
+            };
+            cache.layers.remove(&oldest);
         }
     }
 }
@@ -135,10 +174,12 @@ fn component_references<'a>(shapes: impl Iterator<Item = &'a Shape>) -> Vec<Stri
 /// Retained-size estimate for overview outline / interpolated-layer caches.
 pub fn outline_cache_memory_stats() -> (u64, usize, u64, usize) {
     let (outline_bytes, outline_entries) = {
-        let cache = OUTLINE_CACHE.lock().unwrap();
-        match cache.as_ref() {
-            Some(cache) => (
-                crate::cache_memory::str_bytes(&cache.location_json)
+        let mut total_bytes = 0u64;
+        let mut total_entries = 0usize;
+        {
+            let cache = OUTLINE_CACHE.lock().unwrap();
+            if let Some(cache) = cache.as_ref() {
+                total_bytes += crate::cache_memory::str_bytes(&cache.location_json)
                     + cache
                         .results
                         .iter()
@@ -146,11 +187,25 @@ pub fn outline_cache_memory_stats() -> (u64, usize, u64, usize) {
                             crate::cache_memory::str_bytes(name)
                                 + crate::cache_memory::json_value_bytes(value)
                         })
-                        .sum::<u64>(),
-                cache.results.len(),
-            ),
-            None => (0, 0),
+                        .sum::<u64>();
+                total_entries += cache.results.len();
+            }
         }
+        {
+            let cache = OVERVIEW_BINARY_CACHE.lock().unwrap();
+            if let Some(cache) = cache.as_ref() {
+                total_bytes += crate::cache_memory::str_bytes(&cache.location_json)
+                    + cache
+                        .records
+                        .iter()
+                        .map(|(name, bytes)| {
+                            crate::cache_memory::str_bytes(name) + bytes.capacity() as u64
+                        })
+                        .sum::<u64>();
+                total_entries += cache.records.len();
+            }
+        }
+        (total_bytes, total_entries)
     };
     let (layer_bytes, layer_entries) = {
         let cache = LAYER_CACHE.lock().unwrap();
@@ -177,6 +232,10 @@ pub fn outline_cache_memory_stats() -> (u64, usize, u64, usize) {
 pub fn clear_outline_cache() {
     {
         let mut cache = OUTLINE_CACHE.lock().unwrap();
+        *cache = None;
+    }
+    {
+        let mut cache = OVERVIEW_BINARY_CACHE.lock().unwrap();
         *cache = None;
     }
     {
@@ -221,6 +280,16 @@ pub fn clear_outline_cache_for_glyph(glyph_name: &str) {
         if let Some(ref mut c) = *cache {
             for name in &to_invalidate {
                 c.results.remove(name);
+            }
+        }
+    }
+
+    // Remove from OVERVIEW_BINARY_CACHE
+    {
+        let mut cache = OVERVIEW_BINARY_CACHE.lock().unwrap();
+        if let Some(ref mut c) = *cache {
+            for name in &to_invalidate {
+                c.records.remove(name);
             }
         }
     }
@@ -519,18 +588,39 @@ pub fn get_glyphs_outlines(
         record_component_dependencies(font, &layer, glyph_name);
     }
 
-    // Add new results to persistent cache
+    // Build response map from cached + newly computed entries before any LRU
+    // eviction so a batch request never drops its own results.
+    let mut response_by_name: HashMap<String, JsonValue> =
+        HashMap::with_capacity(cached_results.len() + new_results.len());
+    for cached in cached_results {
+        if let Some(name) = cached.get("name").and_then(|v| v.as_str()) {
+            response_by_name.insert(name.to_string(), cached);
+        }
+    }
+
+    // Add new results to persistent cache with bounded LRU eviction
     {
         let mut cache_guard = OUTLINE_CACHE.lock().unwrap();
         if cache_guard.is_none() {
             *cache_guard = Some(OutlineCache {
                 location_json: normalized_location.to_string(),
                 results: HashMap::new(),
+                order: VecDeque::new(),
             });
         }
         if let Some(ref mut cache) = *cache_guard {
-            for (name, result) in &new_results {
-                cache.results.insert(name.clone(), result.clone());
+            for (name, result) in new_results {
+                response_by_name.insert(name.clone(), result.clone());
+                if !cache.results.contains_key(&name) {
+                    cache.order.push_back(name.clone());
+                }
+                cache.results.insert(name, result);
+            }
+            while cache.results.len() > MAX_OUTLINE_CACHE_ENTRIES {
+                let Some(oldest) = cache.order.pop_front() else {
+                    break;
+                };
+                cache.results.remove(&oldest);
             }
         }
     }
@@ -539,14 +629,9 @@ pub fn get_glyphs_outlines(
 
     // Combine cached results with new results in original order
     let mut final_results = Vec::with_capacity(glyph_names.len());
-    {
-        let cache_guard = OUTLINE_CACHE.lock().unwrap();
-        if let Some(ref cache) = *cache_guard {
-            for glyph_name in glyph_names {
-                if let Some(result) = cache.results.get(glyph_name) {
-                    final_results.push(result.clone());
-                }
-            }
+    for glyph_name in glyph_names {
+        if let Some(result) = response_by_name.get(glyph_name) {
+            final_results.push(result.clone());
         }
     }
 
@@ -695,4 +780,409 @@ fn calculate_bounds(shapes: &[Shape]) -> serde_json::Value {
             "yMax": 0,
         })
     }
+}
+
+const OVERVIEW_CMD_MOVE_TO: u8 = 0;
+const OVERVIEW_CMD_LINE_TO: u8 = 1;
+const OVERVIEW_CMD_QUAD_TO: u8 = 2;
+const OVERVIEW_CMD_CURVE_TO: u8 = 3;
+const OVERVIEW_CMD_CLOSE_PATH: u8 = 4;
+
+const OVERVIEW_FILL_PATH: u8 = 0;
+const OVERVIEW_FILL_AUTO: u8 = 1;
+const OVERVIEW_FILL_MANUAL: u8 = 2;
+const OVERVIEW_RUN_SUBTRACT_BIT: u8 = 4;
+
+const OVERVIEW_GLYPH_FLAG_HAS_COMPONENTS: u8 = 1;
+const OVERVIEW_GLYPH_FLAG_HAS_SUBTRACTION: u8 = 2;
+const OVERVIEW_GLYPH_FLAG_HAS_EMPTY_COMPONENT: u8 = 4;
+
+const GLYPHS_COMPONENT_ALIGNMENT_KEY: &str = "com.schriftgestalt.Glyphs.alignment";
+
+struct OverviewContourRun {
+    flags: u8,
+    cmds: Vec<u8>,
+}
+
+struct OverviewGlyphBuilder {
+    runs: Vec<OverviewContourRun>,
+    x_min: f64,
+    y_min: f64,
+    x_max: f64,
+    y_max: f64,
+    has_components: bool,
+    has_subtraction: bool,
+    has_empty_component: bool,
+}
+
+impl OverviewGlyphBuilder {
+    fn new() -> Self {
+        Self {
+            runs: Vec::new(),
+            x_min: f64::INFINITY,
+            y_min: f64::INFINITY,
+            x_max: f64::NEG_INFINITY,
+            y_max: f64::NEG_INFINITY,
+            has_components: false,
+            has_subtraction: false,
+            has_empty_component: false,
+        }
+    }
+
+    fn include_point(&mut self, x: f64, y: f64) {
+        if x.is_finite() && y.is_finite() {
+            self.x_min = self.x_min.min(x);
+            self.y_min = self.y_min.min(y);
+            self.x_max = self.x_max.max(x);
+            self.y_max = self.y_max.max(y);
+        }
+    }
+
+    fn push_bez_path(&mut self, bez: &kurbo::BezPath, fill_kind: u8, subtract: bool) {
+        let bbox = bez.bounding_box();
+        if bbox.min_x().is_finite()
+            && bbox.min_y().is_finite()
+            && bbox.max_x().is_finite()
+            && bbox.max_y().is_finite()
+        {
+            self.include_point(bbox.min_x(), bbox.min_y());
+            self.include_point(bbox.max_x(), bbox.max_y());
+        }
+        if subtract {
+            self.has_subtraction = true;
+        }
+        let run_flags = (fill_kind & 0b11) | if subtract { OVERVIEW_RUN_SUBTRACT_BIT } else { 0 };
+        // Merge consecutive non-subtracting contours of the same fill kind into one Path2D run.
+        let can_merge = !subtract
+            && self
+                .runs
+                .last()
+                .map_or(false, |last| last.flags == run_flags);
+        let cmds = if can_merge {
+            &mut self.runs.last_mut().unwrap().cmds
+        } else {
+            self.runs.push(OverviewContourRun {
+                flags: run_flags,
+                cmds: Vec::with_capacity(64),
+            });
+            &mut self.runs.last_mut().unwrap().cmds
+        };
+
+        let mut emitted_close = false;
+        for el in bez.elements() {
+            match *el {
+                PathEl::MoveTo(p) => {
+                    cmds.push(OVERVIEW_CMD_MOVE_TO);
+                    cmds.extend_from_slice(&(p.x as f32).to_le_bytes());
+                    cmds.extend_from_slice(&(p.y as f32).to_le_bytes());
+                }
+                PathEl::LineTo(p) => {
+                    cmds.push(OVERVIEW_CMD_LINE_TO);
+                    cmds.extend_from_slice(&(p.x as f32).to_le_bytes());
+                    cmds.extend_from_slice(&(p.y as f32).to_le_bytes());
+                }
+                PathEl::QuadTo(c, p) => {
+                    cmds.push(OVERVIEW_CMD_QUAD_TO);
+                    cmds.extend_from_slice(&(c.x as f32).to_le_bytes());
+                    cmds.extend_from_slice(&(c.y as f32).to_le_bytes());
+                    cmds.extend_from_slice(&(p.x as f32).to_le_bytes());
+                    cmds.extend_from_slice(&(p.y as f32).to_le_bytes());
+                }
+                PathEl::CurveTo(c1, c2, p) => {
+                    cmds.push(OVERVIEW_CMD_CURVE_TO);
+                    cmds.extend_from_slice(&(c1.x as f32).to_le_bytes());
+                    cmds.extend_from_slice(&(c1.y as f32).to_le_bytes());
+                    cmds.extend_from_slice(&(c2.x as f32).to_le_bytes());
+                    cmds.extend_from_slice(&(c2.y as f32).to_le_bytes());
+                    cmds.extend_from_slice(&(p.x as f32).to_le_bytes());
+                    cmds.extend_from_slice(&(p.y as f32).to_le_bytes());
+                }
+                PathEl::ClosePath => {
+                    cmds.push(OVERVIEW_CMD_CLOSE_PATH);
+                    emitted_close = true;
+                }
+            }
+        }
+        if !emitted_close {
+            cmds.push(OVERVIEW_CMD_CLOSE_PATH);
+        }
+    }
+
+    fn encode_record(&self, glyph_name: &str, width: f32) -> Vec<u8> {
+        let name_bytes = glyph_name.as_bytes();
+        let total_cmd_bytes: usize = self.runs.iter().map(|r| 5 + r.cmds.len()).sum();
+        let mut out = Vec::with_capacity(2 + name_bytes.len() + 20 + 1 + 2 + total_cmd_bytes);
+        out.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
+        out.extend_from_slice(name_bytes);
+        out.extend_from_slice(&width.to_le_bytes());
+        let (x_min, y_min, x_max, y_max) = if self.x_min.is_finite() {
+            (
+                self.x_min as f32,
+                self.y_min as f32,
+                self.x_max as f32,
+                self.y_max as f32,
+            )
+        } else {
+            (0.0f32, 0.0f32, 0.0f32, 0.0f32)
+        };
+        out.extend_from_slice(&x_min.to_le_bytes());
+        out.extend_from_slice(&y_min.to_le_bytes());
+        out.extend_from_slice(&x_max.to_le_bytes());
+        out.extend_from_slice(&y_max.to_le_bytes());
+
+        let mut flags = 0u8;
+        if self.has_components {
+            flags |= OVERVIEW_GLYPH_FLAG_HAS_COMPONENTS;
+        }
+        if self.has_subtraction {
+            flags |= OVERVIEW_GLYPH_FLAG_HAS_SUBTRACTION;
+        }
+        if self.has_empty_component {
+            flags |= OVERVIEW_GLYPH_FLAG_HAS_EMPTY_COMPONENT;
+        }
+        out.push(flags);
+
+        let run_count = self.runs.len().min(u16::MAX as usize);
+        out.extend_from_slice(&(run_count as u16).to_le_bytes());
+        for run in self.runs.iter().take(run_count) {
+            out.push(run.flags);
+            out.extend_from_slice(&(run.cmds.len() as u32).to_le_bytes());
+            out.extend_from_slice(&run.cmds);
+        }
+        out
+    }
+}
+
+fn component_fill_kind(component: &babelfont::Component, inherited_fill: u8) -> u8 {
+    if inherited_fill != OVERVIEW_FILL_PATH {
+        return inherited_fill;
+    }
+    let is_auto = component
+        .format_specific
+        .get(GLYPHS_COMPONENT_ALIGNMENT_KEY)
+        .and_then(|v| v.as_i64())
+        == Some(1);
+    if is_auto {
+        OVERVIEW_FILL_AUTO
+    } else {
+        OVERVIEW_FILL_MANUAL
+    }
+}
+
+fn collect_overview_binary_shapes(
+    font: &babelfont::Font,
+    layer: &Layer,
+    location: &DesignLocation,
+    layer_cache: &RefCell<HashMap<String, Layer>>,
+    affine: Affine,
+    fill_kind: u8,
+    depth: u8,
+    builder: &mut OverviewGlyphBuilder,
+) -> usize {
+    if depth > 16 {
+        return 0;
+    }
+    let mut emitted_contours = 0usize;
+    for shape in &layer.shapes {
+        match shape {
+            Shape::Path(path) => {
+                if !path.closed || path.nodes.is_empty() {
+                    continue;
+                }
+                let subtract = babelfont::filters::path_is_subtraction(path);
+                if let Ok(mut bez) = path.to_kurbo() {
+                    if affine != Affine::IDENTITY {
+                        bez.apply_affine(affine);
+                    }
+                    builder.push_bez_path(&bez, fill_kind, subtract);
+                    emitted_contours += 1;
+                }
+            }
+            Shape::FormatSpecific(_) => {}
+            Shape::Component(component) => {
+                builder.has_components = true;
+                let ref_key = component.reference.to_string();
+                let ref_layer = {
+                    let cache = layer_cache.borrow();
+                    if let Some(cached) = cache.get(&ref_key) {
+                        Some(cached.clone())
+                    } else {
+                        drop(cache);
+                        match interpolate_glyph_layer(font, &component.reference, location, false) {
+                            Ok(interpolated) => {
+                                layer_cache
+                                    .borrow_mut()
+                                    .insert(ref_key.clone(), interpolated.clone());
+                                Some(interpolated)
+                            }
+                            Err(_) => None,
+                        }
+                    }
+                };
+                let Some(ref_layer) = ref_layer else {
+                    builder.has_empty_component = true;
+                    continue;
+                };
+                let child_affine = affine * component.transform.as_affine();
+                let child_fill = component_fill_kind(component, fill_kind);
+                let child_count = collect_overview_binary_shapes(
+                    font,
+                    &ref_layer,
+                    location,
+                    layer_cache,
+                    child_affine,
+                    child_fill,
+                    depth + 1,
+                    builder,
+                );
+                if child_count == 0 {
+                    builder.has_empty_component = true;
+                } else {
+                    emitted_contours += child_count;
+                }
+            }
+        }
+    }
+    emitted_contours
+}
+
+/// Compact binary overview outline batch encoder: walks each glyph and its
+/// components once in Rust, merges adjacent non-subtracting contours of the
+/// same fill kind, and returns a single packed `Vec<u8>` ready for zero-copy
+/// `Transferable` handoff to the main thread.
+pub fn get_glyphs_overview_binary(
+    font: &babelfont::Font,
+    glyph_names: &[String],
+    location_json: &str,
+) -> Result<Vec<u8>, JsValue> {
+    let normalized_location = if location_json.trim().is_empty() {
+        "{}"
+    } else {
+        location_json
+    };
+    let current_layer_cache_key = layer_cache_key(normalized_location, false, "");
+
+    {
+        let mut cache_guard = OVERVIEW_BINARY_CACHE.lock().unwrap();
+        if let Some(ref cache) = *cache_guard {
+            if cache.location_json != normalized_location {
+                *cache_guard = None;
+            }
+        }
+    }
+    {
+        let mut cache_guard = LAYER_CACHE.lock().unwrap();
+        if let Some(ref cache) = *cache_guard {
+            if cache.cache_key != current_layer_cache_key {
+                *cache_guard = None;
+            }
+        }
+    }
+
+    let mut cached_by_name: HashMap<String, Vec<u8>> = HashMap::new();
+    let mut glyphs_to_process: Vec<String> = Vec::new();
+    {
+        let cache_guard = OVERVIEW_BINARY_CACHE.lock().unwrap();
+        if let Some(ref cache) = *cache_guard {
+            for glyph_name in glyph_names {
+                if let Some(record) = cache.records.get(glyph_name) {
+                    cached_by_name.insert(glyph_name.clone(), record.clone());
+                } else {
+                    glyphs_to_process.push(glyph_name.clone());
+                }
+            }
+        } else {
+            glyphs_to_process = glyph_names.to_vec();
+        }
+    }
+
+    if !glyphs_to_process.is_empty() {
+        let (_, design_location) = parse_userspace_location(font, normalized_location)?;
+        let layer_cache = ensure_layer_cache_for_key(&current_layer_cache_key);
+        let mut newly_encoded: Vec<(String, Vec<u8>)> = Vec::with_capacity(glyphs_to_process.len());
+
+        for glyph_name in &glyphs_to_process {
+            if font.glyphs.get(glyph_name).is_none() {
+                continue;
+            }
+            let layer = {
+                let cache = layer_cache.borrow();
+                if let Some(cached) = cache.get(glyph_name) {
+                    cached.clone()
+                } else {
+                    drop(cache);
+                    let interpolated =
+                        match interpolate_glyph_layer(font, glyph_name, &design_location, false) {
+                            Ok(layer) => layer,
+                            Err(_) => continue,
+                        };
+                    layer_cache
+                        .borrow_mut()
+                        .insert(glyph_name.clone(), interpolated.clone());
+                    interpolated
+                }
+            };
+
+            let mut builder = OverviewGlyphBuilder::new();
+            collect_overview_binary_shapes(
+                font,
+                &layer,
+                &design_location,
+                &layer_cache,
+                Affine::IDENTITY,
+                OVERVIEW_FILL_PATH,
+                0,
+                &mut builder,
+            );
+            let record = builder.encode_record(glyph_name, layer.width);
+            newly_encoded.push((glyph_name.clone(), record));
+            record_component_dependencies(font, &layer, glyph_name);
+        }
+
+        {
+            let mut cache_guard = OVERVIEW_BINARY_CACHE.lock().unwrap();
+            if cache_guard.is_none() {
+                *cache_guard = Some(OverviewBinaryCache {
+                    location_json: normalized_location.to_string(),
+                    records: HashMap::new(),
+                    order: VecDeque::new(),
+                });
+            }
+            if let Some(ref mut cache) = *cache_guard {
+                for (name, record) in newly_encoded {
+                    cached_by_name.insert(name.clone(), record.clone());
+                    if !cache.records.contains_key(&name) {
+                        cache.order.push_back(name.clone());
+                    }
+                    cache.records.insert(name, record);
+                }
+                while cache.records.len() > MAX_OVERVIEW_BINARY_CACHE_ENTRIES {
+                    let Some(oldest) = cache.order.pop_front() else {
+                        break;
+                    };
+                    cache.records.remove(&oldest);
+                }
+            }
+        }
+
+        persist_layer_cache(&current_layer_cache_key, &layer_cache);
+    }
+
+    let mut total_bytes = 4usize;
+    let mut ordered_count = 0u32;
+    for glyph_name in glyph_names {
+        if let Some(record) = cached_by_name.get(glyph_name) {
+            total_bytes += record.len();
+            ordered_count += 1;
+        }
+    }
+
+    let mut packet = Vec::with_capacity(total_bytes);
+    packet.extend_from_slice(&ordered_count.to_le_bytes());
+    for glyph_name in glyph_names {
+        if let Some(record) = cached_by_name.get(glyph_name) {
+            packet.extend_from_slice(record);
+        }
+    }
+    Ok(packet)
 }

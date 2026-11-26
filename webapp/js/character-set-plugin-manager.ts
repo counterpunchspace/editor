@@ -1,4 +1,5 @@
 import { Logger } from './logger';
+import { runHostPythonAsync } from './skills/host-python';
 
 const console = new Logger('CharacterSetPluginManager');
 
@@ -54,8 +55,9 @@ export type CharacterSetMembers = {
 };
 
 type PyodideLike = {
-    loadPackage(name: string): Promise<void>;
+    loadPackage(name: string | string[]): Promise<void>;
     runPythonAsync(code: string): Promise<string>;
+    _originalRunPythonAsync?(code: string): Promise<string>;
 };
 
 function parseMembersBySet(
@@ -235,25 +237,31 @@ export class CharacterSetPluginManager {
         levels: readonly CharacterSetCoverageLevel[]
     ): Promise<CharacterSetEntry[]> {
         await this.ensureReady();
-        const pyodide = await this.waitForPyodide();
-        const result = await pyodide.runPythonAsync(`
-import json
+        await this.waitForPyodide();
+        const result = await runHostPythonAsync(`
+import builtins, json
 from importlib.metadata import entry_points
 
 provider_id = ${JSON.stringify(providerId)}
 set_ids = ${JSON.stringify(setIds)}
 levels = ${JSON.stringify(levels)}
-result = None
-for entry in entry_points(group='counterpunch_character_set_plugins'):
-    provider = entry.load()()
-    if provider.provider_id == provider_id:
-        result = provider.characters(set_ids, levels)
-        break
-if result is None:
+cache = getattr(builtins, '_cp_charset_providers', None)
+provider = cache.get(provider_id) if isinstance(cache, dict) else None
+if provider is None:
+    if not isinstance(cache, dict):
+        cache = {}
+        builtins._cp_charset_providers = cache
+    for entry in entry_points(group='counterpunch_character_set_plugins'):
+        candidate = entry.load()()
+        cache[candidate.provider_id] = candidate
+        if candidate.provider_id == provider_id:
+            provider = candidate
+            break
+if provider is None:
     raise RuntimeError(f'Character Set provider not installed: {provider_id}')
-json.dumps(result)
+json.dumps(provider.characters(set_ids, levels))
 `);
-        return JSON.parse(result) as CharacterSetEntry[];
+        return JSON.parse(String(result)) as CharacterSetEntry[];
     }
 
     async getMembersBySet(
@@ -262,62 +270,55 @@ json.dumps(result)
         levels: readonly CharacterSetCoverageLevel[]
     ): Promise<Record<string, CharacterSetMembers>> {
         await this.ensureReady();
-        const pyodide = await this.waitForPyodide();
-        const result = await pyodide.runPythonAsync(`
-import json
+        await this.waitForPyodide();
+        const result = await runHostPythonAsync(`
+import builtins, json
 from importlib.metadata import entry_points
 
 provider_id = ${JSON.stringify(providerId)}
 set_ids = ${JSON.stringify(setIds)}
 levels = ${JSON.stringify(levels)}
-result = None
-for entry in entry_points(group='counterpunch_character_set_plugins'):
-    provider = entry.load()()
-    if provider.provider_id == provider_id:
-        result = provider.members_by_set(set_ids, levels)
-        break
-if result is None:
+cache = getattr(builtins, '_cp_charset_providers', None)
+provider = cache.get(provider_id) if isinstance(cache, dict) else None
+if provider is None:
+    if not isinstance(cache, dict):
+        cache = {}
+        builtins._cp_charset_providers = cache
+    for entry in entry_points(group='counterpunch_character_set_plugins'):
+        candidate = entry.load()()
+        cache[candidate.provider_id] = candidate
+        if candidate.provider_id == provider_id:
+            provider = candidate
+            break
+if provider is None:
     raise RuntimeError(f'Character Set provider not installed: {provider_id}')
-json.dumps(result)
+json.dumps(provider.members_by_set(set_ids, levels))
 `);
-        return parseMembersBySet(JSON.parse(result));
+        return parseMembersBySet(JSON.parse(String(result)));
     }
 
     private async load(): Promise<void> {
-        const pyodide = await this.waitForPyodide();
-        const manifestResponse = await fetch('/wheels/wheels.json');
-        if (!manifestResponse.ok) {
-            throw new Error('Unable to load bundled Character Set wheels.');
-        }
-        const manifest = (await manifestResponse.json()) as {
-            wheels?: unknown;
-        };
-        const wheels = Array.isArray(manifest.wheels)
-            ? manifest.wheels.filter(
-                  (wheel): wheel is string =>
-                      typeof wheel === 'string' &&
-                      wheel.startsWith('counterpunch_')
-              )
-            : [];
-        if (wheels.length) {
-            await pyodide.loadPackage('micropip');
-            await pyodide.runPythonAsync('import micropip');
-            for (const wheel of wheels) {
-                await pyodide.runPythonAsync(
-                    `await micropip.install(${JSON.stringify(`/wheels/${wheel}`)})`
-                );
-            }
-        }
-        const result = await pyodide.runPythonAsync(`
-import json
+        await this.waitForPyodide();
+        const result = await runHostPythonAsync(`
+import builtins, json
 from importlib.metadata import entry_points
 
-json.dumps([
-    entry.load()().metadata()
-    for entry in entry_points(group='counterpunch_character_set_plugins')
-])
+cache = getattr(builtins, '_cp_charset_providers', None)
+if not isinstance(cache, dict):
+    cache = {}
+    builtins._cp_charset_providers = cache
+
+metadata_list = []
+for entry in entry_points(group='counterpunch_character_set_plugins'):
+    provider = cache.get(entry.name)
+    if provider is None:
+        provider = entry.load()()
+        cache[provider.provider_id] = provider
+        cache[entry.name] = provider
+    metadata_list.append(provider.metadata())
+json.dumps(metadata_list)
 `);
-        for (const value of JSON.parse(result) as unknown[]) {
+        for (const value of JSON.parse(String(result)) as unknown[]) {
             const provider = parseProvider(value);
             if (provider) {
                 this.providers.set(provider.id, provider);
@@ -326,6 +327,12 @@ json.dumps([
     }
 
     private async waitForPyodide(): Promise<PyodideLike> {
+        if (
+            !window.pyodide &&
+            typeof window.ensurePyodideReady === 'function'
+        ) {
+            await window.ensurePyodideReady();
+        }
         const startedAt = performance.now();
         while (!window.pyodide) {
             if (performance.now() - startedAt > 30_000) {

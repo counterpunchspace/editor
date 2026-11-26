@@ -534,7 +534,7 @@ describe('PatchSyncEngine edit bursts', () => {
         await new Promise((resolve) => setTimeout(resolve, 250));
 
         // A peer that has everything up to the first edit.
-        const peer = new Y.Doc({ gc: false });
+        const peer = new Y.Doc({ gc: true });
         Y.applyUpdate(peer, Y.encodeStateAsUpdate(bridge._docForId(glyphDoc)));
 
         for (let value = 12; value <= 20; value += 1) {

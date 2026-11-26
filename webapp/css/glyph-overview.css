@@ -150,6 +150,15 @@
     background-color: transparent;
 }
 
+/* Single viewport-sized Canvas2D layer for all visible overview tiles */
+.glyph-overview-viewport-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+    z-index: 1;
+}
+
 /* Glyph tile label */
 .glyph-tile-label {
     font-size: max(8px, calc(var(--tile-height) * 0.08));
@@ -163,7 +172,7 @@
     /* background-color: color-mix(in srgb, var(--background-secondary) 80%, transparent); */
     border-radius: 0px;
     position: relative;
-    z-index: 1;
+    z-index: 2;
     margin: 2px;
     padding: 1px;
 }
@@ -181,7 +190,7 @@
     display: grid;
     place-items: center;
     pointer-events: none;
-    z-index: 1;
+    z-index: 2;
 }
 
 .glyph-tile-ccmp[hidden] {
@@ -237,7 +246,7 @@
         'opsz' 24;
     color: color-mix(in srgb, var(--text-primary) 18%, transparent);
     pointer-events: none;
-    z-index: 1;
+    z-index: 2;
 }
 
 .glyph-tile-unhydrated {

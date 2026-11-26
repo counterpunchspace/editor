@@ -790,8 +790,6 @@ describe('GlyphOverview syncGlyphs incremental updates', () => {
         await overview.updateGlyphs([{ id: 'a', name: 'a' }]);
         const previous = overview.tiles.get('a');
         previous.cachedData = { name: 'a', paths: [[0, 0]] };
-        previous.canvas.width = 40;
-        previous.canvas.height = 40;
 
         window.fontManager.currentFontId = 'font-sparse';
         window.fontManager.currentFont.fontModel.findGlyph = () => null;
@@ -801,7 +799,7 @@ describe('GlyphOverview syncGlyphs incremental updates', () => {
         const next = overview.tiles.get('a');
         expect(next).not.toBe(previous);
         expect(next.cachedData).toBeUndefined();
-        expect(next.canvas.width).toBe(0);
+        expect(next.canvas).toBeUndefined();
         expect(next.element.classList.contains('glyph-tile-unhydrated')).toBe(
             true
         );
@@ -1675,10 +1673,6 @@ describe('GlyphOverview tile cache LRU', () => {
     let parent;
 
     function paintTile(tile, lastViewedAt) {
-        tile.canvas.width = 80;
-        tile.canvas.height = 80;
-        tile.canvas.style.width = '40px';
-        tile.canvas.style.height = '40px';
         tile.cachedData = { name: tile.glyphName };
         tile.lastViewedAt = lastViewedAt;
     }
@@ -1720,8 +1714,8 @@ describe('GlyphOverview tile cache LRU', () => {
         jest.advanceTimersByTime(0);
 
         expect(tile.cachedData).toBeUndefined();
-        expect(tile.canvas.width).toBe(0);
-        expect(tile.canvas.height).toBe(0);
+        expect(overview.viewportCanvas.width).toBe(0);
+        expect(overview.viewportCanvas.height).toBe(0);
         expect(overview.tiles.has('glyph-a')).toBe(true);
     });
 
@@ -1732,16 +1726,12 @@ describe('GlyphOverview tile cache LRU', () => {
         overview.tiles.set('glyph-b', newer);
         paintTile(older, 1);
         paintTile(newer, 2);
-        jest.spyOn(overview, 'getTileCacheBudgetBytes').mockReturnValue(
-            80 * 80 * 4
-        );
+        jest.spyOn(overview, 'getTileCacheBudgetBytes').mockReturnValue(4096);
 
         overview.enforceTileCacheBudget();
 
         expect(older.cachedData).toBeUndefined();
-        expect(older.canvas.width).toBe(0);
         expect(newer.cachedData).toEqual({ name: 'B' });
-        expect(newer.canvas.width).toBe(80);
         expect(overview.tiles.size).toBe(2);
     });
 });

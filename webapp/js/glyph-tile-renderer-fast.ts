@@ -47,6 +47,199 @@ interface GlyphOutlineData {
     };
 }
 
+export interface CompiledTileContour {
+    path: Path2D | null;
+    nodes?: Babelfont.Node[];
+    subtract: boolean;
+    fillKind: 'path' | 'auto' | 'manual';
+}
+
+export interface CompiledTileGlyph {
+    __compiledTileGlyph: true;
+    name: string;
+    width: number;
+    xMin: number;
+    yMin: number;
+    xMax: number;
+    yMax: number;
+    hasComponents: boolean;
+    hasSubtraction: boolean;
+    hasEmptyComponent: boolean;
+    contours: CompiledTileContour[];
+    /** Preserves test/diagnostic metadata if attached to raw outline payloads. */
+    at?: unknown;
+    outline?: unknown;
+}
+
+export interface OverviewFrameMetrics {
+    dpr: number;
+    scale: number;
+    offsetY: number;
+    pathColor: string;
+    autoComponentColor: string;
+    manualComponentColor: string;
+    lastFillStyle: string;
+}
+
+const OVERVIEW_CMD_MOVE_TO = 0;
+const OVERVIEW_CMD_LINE_TO = 1;
+const OVERVIEW_CMD_QUAD_TO = 2;
+const OVERVIEW_CMD_CURVE_TO = 3;
+const OVERVIEW_CMD_CLOSE_PATH = 4;
+
+const OVERVIEW_GLYPH_FLAG_HAS_COMPONENTS = 1;
+const OVERVIEW_GLYPH_FLAG_HAS_SUBTRACTION = 2;
+const OVERVIEW_GLYPH_FLAG_HAS_EMPTY_COMPONENT = 4;
+const OVERVIEW_RUN_SUBTRACT_BIT = 4;
+
+const overviewNameDecoder =
+    typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8') : null;
+
+function decodeUtf8Slice(
+    bytes: Uint8Array,
+    start: number,
+    length: number
+): string {
+    if (overviewNameDecoder) {
+        return overviewNameDecoder.decode(
+            bytes.subarray(start, start + length)
+        );
+    }
+    let out = '';
+    for (let i = 0; i < length; i++) {
+        out += String.fromCharCode(bytes[start + i]);
+    }
+    return out;
+}
+
+/**
+ * Decode a compact binary overview outline packet produced by Rust
+ * `get_glyphs_overview_binary` directly into `CompiledTileGlyph` + `Path2D`,
+ * with zero JSON parsing and zero intermediate node objects.
+ */
+export function decodeOverviewBinaryOutlines(
+    buffer: ArrayBuffer,
+    byteOffset: number = 0,
+    byteLength: number = buffer.byteLength - byteOffset
+): CompiledTileGlyph[] {
+    const view = new DataView(buffer, byteOffset, byteLength);
+    const bytes = new Uint8Array(buffer, byteOffset, byteLength);
+    if (byteLength < 4) {
+        return [];
+    }
+    const hasPath2D = typeof Path2D !== 'undefined';
+    const glyphCount = view.getUint32(0, true);
+    let pos = 4;
+    const results: CompiledTileGlyph[] = new Array(glyphCount);
+
+    for (let g = 0; g < glyphCount; g++) {
+        const nameLen = view.getUint16(pos, true);
+        pos += 2;
+        const name = decodeUtf8Slice(bytes, pos, nameLen);
+        pos += nameLen;
+
+        const width = view.getFloat32(pos, true);
+        const xMin = view.getFloat32(pos + 4, true);
+        const yMin = view.getFloat32(pos + 8, true);
+        const xMax = view.getFloat32(pos + 12, true);
+        const yMax = view.getFloat32(pos + 16, true);
+        pos += 20;
+
+        const flags = bytes[pos++];
+        const runCount = view.getUint16(pos, true);
+        pos += 2;
+
+        const contours: CompiledTileContour[] = new Array(runCount);
+        for (let r = 0; r < runCount; r++) {
+            const runFlags = bytes[pos++];
+            const cmdLen = view.getUint32(pos, true);
+            pos += 4;
+            const cmdEnd = pos + cmdLen;
+            const fillBits = runFlags & 0b11;
+            const fillKind: 'path' | 'auto' | 'manual' =
+                fillBits === 1 ? 'auto' : fillBits === 2 ? 'manual' : 'path';
+            const subtract = (runFlags & OVERVIEW_RUN_SUBTRACT_BIT) !== 0;
+
+            let path: Path2D | null = null;
+            if (hasPath2D) {
+                path = new Path2D();
+                let p = pos;
+                while (p < cmdEnd) {
+                    const cmd = bytes[p++];
+                    if (cmd === OVERVIEW_CMD_MOVE_TO) {
+                        path.moveTo(
+                            view.getFloat32(p, true),
+                            view.getFloat32(p + 4, true)
+                        );
+                        p += 8;
+                    } else if (cmd === OVERVIEW_CMD_LINE_TO) {
+                        path.lineTo(
+                            view.getFloat32(p, true),
+                            view.getFloat32(p + 4, true)
+                        );
+                        p += 8;
+                    } else if (cmd === OVERVIEW_CMD_QUAD_TO) {
+                        path.quadraticCurveTo(
+                            view.getFloat32(p, true),
+                            view.getFloat32(p + 4, true),
+                            view.getFloat32(p + 8, true),
+                            view.getFloat32(p + 12, true)
+                        );
+                        p += 16;
+                    } else if (cmd === OVERVIEW_CMD_CURVE_TO) {
+                        path.bezierCurveTo(
+                            view.getFloat32(p, true),
+                            view.getFloat32(p + 4, true),
+                            view.getFloat32(p + 8, true),
+                            view.getFloat32(p + 12, true),
+                            view.getFloat32(p + 16, true),
+                            view.getFloat32(p + 20, true)
+                        );
+                        p += 24;
+                    } else if (cmd === OVERVIEW_CMD_CLOSE_PATH) {
+                        path.closePath();
+                    }
+                }
+            }
+            pos = cmdEnd;
+
+            contours[r] = {
+                path,
+                subtract,
+                fillKind
+            };
+        }
+
+        results[g] = {
+            __compiledTileGlyph: true,
+            name,
+            width,
+            xMin,
+            yMin,
+            xMax,
+            yMax,
+            hasComponents: (flags & OVERVIEW_GLYPH_FLAG_HAS_COMPONENTS) !== 0,
+            hasSubtraction: (flags & OVERVIEW_GLYPH_FLAG_HAS_SUBTRACTION) !== 0,
+            hasEmptyComponent:
+                (flags & OVERVIEW_GLYPH_FLAG_HAS_EMPTY_COMPONENT) !== 0,
+            contours
+        };
+    }
+
+    return results;
+}
+
+export function isCompiledTileGlyph(
+    value: unknown
+): value is CompiledTileGlyph {
+    return (
+        !!value &&
+        typeof value === 'object' &&
+        (value as { __compiledTileGlyph?: unknown }).__compiledTileGlyph ===
+            true
+    );
+}
+
 function isIdentityAffine(affine: number[]): boolean {
     return (
         affine[0] === 1 &&
@@ -175,6 +368,7 @@ class FastGlyphTileRenderer {
     private manualComponentColor: string = '';
     private pathColor: string = '';
     private colorsInitialized: boolean = false;
+    private tilePunchScratch: HTMLCanvasElement | null = null;
 
     constructor() {
         // Colors will be initialized lazily on first render
@@ -378,6 +572,363 @@ class FastGlyphTileRenderer {
         ctx.restore();
 
         return canvas;
+    }
+
+    public createFrameMetrics(
+        metrics: RenderMetrics | undefined,
+        height: number,
+        dpr: number
+    ): OverviewFrameMetrics | null {
+        this.ensureColorsInitialized();
+        if (height <= 0) {
+            return null;
+        }
+        const labelHeight = Math.max(8, height * 0.16);
+        const drawHeight = height - labelHeight;
+        const padding = 2;
+
+        const upm = metrics?.upm || 1000;
+        const ascender = metrics?.ascender ?? upm * 0.75;
+        const descender = metrics?.descender ?? -(upm * 0.25);
+        const metricsHeight = ascender - descender;
+        if (metricsHeight === 0) {
+            return null;
+        }
+
+        const scale = ((drawHeight - padding * 2) / metricsHeight) * 0.7;
+        if (!Number.isFinite(scale) || scale <= 0) {
+            return null;
+        }
+
+        const offsetY = padding + ascender * scale + height * 0.2;
+        return {
+            dpr,
+            scale,
+            offsetY,
+            pathColor: this.pathColor,
+            autoComponentColor: this.autoComponentColor,
+            manualComponentColor: this.manualComponentColor,
+            lastFillStyle: ''
+        };
+    }
+
+    /**
+     * Compile raw outline JSON once into a compact Path2D-backed structure so
+     * raw node arrays / nested component layerData can be garbage-collected.
+     */
+    public compileGlyphOutline(
+        glyphData: GlyphOutlineData | CompiledTileGlyph
+    ): CompiledTileGlyph {
+        if (isCompiledTileGlyph(glyphData)) {
+            return glyphData;
+        }
+        const shapes = Array.isArray(glyphData?.shapes) ? glyphData.shapes : [];
+        const visualBounds = this.getVisualBoundsFromShapes(shapes);
+        const bounds = visualBounds
+            ? {
+                  xMin: visualBounds.xMin,
+                  yMin: visualBounds.yMin,
+                  xMax: visualBounds.xMax,
+                  yMax: visualBounds.yMax
+              }
+            : (() => {
+                  const safe = this.getSafeBounds(glyphData);
+                  const rawB = glyphData?.bounds;
+                  return {
+                      xMin: safe.xMin,
+                      yMin: this.toFiniteNumber(rawB?.yMin, 0),
+                      xMax: safe.xMax,
+                      yMax: this.toFiniteNumber(rawB?.yMax, 0)
+                  };
+              })();
+        const hasComponents = shapesIncludeComponent(shapes);
+        const rawContours = collectOverviewPunchFillContours(
+            shapes,
+            [1, 0, 0, 1, 0, 0],
+            'path',
+            (component) =>
+                this.isAutomaticallyAlignedComponent(component)
+                    ? 'auto'
+                    : 'manual'
+        );
+        const hasPath2D = typeof Path2D !== 'undefined';
+        let hasSubtraction = false;
+        const contours: CompiledTileContour[] = [];
+        for (const contour of rawContours) {
+            if (contour.subtract) {
+                hasSubtraction = true;
+            }
+            const fillKind: 'path' | 'auto' | 'manual' =
+                contour.fillStyle === 'auto'
+                    ? 'auto'
+                    : contour.fillStyle === 'manual'
+                      ? 'manual'
+                      : 'path';
+            const last = contours[contours.length - 1];
+            // Merge consecutive non-subtracting contours of the same fillKind into one Path2D
+            if (
+                hasPath2D &&
+                !contour.subtract &&
+                last &&
+                !last.subtract &&
+                last.fillKind === fillKind &&
+                last.path
+            ) {
+                buildGlyphPathFromNodes(
+                    contour.nodes as Babelfont.Node[],
+                    last.path
+                );
+                last.path.closePath();
+                continue;
+            }
+            let path: Path2D | null = null;
+            if (hasPath2D) {
+                path = new Path2D();
+                buildGlyphPathFromNodes(
+                    contour.nodes as Babelfont.Node[],
+                    path
+                );
+                path.closePath();
+            }
+            contours.push({
+                path,
+                nodes: hasPath2D
+                    ? undefined
+                    : (contour.nodes as Babelfont.Node[]),
+                subtract: contour.subtract,
+                fillKind
+            });
+        }
+
+        const compiled: CompiledTileGlyph = {
+            __compiledTileGlyph: true,
+            name: glyphData?.name ?? '',
+            width: this.toFiniteNumber(glyphData?.width, 0),
+            xMin: bounds.xMin,
+            yMin: bounds.yMin,
+            xMax: bounds.xMax,
+            yMax: bounds.yMax,
+            hasComponents,
+            hasSubtraction,
+            hasEmptyComponent: hasComponents && contours.length === 0,
+            contours
+        };
+        const extra = glyphData as unknown as Record<string, unknown>;
+        if ('at' in extra) {
+            compiled.at = extra.at;
+        }
+        if ('outline' in extra) {
+            compiled.outline = extra.outline;
+        }
+        return compiled;
+    }
+
+    /**
+     * Draw a compiled glyph directly onto a shared viewport Canvas2D at CSS
+     * coordinates (x, y, width, height). ctx must already be scaled by dpr
+     * (or pass frameMetrics for the zero-save/zero-clip fast path).
+     */
+    public renderCompiledToContext(
+        ctx: CanvasRenderingContext2D,
+        compiled: CompiledTileGlyph,
+        metrics: RenderMetrics | undefined,
+        x: number,
+        y: number,
+        width: number,
+        height: number,
+        options?: {
+            alpha?: number;
+            dpr?: number;
+            frameMetrics?: OverviewFrameMetrics;
+        }
+    ): void {
+        if (width <= 0 || height <= 0) {
+            return;
+        }
+
+        const fm =
+            options?.frameMetrics ??
+            this.createFrameMetrics(
+                metrics,
+                height,
+                options?.dpr ?? window.devicePixelRatio ?? 1
+            );
+        if (!fm) {
+            return;
+        }
+
+        const { dpr, scale, offsetY } = fm;
+        const degenerate = compiled.xMax - compiled.xMin < 1;
+        const glyphVisualCenterX = degenerate
+            ? placeholderCenteringX(compiled.name, compiled.width || 0)
+            : (compiled.xMin + compiled.xMax) / 2;
+        const offsetX = width / 2 - glyphVisualCenterX * scale;
+
+        const alpha = options?.alpha ?? 1;
+        const hasContours = compiled.contours.length > 0;
+        const skipPlaceholders = hasContours && !compiled.hasEmptyComponent;
+
+        // Check whether the glyph ink stays inside the tile box so we can skip
+        // expensive save() + beginPath() + rect() + clip() + restore().
+        const leftPx = offsetX + compiled.xMin * scale;
+        const rightPx = offsetX + compiled.xMax * scale;
+        const topPx = offsetY - compiled.yMax * scale;
+        const bottomPx = offsetY - compiled.yMin * scale;
+        const fitsInTile =
+            !degenerate &&
+            leftPx >= 0 &&
+            rightPx <= width &&
+            topPx >= 0 &&
+            bottomPx <= height;
+
+        // Ultra-fast path: no subtraction, full opacity, fits in tile, has contours
+        if (
+            !compiled.hasSubtraction &&
+            alpha === 1 &&
+            fitsInTile &&
+            skipPlaceholders
+        ) {
+            const s = dpr * scale;
+            ctx.setTransform(
+                s,
+                0,
+                0,
+                -s,
+                dpr * (x + offsetX),
+                dpr * (y + offsetY)
+            );
+            const contours = compiled.contours;
+            for (let i = 0; i < contours.length; i++) {
+                const contour = contours[i];
+                const fill =
+                    contour.fillKind === 'auto'
+                        ? fm.autoComponentColor
+                        : contour.fillKind === 'manual'
+                          ? fm.manualComponentColor
+                          : fm.pathColor;
+                if (fm.lastFillStyle !== fill) {
+                    ctx.fillStyle = fill;
+                    fm.lastFillStyle = fill;
+                }
+                if (contour.path) {
+                    ctx.fill(contour.path);
+                } else if (contour.nodes) {
+                    ctx.beginPath();
+                    buildGlyphPathFromNodes(contour.nodes, ctx);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+            }
+            return;
+        }
+
+        const fillForKind = (kind: 'path' | 'auto' | 'manual'): string =>
+            kind === 'auto'
+                ? fm.autoComponentColor
+                : kind === 'manual'
+                  ? fm.manualComponentColor
+                  : fm.pathColor;
+
+        const drawInto = (targetCtx: CanvasRenderingContext2D): void => {
+            targetCtx.save();
+            targetCtx.translate(offsetX, offsetY);
+            targetCtx.scale(scale, -scale);
+
+            for (const contour of compiled.contours) {
+                if (contour.subtract) {
+                    targetCtx.save();
+                    targetCtx.globalCompositeOperation = 'destination-out';
+                    targetCtx.fillStyle = '#000';
+                    if (contour.path) {
+                        targetCtx.fill(contour.path);
+                    } else if (contour.nodes) {
+                        targetCtx.beginPath();
+                        buildGlyphPathFromNodes(contour.nodes, targetCtx);
+                        targetCtx.closePath();
+                        targetCtx.fill();
+                    }
+                    targetCtx.restore();
+                } else {
+                    targetCtx.fillStyle = fillForKind(contour.fillKind);
+                    if (contour.path) {
+                        targetCtx.fill(contour.path);
+                    } else if (contour.nodes) {
+                        targetCtx.beginPath();
+                        buildGlyphPathFromNodes(contour.nodes, targetCtx);
+                        targetCtx.closePath();
+                        targetCtx.fill();
+                    }
+                }
+            }
+
+            if (!skipPlaceholders) {
+                let paintedLeaf = false;
+                if (compiled.name && !compiled.hasComponents) {
+                    if (!this.paintModelComponents(targetCtx, compiled.name)) {
+                        paintPlaceholderGlyph(targetCtx, compiled.name);
+                        paintedLeaf = true;
+                    }
+                }
+                if (compiled.name && !paintedLeaf) {
+                    const stroked = this.strokePlaceholderContours(
+                        targetCtx,
+                        compiled.name
+                    );
+                    if (!stroked) {
+                        paintPlaceholderGlyph(targetCtx, compiled.name, {
+                            appearance: 'text'
+                        });
+                    }
+                }
+            }
+
+            targetCtx.restore();
+        };
+
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.save();
+        if (alpha !== 1) {
+            ctx.globalAlpha *= alpha;
+        }
+        ctx.beginPath();
+        ctx.rect(x, y, width, height);
+        ctx.clip();
+
+        if (compiled.hasSubtraction) {
+            // Isolate destination-out to a tiny single-tile scratch canvas
+            // so subtraction cutters never erase neighboring tiles.
+            const sw = Math.max(1, Math.round(width * dpr));
+            const sh = Math.max(1, Math.round(height * dpr));
+            if (!this.tilePunchScratch) {
+                this.tilePunchScratch = document.createElement('canvas');
+            }
+            const scratch = this.tilePunchScratch;
+            if (scratch.width !== sw || scratch.height !== sh) {
+                scratch.width = sw;
+                scratch.height = sh;
+            }
+            const sctx = scratch.getContext('2d', { alpha: true });
+            if (sctx) {
+                sctx.setTransform(1, 0, 0, 1, 0, 0);
+                sctx.clearRect(0, 0, sw, sh);
+                sctx.scale(dpr, dpr);
+                drawInto(sctx);
+                ctx.drawImage(scratch, 0, 0, sw, sh, x, y, width, height);
+            }
+        } else {
+            ctx.translate(x, y);
+            drawInto(ctx);
+        }
+
+        ctx.restore();
+        fm.lastFillStyle = '';
+    }
+
+    public releaseTilePunchScratch(): void {
+        if (this.tilePunchScratch) {
+            this.tilePunchScratch.width = 0;
+            this.tilePunchScratch.height = 0;
+        }
     }
 
     /**

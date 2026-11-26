@@ -303,6 +303,12 @@ json.dumps(found)
     }
 
     private async load(): Promise<void> {
+        if (
+            !window.pyodide &&
+            typeof window.ensurePyodideReady === 'function'
+        ) {
+            await window.ensurePyodideReady();
+        }
         const started = performance.now();
         while (!window.pyodide) {
             if (performance.now() - started > 30_000) {

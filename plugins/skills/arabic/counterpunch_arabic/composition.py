@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from counterpunch_arabic.font_source import ArabicFontSource, _split
+from counterpunch_arabic.font_source import get_arabic_font_source, _split
 from counterpunch_arabic.renames import ArabicRenames
 
 
@@ -15,7 +15,11 @@ class ArabicCompositionProvider:
     version = "1.0.0"
 
     def __init__(self) -> None:
-        self._font = ArabicFontSource()
+        pass
+
+    @property
+    def _font(self) -> Any:
+        return get_arabic_font_source()
 
     def recipe(self, codepoint: int, lookup: Any = None) -> dict[str, Any] | None:
         record = lookup(int(codepoint)) if lookup is not None else None

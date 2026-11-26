@@ -248,7 +248,8 @@ const COMPILATION_TARGETS: Record<string, CompilationOptions> = {
     }
 };
 
-const DEFAULT_DEBUG_FONT_CACHE_BYTES = 64 * 1024 * 1024;
+const DEFAULT_DEBUG_FONT_CACHE_BYTES = 32 * 1024 * 1024;
+const MAX_DEBUG_FONT_CACHE_BYTES = 32 * 1024 * 1024;
 
 function normalizeHarfBuzzFeatures(
     features?: string[] | string | Record<string, boolean | number | string>
@@ -325,12 +326,14 @@ function hasHarfBuzzShapingApi(
 }
 
 let lastHarfBuzzRawModule: unknown = null;
+let cachedHarfBuzzProvider: unknown = null;
+let cachedHarfBuzzApiPromise: Promise<HarfBuzzShapingApi> | null = null;
 
 export function getHarfBuzzRawModule(): unknown {
     return lastHarfBuzzRawModule;
 }
 
-async function getHarfBuzzShapingApi(): Promise<HarfBuzzShapingApi> {
+async function createHarfBuzzShapingApi(): Promise<HarfBuzzShapingApi> {
     let rawModule: unknown;
     if (typeof window.createHarfBuzz === 'function') {
         rawModule = await window.createHarfBuzz();
@@ -371,6 +374,24 @@ async function getHarfBuzzShapingApi(): Promise<HarfBuzzShapingApi> {
     );
 }
 
+async function getHarfBuzzShapingApi(): Promise<HarfBuzzShapingApi> {
+    const provider =
+        typeof window.createHarfBuzz === 'function'
+            ? window.createHarfBuzz
+            : window.hbInit;
+    if (cachedHarfBuzzApiPromise && cachedHarfBuzzProvider === provider) {
+        return cachedHarfBuzzApiPromise;
+    }
+    cachedHarfBuzzProvider = provider;
+    cachedHarfBuzzApiPromise = createHarfBuzzShapingApi().catch((error) => {
+        if (cachedHarfBuzzProvider === provider) {
+            cachedHarfBuzzApiPromise = null;
+        }
+        throw error;
+    });
+    return cachedHarfBuzzApiPromise;
+}
+
 function getDebugFontCacheBudgetBytes(): number {
     const perfWithMemory = performance as Performance & {
         memory?: {
@@ -380,7 +401,10 @@ function getDebugFontCacheBudgetBytes(): number {
 
     const heapLimit = perfWithMemory.memory?.jsHeapSizeLimit;
     if (typeof heapLimit === 'number' && Number.isFinite(heapLimit)) {
-        return Math.max(1, Math.floor(heapLimit / 8));
+        return Math.min(
+            MAX_DEBUG_FONT_CACHE_BYTES,
+            Math.max(1, Math.floor(heapLimit / 8))
+        );
     }
 
     const navWithMemory = navigator as Navigator & {
@@ -391,26 +415,26 @@ function getDebugFontCacheBudgetBytes(): number {
         Number.isFinite(navWithMemory.deviceMemory) &&
         navWithMemory.deviceMemory > 0
     ) {
-        return Math.max(
-            1,
-            Math.floor((navWithMemory.deviceMemory * 1024 * 1024 * 1024) / 8)
+        return Math.min(
+            MAX_DEBUG_FONT_CACHE_BYTES,
+            Math.max(
+                1,
+                Math.floor(
+                    (navWithMemory.deviceMemory * 1024 * 1024 * 1024) / 8
+                )
+            )
         );
     }
 
     return DEFAULT_DEBUG_FONT_CACHE_BYTES;
 }
 
-let glyphNameModulePromise: Promise<{
-    get_glyph_name: (fontBytes: Uint8Array, glyphId: number) => string;
-}> | null = null;
+import { get_glyph_name } from './opentype-table-reader';
 
 function loadGlyphNameModule(): Promise<{
     get_glyph_name: (fontBytes: Uint8Array, glyphId: number) => string;
 }> {
-    if (!glyphNameModulePromise) {
-        glyphNameModulePromise = import('../wasm-dist/babelfont_fontc_web');
-    }
-    return glyphNameModulePromise;
+    return Promise.resolve({ get_glyph_name });
 }
 
 async function shapeTextWithFontDetailed(
@@ -421,73 +445,78 @@ async function shapeTextWithFontDetailed(
     const hb = await getHarfBuzzShapingApi();
 
     const blob = hb.createBlob(fontBytes);
-    const face = hb.createFace(blob, 0);
-    const hbFont = hb.createFont(face);
-    if (
-        options.variationLocation &&
-        Object.keys(options.variationLocation).length > 0 &&
-        typeof hbFont.setVariations === 'function'
-    ) {
-        hbFont.setVariations(options.variationLocation);
-    }
-
-    const buffer = hb.createBuffer();
-    buffer.addText(inputString);
-    buffer.guessSegmentProperties();
-
-    const features = normalizeHarfBuzzFeatures(options.features);
-    if (features) {
-        hb.shape(hbFont, buffer, features);
-    } else {
-        hb.shape(hbFont, buffer);
-    }
-
-    const shapedGlyphs = buffer.json();
-    const glyphs: string[] = [];
-    const gids: number[] = [];
-    const advances: number[] = [];
-    const advancesY: number[] = [];
-    const offsetsX: number[] = [];
-    const offsetsY: number[] = [];
-    const clusters: number[] = [];
-    const { get_glyph_name } = await loadGlyphNameModule();
-
-    for (const shapedGlyph of shapedGlyphs) {
-        const glyphId = Number(shapedGlyph.g || 0);
-        let glyphName = '.notdef';
-        try {
-            glyphName = get_glyph_name(fontBytes, glyphId) || '.notdef';
-        } catch (error) {
-            console.warn(
-                '[FontCompilation] Failed to get name for glyph',
-                glyphId,
-                error
-            );
+    let face: DestroyableHarfBuzzObject | null = null;
+    let hbFont: HarfBuzzFont | null = null;
+    let buffer: HarfBuzzBuffer | null = null;
+    try {
+        face = hb.createFace(blob, 0);
+        hbFont = hb.createFont(face);
+        if (
+            options.variationLocation &&
+            Object.keys(options.variationLocation).length > 0 &&
+            typeof hbFont.setVariations === 'function'
+        ) {
+            hbFont.setVariations(options.variationLocation);
         }
 
-        glyphs.push(glyphName);
-        gids.push(glyphId);
-        advances.push(Number(shapedGlyph.ax || 0));
-        advancesY.push(Number(shapedGlyph.ay || 0));
-        offsetsX.push(Number(shapedGlyph.dx || 0));
-        offsetsY.push(Number(shapedGlyph.dy || 0));
-        clusters.push(Number(shapedGlyph.cl || 0));
+        buffer = hb.createBuffer();
+        buffer.addText(inputString);
+        buffer.guessSegmentProperties();
+
+        const features = normalizeHarfBuzzFeatures(options.features);
+        if (features) {
+            hb.shape(hbFont, buffer, features);
+        } else {
+            hb.shape(hbFont, buffer);
+        }
+
+        const shapedGlyphs = buffer.json();
+        const glyphs: string[] = [];
+        const gids: number[] = [];
+        const advances: number[] = [];
+        const advancesY: number[] = [];
+        const offsetsX: number[] = [];
+        const offsetsY: number[] = [];
+        const clusters: number[] = [];
+        const { get_glyph_name } = await loadGlyphNameModule();
+
+        for (const shapedGlyph of shapedGlyphs) {
+            const glyphId = Number(shapedGlyph.g || 0);
+            let glyphName = '.notdef';
+            try {
+                glyphName = get_glyph_name(fontBytes, glyphId) || '.notdef';
+            } catch (error) {
+                console.warn(
+                    '[FontCompilation] Failed to get name for glyph',
+                    glyphId,
+                    error
+                );
+            }
+
+            glyphs.push(glyphName);
+            gids.push(glyphId);
+            advances.push(Number(shapedGlyph.ax || 0));
+            advancesY.push(Number(shapedGlyph.ay || 0));
+            offsetsX.push(Number(shapedGlyph.dx || 0));
+            offsetsY.push(Number(shapedGlyph.dy || 0));
+            clusters.push(Number(shapedGlyph.cl || 0));
+        }
+
+        return {
+            glyphs,
+            gids,
+            advances,
+            advancesY,
+            offsetsX,
+            offsetsY,
+            clusters
+        };
+    } finally {
+        buffer?.destroy();
+        hbFont?.destroy();
+        face?.destroy();
+        blob.destroy();
     }
-
-    buffer.destroy();
-    hbFont.destroy();
-    face.destroy();
-    blob.destroy();
-
-    return {
-        glyphs,
-        gids,
-        advances,
-        advancesY,
-        offsetsX,
-        offsetsY,
-        clusters
-    };
 }
 
 /**
@@ -830,7 +859,8 @@ export class FontCompilation {
     }
 
     async seedWorkerDocumentSet(
-        documents: Array<{ documentId: string; bytes: Uint8Array }>
+        documents: Array<{ documentId: string; bytes: Uint8Array }>,
+        options?: { preserveLocalFont?: boolean }
     ): Promise<void> {
         if (!documents.length) {
             this.workerCacheDocumentReady = false;
@@ -860,8 +890,14 @@ export class FontCompilation {
             });
             // Updates the bridge sends from now on queue behind this seed.
             this.workerDocumentsSeeded = true;
+            const preserveLocalFont =
+                options?.preserveLocalFont ??
+                window.fontManager?.isLocalSparseFont?.() === true;
             const seedResult = await this.sendMessage({
                 type: 'seedYdoc',
+                ...(preserveLocalFont
+                    ? { preserveLocalFont: true }
+                    : undefined),
                 documents: seededDocuments.map((document) => ({
                     documentId: document.documentId,
                     state: document.bytes
@@ -874,6 +910,7 @@ export class FontCompilation {
                     `Failed to seed worker Yjs document: ${seedResult.error}`
                 );
             }
+            this.workerCacheDocumentReady = true;
         })();
         this.trackWorkerDocumentSync(seedWork);
         await seedWork;
@@ -881,10 +918,11 @@ export class FontCompilation {
 
     /**
      * Replace one or more worker shards from encoded Yjs snapshots.
-     * Used for cloud catch-up, which is a checkpoint rather than a delta.
+     * Used for cloud catch-up and on-demand local sparse glyph hydration.
      */
     async replaceWorkerDocuments(
-        documents: Array<{ documentId: string; bytes: Uint8Array }>
+        documents: Array<{ documentId: string; bytes: Uint8Array }>,
+        options?: { preserveLocalFont?: boolean }
     ): Promise<void> {
         if (!documents.length) {
             return;
@@ -908,8 +946,12 @@ export class FontCompilation {
         }
 
         this.workerCacheDocumentReady = false;
+        const preserveLocalFont =
+            options?.preserveLocalFont ??
+            window.fontManager?.isLocalSparseFont?.() === true;
         const result = await this.sendMessage({
             type: 'replaceYdocDocuments',
+            ...(preserveLocalFont ? { preserveLocalFont: true } : undefined),
             documents: shards.map((document) => ({
                 documentId: document.documentId,
                 state: document.bytes
@@ -921,6 +963,39 @@ export class FontCompilation {
                 `Failed to replace worker Yjs documents: ${result.error}`
             );
         }
+        this.workerCacheDocumentReady = true;
+    }
+
+    /**
+     * Fetch serialized Babelfont glyph JSON objects directly from the worker's
+     * complete resident `FONT_CACHE` for on-demand local sparse hydration.
+     */
+    async requestGlyphsJsonBatch(
+        glyphNames: string[]
+    ): Promise<Array<Record<string, unknown>>> {
+        if (!glyphNames.length) {
+            return [];
+        }
+        if (!this.isInitialized) {
+            const initialized = await this.initialize();
+            if (!initialized) {
+                throw new Error('Font compilation worker is not initialized');
+            }
+        }
+        const result = await this.sendMessage({
+            type: 'getGlyphsJsonBatch',
+            glyphNames
+        });
+        if (result?.error) {
+            throw new Error(String(result.error));
+        }
+        if (typeof result?.glyphsJson !== 'string') {
+            return [];
+        }
+        const parsed = JSON.parse(result.glyphsJson) as unknown;
+        return Array.isArray(parsed)
+            ? (parsed as Array<Record<string, unknown>>)
+            : [];
     }
 
     /** Record which documents the worker holds after a seed or replace. */
@@ -1628,6 +1703,7 @@ export class FontCompilation {
                     messageType === 'replaceYdocDocuments'
                 ) {
                     this.noteWorkerDocumentsLoaded(messageType, data);
+                    this.lastStoredFontJson = null;
                 }
                 if (
                     messageType === 'storeFontJson' ||
@@ -1638,6 +1714,7 @@ export class FontCompilation {
                     this.workerCacheDocumentReady = true;
                 } else if (messageType === 'clearCache') {
                     this.workerCacheDocumentReady = false;
+                    this.lastStoredFontJson = null;
                 }
                 resolve(value);
             };
@@ -1691,6 +1768,32 @@ export class FontCompilation {
                     messageType === 'seedYdoc',
                     transferList
                 );
+                if (
+                    messageType === 'seedYdoc' &&
+                    Array.isArray(message.documents)
+                ) {
+                    const seenBuffers = new Set<Transferable>(transferList);
+                    message.documents = message.documents.map(
+                        (doc: { documentId: string; state: unknown }) => {
+                            if (
+                                !(doc.state instanceof Uint8Array) ||
+                                doc.state.byteLength <= 2
+                            ) {
+                                return doc;
+                            }
+                            let buffer = takeTransferableArrayBuffer(doc.state);
+                            if (seenBuffers.has(buffer)) {
+                                buffer = doc.state.slice().buffer;
+                            }
+                            seenBuffers.add(buffer);
+                            transferList.push(buffer);
+                            return {
+                                ...doc,
+                                state: new Uint8Array(buffer)
+                            };
+                        }
+                    );
+                }
                 // Do not transfer applyYjsUpdate bytes. Yrs/Yjs encode
                 // buffers are often reused; detaching them drops later
                 // incremental packets (worker Y.Doc then lags the bridge).
@@ -2608,6 +2711,134 @@ async function requestOpenFontConversion({
     });
 }
 
+export type SparseGlyphCatalogEntry = {
+    name: string;
+    codepoints: number[];
+    category: string;
+    production_name?: string | null;
+    exported: boolean;
+    component_deps?: string[];
+    metrics_deps?: string[];
+};
+
+export type OpenFontSparseResult = {
+    filename: string;
+    coreFontJson: string;
+    glyphOrder: string[];
+    glyphCatalog: SparseGlyphCatalogEntry[];
+};
+
+async function requestOpenFontSparse({
+    filename,
+    contents,
+    packageEntries,
+    projectEntries,
+    timeoutMs = 60000
+}: OpenFontWorkerRequest): Promise<OpenFontSparseResult> {
+    const worker = await getReadyFontCompilationWorker();
+
+    return await new Promise<OpenFontSparseResult>((resolve, reject) => {
+        const id = Math.random().toString(36);
+        let settled = false;
+
+        const cleanup = () => {
+            clearTimeout(timeout);
+            worker.removeEventListener('message', handleMessage);
+        };
+
+        const resolveOnce = (result: OpenFontSparseResult) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            cleanup();
+            resolve(result);
+        };
+
+        const rejectOnce = (error: unknown) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            cleanup();
+            reject(error instanceof Error ? error : new Error(String(error)));
+        };
+
+        const handleMessage = (e: MessageEvent) => {
+            if (e.data.id !== id || e.data.type !== 'openFontSparse') {
+                return;
+            }
+
+            if (e.data.error) {
+                rejectOnce(new Error(e.data.error));
+                return;
+            }
+
+            resolveOnce({
+                filename: String(e.data.filename || filename),
+                coreFontJson: String(e.data.coreFontJson || '{}'),
+                glyphOrder: Array.isArray(e.data.glyphOrder)
+                    ? (e.data.glyphOrder as string[])
+                    : [],
+                glyphCatalog: Array.isArray(e.data.glyphCatalog)
+                    ? (e.data.glyphCatalog as SparseGlyphCatalogEntry[])
+                    : []
+            });
+        };
+
+        const timeout = setTimeout(() => {
+            rejectOnce(
+                new Error(
+                    `Sparse font open timeout after ${Math.round(timeoutMs / 1000)} seconds`
+                )
+            );
+        }, timeoutMs);
+
+        worker.addEventListener('message', handleMessage);
+
+        try {
+            const transferList: Transferable[] = [];
+            const adoptBytes = (
+                value: Uint8Array | string | undefined
+            ): Uint8Array | string | undefined => {
+                if (!(value instanceof Uint8Array)) {
+                    return value;
+                }
+                const buffer = takeTransferableArrayBuffer(value);
+                transferList.push(buffer);
+                return new Uint8Array(buffer);
+            };
+            const adoptEntryMap = (
+                entries?: Record<string, Uint8Array>
+            ): Record<string, Uint8Array> | undefined => {
+                if (!entries) {
+                    return entries;
+                }
+                const next: Record<string, Uint8Array> = {};
+                for (const [key, value] of Object.entries(entries)) {
+                    next[key] = adoptBytes(value) as Uint8Array;
+                }
+                return next;
+            };
+            const message = {
+                type: 'openFontSparse',
+                id,
+                filename,
+                contents: adoptBytes(contents),
+                packageEntries: adoptEntryMap(packageEntries),
+                projectEntries: adoptEntryMap(projectEntries)
+            };
+            if (transferList.length > 0) {
+                worker.postMessage(message, transferList);
+            } else {
+                worker.postMessage(message);
+            }
+        } catch (error) {
+            rejectOnce(error);
+        }
+    });
+}
+
 // Start worker WASM as soon as this module evaluates so conversion does not
 // wait for the rest of bootstrap and DOMContentLoaded. Skip in Jest/jsdom
 // (no Worker) so import-time init does not spam "Worker is not defined".
@@ -2646,5 +2877,6 @@ export {
     COMPILATION_TARGETS,
     shapeTextWithFont,
     shapeTextWithFontDetailed,
-    requestOpenFontConversion
+    requestOpenFontConversion,
+    requestOpenFontSparse
 };

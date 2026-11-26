@@ -257,6 +257,12 @@ class FeatureGeneratorEngine {
         if (!window.pyodide || !this.generators.length) {
             if (batch.lifecycle.length || Object.keys(batch.intents).length) {
                 this.pending.push(batch);
+                void this.ensureReady().catch((error) => {
+                    console.warn(
+                        'Deferred feature generator init failed:',
+                        error
+                    );
+                });
             }
             return [];
         }
@@ -633,6 +639,12 @@ json.dumps({'needsRebuild': needs, 'blocks': produced.get('blocks') or [], 'clas
     }
 
     private async load(): Promise<void> {
+        if (
+            !window.pyodide &&
+            typeof window.ensurePyodideReady === 'function'
+        ) {
+            await window.ensurePyodideReady();
+        }
         const started = performance.now();
         while (!window.pyodide) {
             if (performance.now() - started > 30_000) {

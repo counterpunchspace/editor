@@ -4,11 +4,12 @@
 (function () {
     'use strict';
 
-    // Wait for Pyodide to be loaded
+    // Wait for Pyodide to be loaded (event-driven so lazy Pyodide does not poll)
     function initPythonWrapper() {
         if (!window.pyodide) {
-            console.log('[PythonExec]', 'Waiting for Pyodide...');
-            setTimeout(initPythonWrapper, 500);
+            window.addEventListener('pyodideLoaded', initPythonWrapper, {
+                once: true
+            });
             return;
         }
 

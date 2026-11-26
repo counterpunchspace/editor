@@ -5,14 +5,6 @@
 import { fetchExampleFiles, loadExampleManifest } from './example-fonts';
 
 async function loadExampleFonts() {
-    if (!window.pyodide) {
-        console.error(
-            '[ExampleLoader]',
-            'Pyodide not available for loading examples'
-        );
-        return;
-    }
-
     try {
         console.log('[ExampleLoader]', '📦 Loading example fonts...');
 

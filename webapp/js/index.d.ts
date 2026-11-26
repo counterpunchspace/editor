@@ -108,7 +108,9 @@ declare global {
         pyodide: any; // Pyodide
         __pyodideLoadPromise?: Promise<any>;
         __pyodideLoadStarted?: boolean;
-        __startPyodideLoad?: () => void;
+        __startPyodideLoad?: () => Promise<Window['pyodide']> | void;
+        ensurePyodideReady?: () => Promise<Window['pyodide']>;
+        initPyodideConsole?: () => Promise<void>;
         __fontcWorker?: Worker;
         __fontcWorkerReadyPromise?: Promise<boolean>;
         __startFontcWorker?: () => void;
@@ -323,6 +325,7 @@ declare global {
             getPlugins: () => any[];
             isLoaded: () => boolean;
             isPluginEnabled: (entryPoint: string) => boolean;
+            hasEnabledPlugins?: () => boolean;
             enablePlugin: (entryPoint: string) => void;
             disablePlugin: (entryPoint: string) => void;
             togglePlugin: (entryPoint: string) => boolean;
@@ -358,6 +361,7 @@ declare global {
                 groupLegendContainer?: HTMLElement
             ) => void;
             discoverPlugins: () => Promise<void>;
+            discoverPythonPlugins?: () => Promise<void>;
             discoverUserFilters: (
                 skipObserverSetup?: boolean,
                 renamedToDisplayName?: string | null
@@ -541,6 +545,8 @@ declare global {
         setFontLoadingState: (loading: boolean) => void;
         pythonExecutionHistoryContext: {
             beforeFontDataJson: string | null;
+            beforeCoreJson?: string | null;
+            beforeGlyphJsonByName?: Map<string, string> | null;
             code: string | null;
             label: string;
             startedAt: number;

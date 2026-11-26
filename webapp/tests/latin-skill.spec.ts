@@ -194,7 +194,12 @@ test('arabic add glyphs can stay empty or copy composition outlines', async ({
         .getByRole('button', { name: 'Cancel' })
         .click();
 
-    await page.evaluate(() => {
+    await page.evaluate(async () => {
+        const fm = (window as any).fontManager;
+        const existingCatalog = fm?.findCatalogGlyphByCodepoint?.(0x08a8);
+        if (existingCatalog?.name) {
+            await fm?.ensureLocalGlyphsHydrated?.([existingCatalog.name]);
+        }
         const font = window.currentFontModel;
         const existing = font?.findGlyphByCodepoint(0x08a8);
         if (existing?.name) {
@@ -242,7 +247,12 @@ test('arabic add glyphs can stay empty or copy composition outlines', async ({
         )
         .toEqual({ present: true, components: 0, forms: false, dot: false });
 
-    await page.evaluate(() => {
+    await page.evaluate(async () => {
+        await (window as any).fontManager?.ensureLocalGlyphsHydrated?.([
+            'a',
+            'dieresiscomb',
+            'adieresis'
+        ]);
         const font = window.currentFontModel;
         const glyph = font?.findGlyphByCodepoint(0x08a8);
         if (glyph?.name) {
@@ -372,20 +382,79 @@ test('arabic add glyphs can stay empty or copy composition outlines', async ({
     await expect
         .poll(
             () =>
-                page.evaluate(() => {
-                    const canvas = document.querySelector(
-                        '#glyph-overview-container [data-glyph-name="twoDotsHorizontalBelow-ar"] canvas'
+                page.evaluate(async () => {
+                    const tile = document.querySelector(
+                        '#glyph-overview-container [data-glyph-name="twoDotsHorizontalBelow-ar"]'
+                    ) as HTMLElement | null;
+                    tile?.scrollIntoView({
+                        block: 'center',
+                        inline: 'nearest'
+                    });
+                    await new Promise<void>((resolve) =>
+                        requestAnimationFrame(() =>
+                            requestAnimationFrame(() => resolve())
+                        )
+                    );
+                    const tileCanvas = tile?.querySelector(
+                        'canvas'
                     ) as HTMLCanvasElement | null;
-                    const context = canvas?.getContext('2d');
-                    if (!canvas || !context || canvas.width === 0) {
+                    const viewportCanvas = document.querySelector(
+                        '.glyph-overview-viewport-canvas'
+                    ) as HTMLCanvasElement | null;
+                    let pixels: Uint8ClampedArray | null = null;
+                    if (tileCanvas && tileCanvas.width > 0) {
+                        const context = tileCanvas.getContext('2d');
+                        if (context) {
+                            pixels = context.getImageData(
+                                0,
+                                0,
+                                tileCanvas.width,
+                                tileCanvas.height
+                            ).data;
+                        }
+                    } else if (
+                        tile &&
+                        viewportCanvas &&
+                        viewportCanvas.width > 0
+                    ) {
+                        const context = viewportCanvas.getContext('2d');
+                        const tileRect = tile.getBoundingClientRect();
+                        const vpRect = viewportCanvas.getBoundingClientRect();
+                        if (context && vpRect.width > 0 && vpRect.height > 0) {
+                            const scaleX = viewportCanvas.width / vpRect.width;
+                            const scaleY =
+                                viewportCanvas.height / vpRect.height;
+                            const sx = Math.max(
+                                0,
+                                Math.floor(
+                                    (tileRect.left - vpRect.left) * scaleX
+                                )
+                            );
+                            const sy = Math.max(
+                                0,
+                                Math.floor((tileRect.top - vpRect.top) * scaleY)
+                            );
+                            const sw = Math.min(
+                                viewportCanvas.width - sx,
+                                Math.ceil(tileRect.width * scaleX)
+                            );
+                            const sh = Math.min(
+                                viewportCanvas.height - sy,
+                                Math.ceil(tileRect.height * scaleY)
+                            );
+                            if (sw > 0 && sh > 0) {
+                                pixels = context.getImageData(
+                                    sx,
+                                    sy,
+                                    sw,
+                                    sh
+                                ).data;
+                            }
+                        }
+                    }
+                    if (!pixels) {
                         return 0;
                     }
-                    const pixels = context.getImageData(
-                        0,
-                        0,
-                        canvas.width,
-                        canvas.height
-                    ).data;
                     let count = 0;
                     for (let index = 0; index < pixels.length; index += 4) {
                         const r = pixels[index];
@@ -559,7 +628,12 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
     await openMemoryFont(page, 'YanoneKaffeesatz.designspace');
     await waitForOpenSessionReady(page, 'YanoneKaffeesatz.designspace');
     await waitForLivePython(page);
-    await page.evaluate(() => {
+    await page.evaluate(async () => {
+        await (window as any).fontManager?.ensureLocalGlyphsHydrated?.([
+            'a',
+            'dieresiscomb',
+            'adieresis'
+        ]);
         const font = window.currentFontModel;
         for (const name of ['a', 'dieresiscomb']) {
             const glyph = font?.findGlyph(name);
@@ -700,8 +774,26 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
     await expect
         .poll(
             () =>
-                page.evaluate(() => {
-                    const pink = (name: string): number => {
+                page.evaluate(async () => {
+                    const nextFrames = () =>
+                        new Promise<void>((resolve) =>
+                            requestAnimationFrame(() =>
+                                requestAnimationFrame(() => resolve())
+                            )
+                        );
+                    const pink = async (name: string): Promise<number> => {
+                        (
+                            window as unknown as {
+                                glyphOverviewInstance?: {
+                                    selectAndRevealGlyphNames?: (
+                                        names: string[]
+                                    ) => void;
+                                };
+                            }
+                        ).glyphOverviewInstance?.selectAndRevealGlyphNames?.([
+                            name
+                        ]);
+                        await nextFrames();
                         const node = document.querySelector(
                             `#glyph-overview-container [data-glyph-name="${name}"]`
                         );
@@ -709,12 +801,13 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
                             block: 'center',
                             inline: 'nearest'
                         });
+                        await nextFrames();
                         const canvases = document.querySelectorAll(
                             `#glyph-overview-container [data-glyph-name="${name}"] canvas`
                         );
                         let best = 0;
-                        canvases.forEach((node) => {
-                            const canvas = node as HTMLCanvasElement;
+                        canvases.forEach((canvasNode) => {
+                            const canvas = canvasNode as HTMLCanvasElement;
                             const context = canvas.getContext('2d');
                             if (!context || canvas.width === 0) {
                                 return;
@@ -731,9 +824,6 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
                                 index < pixels.length;
                                 index += 4
                             ) {
-                                const r = pixels[index];
-                                const g = pixels[index + 1];
-                                const b = pixels[index + 2];
                                 const a = pixels[index + 3];
                                 if (a > 40) {
                                     count += 1;
@@ -741,9 +831,72 @@ test('placeholder outlines follow harfbuzz pieces and stay out of the font', asy
                             }
                             best = Math.max(best, count);
                         });
+                        if (best === 0 && node) {
+                            const viewportCanvas = document.querySelector(
+                                '.glyph-overview-viewport-canvas'
+                            ) as HTMLCanvasElement | null;
+                            const context = viewportCanvas?.getContext('2d');
+                            if (
+                                viewportCanvas &&
+                                context &&
+                                viewportCanvas.width > 0
+                            ) {
+                                const tileRect = (
+                                    node as HTMLElement
+                                ).getBoundingClientRect();
+                                const vpRect =
+                                    viewportCanvas.getBoundingClientRect();
+                                if (vpRect.width > 0 && vpRect.height > 0) {
+                                    const scaleX =
+                                        viewportCanvas.width / vpRect.width;
+                                    const scaleY =
+                                        viewportCanvas.height / vpRect.height;
+                                    const sx = Math.max(
+                                        0,
+                                        Math.floor(
+                                            (tileRect.left - vpRect.left) *
+                                                scaleX
+                                        )
+                                    );
+                                    const sy = Math.max(
+                                        0,
+                                        Math.floor(
+                                            (tileRect.top - vpRect.top) * scaleY
+                                        )
+                                    );
+                                    const sw = Math.min(
+                                        viewportCanvas.width - sx,
+                                        Math.ceil(tileRect.width * scaleX)
+                                    );
+                                    const sh = Math.min(
+                                        viewportCanvas.height - sy,
+                                        Math.ceil(tileRect.height * scaleY)
+                                    );
+                                    if (sw > 0 && sh > 0) {
+                                        const pixels = context.getImageData(
+                                            sx,
+                                            sy,
+                                            sw,
+                                            sh
+                                        ).data;
+                                        let count = 0;
+                                        for (
+                                            let index = 0;
+                                            index < pixels.length;
+                                            index += 4
+                                        ) {
+                                            if (pixels[index + 3] > 40) {
+                                                count += 1;
+                                            }
+                                        }
+                                        best = count;
+                                    }
+                                }
+                            }
+                        }
                         return best;
                     };
-                    return `${pink('a')},${pink('adieresis')}`;
+                    return `${await pink('a')},${await pink('adieresis')}`;
                 }),
             { timeout: 20000 }
         )
@@ -807,7 +960,10 @@ test('placeholder sample outlines punch counters with the nonzero rule', async (
     await openMemoryFont(page, 'Fustat.glyphs');
     await waitForOpenSessionReady(page, 'Fustat.glyphs');
     await waitForLivePython(page);
-    const prepared = await page.evaluate(() => {
+    const prepared = await page.evaluate(async () => {
+        await (window as any).fontManager?.ensureLocalGlyphsHydrated?.([
+            'heh-ar'
+        ]);
         const font = window.currentFontModel;
         const glyph = font?.findGlyph('heh-ar');
         if (!glyph) {
@@ -927,6 +1083,64 @@ test('placeholder sample outlines punch counters with the nonzero rule', async (
                     tileSample = sample;
                 }
             });
+            if (tileRed <= 0) {
+                const tileEl = document.querySelector(
+                    '#glyph-overview-container [data-glyph-name="heh-ar"]'
+                ) as HTMLElement | null;
+                const viewportCanvas = document.querySelector(
+                    '.glyph-overview-viewport-canvas'
+                ) as HTMLCanvasElement | null;
+                const vpCtx = viewportCanvas?.getContext('2d');
+                if (
+                    tileEl &&
+                    viewportCanvas &&
+                    vpCtx &&
+                    viewportCanvas.width > 0
+                ) {
+                    const tileRect = tileEl.getBoundingClientRect();
+                    const vpRect = viewportCanvas.getBoundingClientRect();
+                    if (vpRect.width > 0 && vpRect.height > 0) {
+                        const scaleX = viewportCanvas.width / vpRect.width;
+                        const scaleY = viewportCanvas.height / vpRect.height;
+                        const sx = Math.max(
+                            0,
+                            Math.floor((tileRect.left - vpRect.left) * scaleX)
+                        );
+                        const sy = Math.max(
+                            0,
+                            Math.floor((tileRect.top - vpRect.top) * scaleY)
+                        );
+                        const sw = Math.min(
+                            viewportCanvas.width - sx,
+                            Math.ceil(tileRect.width * scaleX)
+                        );
+                        const sh = Math.min(
+                            viewportCanvas.height - sy,
+                            Math.ceil(tileRect.height * scaleY)
+                        );
+                        if (sw > 0 && sh > 0) {
+                            const scratch = document.createElement('canvas');
+                            scratch.width = sw;
+                            scratch.height = sh;
+                            const sctx = scratch.getContext('2d');
+                            if (sctx) {
+                                sctx.drawImage(
+                                    viewportCanvas,
+                                    sx,
+                                    sy,
+                                    sw,
+                                    sh,
+                                    0,
+                                    0,
+                                    sw,
+                                    sh
+                                );
+                                tileSample = hole(scratch, isInk);
+                            }
+                        }
+                    }
+                }
+            }
             const punched = (sample: string): boolean => {
                 const [red, center, edge] = sample.split(',').map(Number);
                 return red > 40 && edge > 4 && center === 0;

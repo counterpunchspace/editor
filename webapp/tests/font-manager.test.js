@@ -3322,7 +3322,9 @@ describe('FontManager loadFont', () => {
         expect(json).toBe(
             currentFont.fontModel.toJSONString({ compileFacing: false })
         );
-        expect(currentFont.builtBabelfontJson).toBe(json);
+        // Reading babelfontJson serializes on demand without retaining the
+        // multi-megabyte UTF-16 string in heap.
+        expect(currentFont.builtBabelfontJson).toBe('');
     });
 
     test('preserves stored keyed sidebearing fallback when opening a font without marking it dirty', async () => {

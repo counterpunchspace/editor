@@ -13,12 +13,7 @@ import {
     CORE_CODEPOINT_INDEX_KEY,
     CORE_GLYPH_CATALOG_KEY
 } from './filesystem-plugins/cloud-glyph-catalog';
-import * as babelfontWasm from '../wasm-dist/babelfont_fontc_web';
-import { ensureWasmInitialized } from './wasm-init';
-
-const { designspace_source_files } = babelfontWasm as object as {
-    designspace_source_files: (document: string) => string;
-};
+import { callSourceWasmOp } from './source-wasm-ops';
 
 export type FolderSourceFormat = 'ufo' | 'glyphspackage' | 'designspace';
 
@@ -325,8 +320,8 @@ export async function collectFolderSourceEntries(
 
 /** The UFOs a designspace document names, relative to its folder. */
 export async function designspaceUfoDirs(document: string): Promise<string[]> {
-    await ensureWasmInitialized();
-    return JSON.parse(designspace_source_files(document)) as string[];
+    const json = await callSourceWasmOp('designspace_source_files', [document]);
+    return JSON.parse(json) as string[];
 }
 
 /**

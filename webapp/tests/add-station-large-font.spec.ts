@@ -43,6 +43,11 @@ test('adding a master to a 1,000-glyph font finishes and keeps the page responsi
     expect(startup.shapedCount).toBeGreaterThan(0);
     expect(startup.tileCount).toBeGreaterThan(0);
 
+    // Hydrate all glyphs on local sparse open so addStation exercises all ~1,000 glyph shards.
+    await page.evaluate(async () => {
+        await (window as any).fontManager?.hydrateAllLocalGlyphs?.();
+    });
+
     const before = await page.evaluate(() => {
         const font = (window as any).currentFontModel;
         return {

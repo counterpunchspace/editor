@@ -1,3 +1,12 @@
+jest.mock('../js/opentype-table-reader', () => ({
+    __esModule: true,
+    ...jest.requireActual('../js/opentype-table-reader'),
+    get_glyph_name: jest.fn(
+        (_fontBytes, gid) => `glyph${String(gid).padStart(5, '0')}`
+    )
+}));
+jest.resetModules();
+
 const { shapeTextWithFontDetailed } = require('../js/font-compilation');
 
 describe('shapeTextWithFontDetailed HarfBuzz compatibility', () => {

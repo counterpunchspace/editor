@@ -20,10 +20,7 @@ import {
     parseClipboardPayloads,
     readClipboardPayloadsAsync
 } from '../clipboard';
-import {
-    get_glyph_name,
-    get_glyph_order
-} from '../../wasm-dist/babelfont_fontc_web';
+import { get_glyph_name, get_glyph_order } from '../opentype-table-reader';
 import {
     collectOperandKerningGroupMemberships,
     resolvePreferredKerningPairValue,
@@ -582,6 +579,8 @@ export class TextRunEditor {
         }
         return (
             window.currentFontModel?.findGlyphByCodepoint(codepoint)?.name ??
+            window.fontManager?.findCatalogGlyphByCodepoint?.(codepoint)
+                ?.name ??
             null
         );
     }
@@ -1684,7 +1683,9 @@ export class TextRunEditor {
         const font = window.currentFontModel;
         const compiledNames = this.editingFontNameToGid;
         for (const codepoint of [...this.typedCodepointsAwaitingCompile]) {
-            const sourceGlyph = font?.findGlyphByCodepoint?.(codepoint);
+            const sourceGlyph =
+                window.fontManager?.findCatalogGlyphByCodepoint?.(codepoint) ??
+                font?.findGlyphByCodepoint?.(codepoint);
             const awaiting =
                 text.includes(String.fromCodePoint(codepoint)) &&
                 !!sourceGlyph &&
@@ -2444,14 +2445,6 @@ export class TextRunEditor {
             return;
         }
 
-        if (!window.pyodide) {
-            console.log(
-                '[TextRun]',
-                '⚠️ Pyodide not ready, cannot load display string from font'
-            );
-            return; // Python not ready yet
-        }
-
         if (
             this.textBufferWriteGeneration > 0 ||
             userTextBufferHasBeenWritten()
@@ -2565,12 +2558,8 @@ export class TextRunEditor {
         this.call('textchanged');
     }
 
-    // Save text buffer to font.format_specific via Python
+    // Save text buffer to font.format_specific
     async saveTextBufferToFont() {
-        if (!window.pyodide) {
-            return; // Python not ready yet
-        }
-
         const textToSave = this.textBuffer || '';
         const appId = window.APP_SETTINGS?.APP_ID;
         const key = `${appId}.display_string`;

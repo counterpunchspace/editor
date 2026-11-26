@@ -146,8 +146,11 @@ import {
     patchSourceEdges,
     readFontDepsIndex,
     sparseWriteClosureIds,
-    writeCompleteFontDepsIfLoaded
+    writeCompleteFontDepsIfLoaded,
+    writeFontDepsYMap,
+    type FontDepsIndex
 } from './filesystem-plugins/cloud-font-deps';
+import { sanitizeGlyphEmptyReferenceComponents } from './local-sparse-hydrator';
 import {
     FONT_CORE_DOCUMENT_ID,
     FONT_DEPS_DOCUMENT_ID,
@@ -1305,6 +1308,16 @@ export class PatchSyncEngine {
     /** Root font map inside the core Y.Doc */
     readonly fontMap: Y.Map<unknown>;
     private _glyphDocs = new Map<string, Y.Doc>();
+    /**
+     * Compact encoded Yjs states for resident glyph shards whose live Y.Doc
+     * has been parked to save V8 heap. Mutually exclusive with `_glyphDocs`;
+     * woken transparently on first edit, remote update, undo, or query.
+     */
+    private _dormantGlyphStates = new Map<string, Uint8Array>();
+    private _dormantDocumentCheckpoints = new Map<string, string>();
+    private _glyphEvictionSuspendDepth = 0;
+    private static readonly MAX_LIVE_GLYPH_DOCS = 64;
+    private static readonly INITIAL_LIVE_GLYPH_DOCS = 16;
     /** The name each deleted glyph had, to describe its document's last packet. */
     private _removedGlyphNameById = new Map<string, string>();
     private _glyphIdByName = new Map<string, string>();
@@ -1325,7 +1338,6 @@ export class PatchSyncEngine {
     /** True while a room-layout move writes font-core. */
     private _capturingLayoutCore = false;
     private _lastEncodedShardBytes = new Map<string, number>();
-    private _docUpdateUnsubscribers: Array<() => void> = [];
     private _docUpdateUnsubById = new Map<string, () => void>();
     /** Glyph names touched by forward change-log entries (unload guard). */
     private _historyGlyphNames: {
@@ -1767,8 +1779,8 @@ export class PatchSyncEngine {
 
     constructor(windowId?: string) {
         this.windowId = windowId ?? windowRole.instanceId;
-        this.yDoc = new Y.Doc({ gc: false });
-        this.depsDoc = new Y.Doc({ gc: false });
+        this.yDoc = new Y.Doc({ gc: true });
+        this.depsDoc = new Y.Doc({ gc: true });
         this.depsDoc.on('update', () => {
             this._depsVersion += 1;
         });
@@ -1843,10 +1855,8 @@ export class PatchSyncEngine {
                 this._emitRawLocalUpdate(documentId);
             }
         };
+        this._docUpdateUnsubById.get(documentId)?.();
         doc.on('update', handler);
-        this._docUpdateUnsubscribers.push(() => {
-            doc.off('update', handler);
-        });
         this._docUpdateUnsubById.set(documentId, () => {
             doc.off('update', handler);
         });
@@ -3391,10 +3401,141 @@ export class PatchSyncEngine {
         }
         if (documentId.startsWith('glyph:')) {
             return (
-                this._glyphDocs.get(documentId.slice('glyph:'.length)) || null
+                this._wakeGlyphDoc(documentId.slice('glyph:'.length)) || null
             );
         }
-        return this._glyphDocs.get(documentId) || null;
+        return this._wakeGlyphDoc(documentId) || null;
+    }
+
+    /** True when this window holds the glyph shard (either live or dormant). */
+    private _hasHeldGlyphDoc(glyphId: string): boolean {
+        return (
+            this._glyphDocs.has(glyphId) ||
+            this._dormantGlyphStates.has(glyphId)
+        );
+    }
+
+    private _heldGlyphDocCount(): number {
+        return this._glyphDocs.size + this._dormantGlyphStates.size;
+    }
+
+    private _touchLiveGlyphDoc(glyphId: string, doc: Y.Doc): void {
+        // Refresh Map insertion order for O(1) LRU tracking.
+        this._glyphDocs.delete(glyphId);
+        this._glyphDocs.set(glyphId, doc);
+    }
+
+    /**
+     * Return the live Y.Doc for `glyphId`, rehydrating it from
+     * `_dormantGlyphStates` on demand while preserving exact CRDT item IDs,
+     * clientIDs, clocks, and state vectors.
+     */
+    private _wakeGlyphDoc(glyphId: string): Y.Doc | null {
+        const existing = this._glyphDocs.get(glyphId);
+        if (existing) {
+            this._touchLiveGlyphDoc(glyphId, existing);
+            return existing;
+        }
+        const dormantBytes = this._dormantGlyphStates.get(glyphId);
+        if (!dormantBytes) {
+            return null;
+        }
+        this._dormantGlyphStates.delete(glyphId);
+        const documentId = glyphDocumentId(glyphId);
+        const doc = new Y.Doc({ gc: true });
+        Y.applyUpdate(doc, dormantBytes, SYSTEM_REMOTE_ORIGIN);
+        const checkpoint = this._dormantDocumentCheckpoints.get(documentId);
+        if (checkpoint) {
+            this._dormantDocumentCheckpoints.delete(documentId);
+            this._documentCheckpoints.set(doc, checkpoint);
+        }
+        this._glyphDocs.set(glyphId, doc);
+        this._bindDocUpdates(doc, documentId);
+        if (
+            this._glyphEvictionSuspendDepth === 0 &&
+            this._glyphDocs.size > PatchSyncEngine.MAX_LIVE_GLYPH_DOCS
+        ) {
+            this._evictIdleLiveGlyphDocs(
+                PatchSyncEngine.MAX_LIVE_GLYPH_DOCS,
+                glyphId
+            );
+        }
+        return doc;
+    }
+
+    /**
+     * Compact a live glyph Y.Doc back into `_dormantGlyphStates` and destroy
+     * its decoded CRDT tree when it has no pending/unsent/in-flight state.
+     */
+    private _parkGlyphDoc(glyphId: string, protectGlyphId?: string): boolean {
+        if (glyphId === protectGlyphId) {
+            return false;
+        }
+        const doc = this._glyphDocs.get(glyphId);
+        if (!doc) {
+            return false;
+        }
+        const documentId = glyphDocumentId(glyphId);
+        if (
+            this._pendingDestroyedGlyphIds.has(glyphId) ||
+            this._outbox.get(documentId)?.length ||
+            this.hasGlyphCatchUp(documentId) ||
+            isDocumentBroken(doc) ||
+            this.isDocumentIdBroken(documentId)
+        ) {
+            return false;
+        }
+        const bytes = Y.encodeStateAsUpdate(doc);
+        const checkpoint = this._documentCheckpoints.get(doc);
+        if (checkpoint) {
+            this._dormantDocumentCheckpoints.set(documentId, checkpoint);
+        }
+        this._dormantGlyphStates.set(glyphId, bytes);
+        this._lastEncodedShardBytes.set(documentId, bytes.byteLength);
+        this._docUpdateUnsubById.get(documentId)?.();
+        this._docUpdateUnsubById.delete(documentId);
+        this._glyphDocs.delete(glyphId);
+        doc.destroy();
+        return true;
+    }
+
+    /**
+     * Evict least-recently-used live glyph Y.Docs back to dormant bytes until
+     * at most `maxLive` remain decoded.
+     */
+    private _evictIdleLiveGlyphDocs(
+        maxLive: number = PatchSyncEngine.MAX_LIVE_GLYPH_DOCS,
+        protectGlyphId?: string
+    ): number {
+        if (this._glyphDocs.size <= maxLive) {
+            return 0;
+        }
+        const activeGlyphName =
+            typeof window !== 'undefined'
+                ? (
+                      window as Window & {
+                          glyphCanvas?: {
+                              getCurrentGlyphName?: () => string | null;
+                          };
+                      }
+                  ).glyphCanvas?.getCurrentGlyphName?.() || null
+                : null;
+        const activeGlyphId = activeGlyphName
+            ? this._glyphIdByName.get(activeGlyphName)
+            : undefined;
+        let parked = 0;
+        for (const glyphId of [...this._glyphDocs.keys()]) {
+            if (this._glyphDocs.size <= maxLive) {
+                break;
+            }
+            if (glyphId === activeGlyphId) {
+                continue;
+            }
+            if (this._parkGlyphDoc(glyphId, protectGlyphId)) {
+                parked += 1;
+            }
+        }
+        return parked;
     }
 
     /**
@@ -3429,7 +3570,7 @@ export class PatchSyncEngine {
     private _glyphMapForName(glyphName: string): Y.Map<unknown> | null {
         const glyphId = this._glyphIdByName.get(glyphName);
         if (glyphId) {
-            const doc = this._glyphDocs.get(glyphId);
+            const doc = this._wakeGlyphDoc(glyphId);
             const glyphMap = doc?.getMap('glyph');
             if (glyphMap instanceof Y.Map) {
                 return glyphMap;
@@ -3474,10 +3615,10 @@ export class PatchSyncEngine {
         glyphName: string,
         glyphJson?: Record<string, unknown>
     ): Y.Doc {
-        let doc = this._glyphDocs.get(glyphId);
+        let doc = this._wakeGlyphDoc(glyphId);
         if (!doc) {
             this._assertDocumentIdWritable(glyphDocumentId(glyphId));
-            doc = new Y.Doc({ gc: false });
+            doc = new Y.Doc({ gc: true });
             this._glyphDocs.set(glyphId, doc);
             this._bindDocUpdates(doc, glyphDocumentId(glyphId));
             this._noteDocumentLoaded(glyphDocumentId(glyphId));
@@ -3505,10 +3646,18 @@ export class PatchSyncEngine {
 
     private _destroyGlyphDocs(): void {
         for (const [glyphId, doc] of this._glyphDocs) {
-            this._stateLoadedDocumentIds.delete(glyphDocumentId(glyphId));
+            const documentId = glyphDocumentId(glyphId);
+            this._docUpdateUnsubById.get(documentId)?.();
+            this._docUpdateUnsubById.delete(documentId);
+            this._stateLoadedDocumentIds.delete(documentId);
             doc.destroy();
         }
+        for (const glyphId of this._dormantGlyphStates.keys()) {
+            this._stateLoadedDocumentIds.delete(glyphDocumentId(glyphId));
+        }
         this._glyphDocs.clear();
+        this._dormantGlyphStates.clear();
+        this._dormantDocumentCheckpoints.clear();
         this._glyphIdByName.clear();
         this._glyphNameById.clear();
         this._removedGlyphNameById.clear();
@@ -3595,7 +3744,7 @@ export class PatchSyncEngine {
     }
 
     listLiveGlyphDocumentIds(): string[] {
-        return [...this._glyphDocs.keys()]
+        return [...this._glyphDocs.keys(), ...this._dormantGlyphStates.keys()]
             .filter((glyphId) => this._glyphNameById.has(glyphId))
             .map((glyphId) => glyphDocumentId(glyphId));
     }
@@ -3633,6 +3782,16 @@ export class PatchSyncEngine {
                 continue;
             }
             const byteLength = encodedLength(glyphDocumentId(glyphId), doc);
+            if (byteLength > largestGlyphBytes) {
+                largestGlyphBytes = byteLength;
+                largestGlyphName = this._glyphNameById.get(glyphId) ?? null;
+            }
+        }
+        for (const [glyphId, bytes] of this._dormantGlyphStates) {
+            if (!this._glyphNameById.has(glyphId)) {
+                continue;
+            }
+            const byteLength = bytes.byteLength;
             if (byteLength > largestGlyphBytes) {
                 largestGlyphBytes = byteLength;
                 largestGlyphName = this._glyphNameById.get(glyphId) ?? null;
@@ -3697,7 +3856,7 @@ export class PatchSyncEngine {
             };
         }
         const missing = this._sparseWriteClosureCache.ids.filter(
-            (id) => !this._glyphDocs.has(id)
+            (id) => !this._hasHeldGlyphDoc(id)
         );
         if (!missing.length) {
             return [];
@@ -3727,7 +3886,7 @@ export class PatchSyncEngine {
             (left, right) => right.length - left.length
         );
         return parseMetricsKeyReferencedNames(rawKey, namesByLength).filter(
-            (name) => !this._glyphDocs.has(idByName.get(name) || '')
+            (name) => !this._hasHeldGlyphDoc(idByName.get(name) || '')
         );
     }
 
@@ -3766,6 +3925,14 @@ export class PatchSyncEngine {
     }
 
     encodeDocumentState(documentId: string = FONT_CORE_DOCUMENT_ID): YjsUpdate {
+        if (documentId.startsWith('glyph:')) {
+            const dormant = this._dormantGlyphStates.get(
+                documentId.slice('glyph:'.length)
+            );
+            if (dormant) {
+                return dormant.slice();
+            }
+        }
         const doc = this._docForId(documentId);
         return doc ? Y.encodeStateAsUpdate(doc) : new Uint8Array();
     }
@@ -3865,8 +4032,7 @@ export class PatchSyncEngine {
         ) {
             const glyphId = this._glyphIdByName.get(repairedGlyphName);
             const glyphRevision = glyphId
-                ? this._glyphDocs
-                      .get(glyphId)
+                ? this._wakeGlyphDoc(glyphId)
                       ?.getMap(GLYPH_SYNC_MAP_KEY)
                       .get(GLYPH_SYNC_REVISION_KEY)
                 : null;
@@ -4167,7 +4333,7 @@ export class PatchSyncEngine {
         if (this._lateGlyphRevisionsAwaitingFetch.has(glyphId)) {
             return false;
         }
-        const doc = this._glyphDocs.get(glyphId);
+        const doc = this._wakeGlyphDoc(glyphId);
         const token = doc
             ?.getMap(GLYPH_SYNC_MAP_KEY)
             .get(GLYPH_SYNC_REVISION_KEY);
@@ -4177,7 +4343,7 @@ export class PatchSyncEngine {
     /** True when this window already has the glyph shard, even if it is not on screen. */
     hasResidentGlyphDocument(documentId: string): boolean {
         const glyphId = glyphIdFromDocumentId(documentId);
-        return !!glyphId && this._glyphDocs.has(glyphId);
+        return !!glyphId && this._hasHeldGlyphDoc(glyphId);
     }
 
     /** True when the font model lists the catalog name for this shard. */
@@ -4230,8 +4396,7 @@ export class PatchSyncEngine {
         // A delete empties the glyph's map. Its catalog tombstone can still
         // be on its way, and the name its index entry keeps may already
         // belong to a glyph added again under it.
-        const storedName = this._glyphDocs
-            .get(glyphId)
+        const storedName = this._wakeGlyphDoc(glyphId)
             ?.getMap('glyph')
             .get('name');
         if (typeof storedName !== 'string' || !storedName) {
@@ -4712,8 +4877,7 @@ export class PatchSyncEngine {
                 if (!sourceId || !glyph) {
                     continue;
                 }
-                const sourceRevision = this._glyphDocs
-                    .get(sourceId)
+                const sourceRevision = this._wakeGlyphDoc(sourceId)
                     ?.getMap(GLYPH_SYNC_MAP_KEY)
                     .get(GLYPH_SYNC_REVISION_KEY);
                 patchSourceEdges(
@@ -4762,6 +4926,12 @@ export class PatchSyncEngine {
             shards.push({
                 documentId: glyphDocumentId(glyphId),
                 bytes: Y.encodeStateAsUpdate(doc)
+            });
+        }
+        for (const [glyphId, bytes] of this._dormantGlyphStates) {
+            shards.push({
+                documentId: glyphDocumentId(glyphId),
+                bytes: bytes.slice()
             });
         }
         for (const shard of shards) {
@@ -4966,7 +5136,10 @@ export class PatchSyncEngine {
         }
         const unloaded: string[] = [];
         const keptForCatchUp: string[] = [];
-        for (const glyphId of [...this._glyphDocs.keys()]) {
+        for (const glyphId of [
+            ...this._glyphDocs.keys(),
+            ...this._dormantGlyphStates.keys()
+        ]) {
             if (keep.has(glyphId) || this._sparseWorkingGlyphIds.has(glyphId)) {
                 continue;
             }
@@ -4996,6 +5169,8 @@ export class PatchSyncEngine {
             const doc = this._glyphDocs.get(glyphId);
             doc?.destroy();
             this._glyphDocs.delete(glyphId);
+            this._dormantGlyphStates.delete(glyphId);
+            this._dormantDocumentCheckpoints.delete(documentId);
             this._forgetGlyphNameForId(glyphId);
             if (name) {
                 this._glyphIdByName.delete(name);
@@ -5052,6 +5227,11 @@ export class PatchSyncEngine {
 
     /** The checkpoint (sha256) this document was loaded from, if known. */
     documentCheckpointSha256(documentId: string): string | null {
+        const dormantCheckpoint =
+            this._dormantDocumentCheckpoints.get(documentId);
+        if (dormantCheckpoint) {
+            return dormantCheckpoint;
+        }
         const doc = this._docForId(documentId);
         return doc ? (this._documentCheckpoints.get(doc) ?? null) : null;
     }
@@ -5085,6 +5265,7 @@ export class PatchSyncEngine {
             this._rebuildGlyphNameIndexFromDocs();
             this._rehydrateEntireFontJsonFromYDoc();
             this._canonicalizeFullStateRawFontJson();
+            this._evictIdleLiveGlyphDocs(PatchSyncEngine.MAX_LIVE_GLYPH_DOCS);
             this._onAfterSync?.();
             this._onRemoteChange?.([]);
         } finally {
@@ -5145,6 +5326,7 @@ export class PatchSyncEngine {
         this._rebuildGlyphNameIndexFromDocs();
         this._rehydrateEntireFontJsonFromYDoc();
         this._canonicalizeFullStateRawFontJson();
+        this._evictIdleLiveGlyphDocs(PatchSyncEngine.MAX_LIVE_GLYPH_DOCS);
         this._emitAfterSync();
         return this._fontJson;
     }
@@ -5166,10 +5348,10 @@ export class PatchSyncEngine {
         const glyphId = shard.documentId.startsWith('glyph:')
             ? shard.documentId.slice('glyph:'.length)
             : shard.documentId;
-        let doc = this._glyphDocs.get(glyphId);
+        let doc = this._wakeGlyphDoc(glyphId);
         if (!doc) {
             this._assertDocumentIdWritable(glyphDocumentId(glyphId));
-            doc = new Y.Doc({ gc: false });
+            doc = new Y.Doc({ gc: true });
             this._glyphDocs.set(glyphId, doc);
             this._bindDocUpdates(doc, glyphDocumentId(glyphId));
             this._noteDocumentLoaded(glyphDocumentId(glyphId));
@@ -5178,6 +5360,13 @@ export class PatchSyncEngine {
     }
 
     private _rebuildGlyphNameIndexFromDocs(): void {
+        const previousDormantNames = new Map<string, string>();
+        for (const glyphId of this._dormantGlyphStates.keys()) {
+            const existing = this._glyphNameById.get(glyphId);
+            if (existing) {
+                previousDormantNames.set(glyphId, existing);
+            }
+        }
         this._glyphIdByName.clear();
         this._glyphNameById.clear();
         // A deleted glyph's document can stay resident a while, still named.
@@ -5188,6 +5377,16 @@ export class PatchSyncEngine {
             ? catalogFromCoreJson(this._fontJson as Record<string, unknown>)
                   ?.glyphCatalog
             : undefined;
+        for (const [glyphId, name] of previousDormantNames) {
+            if (
+                isCatalogTombstone(catalog, glyphId) ||
+                this._pendingDestroyedGlyphIds.has(glyphId)
+            ) {
+                continue;
+            }
+            this._glyphIdByName.set(name, glyphId);
+            this._glyphNameById.set(glyphId, name);
+        }
         for (const [glyphId, doc] of this._glyphDocs) {
             if (
                 isCatalogTombstone(catalog, glyphId) ||
@@ -5298,7 +5497,7 @@ export class PatchSyncEngine {
             if (!entry?.glyphId || !entry.name || entry.deleted === true) {
                 continue;
             }
-            if (!this._glyphDocs.has(entry.glyphId)) {
+            if (!this._hasHeldGlyphDoc(entry.glyphId)) {
                 continue;
             }
             const indexedName = this._glyphNameById.get(entry.glyphId);
@@ -5504,7 +5703,7 @@ export class PatchSyncEngine {
                 continue;
             }
             this._glyphIdByName.delete(glyphName);
-            if (this._glyphDocs.has(glyphId)) {
+            if (this._hasHeldGlyphDoc(glyphId)) {
                 displaced.push(glyphId);
             } else {
                 this._forgetGlyphNameForId(glyphId);
@@ -5514,6 +5713,7 @@ export class PatchSyncEngine {
             if (this._glyphIdByName.has(glyphName)) {
                 continue;
             }
+            let matched = false;
             for (const [glyphId, doc] of this._glyphDocs) {
                 const nameValue = doc.getMap('glyph').get('name');
                 if (nameValue === glyphName) {
@@ -5523,7 +5723,20 @@ export class PatchSyncEngine {
                     if (displacedIndex >= 0) {
                         displaced.splice(displacedIndex, 1);
                     }
+                    matched = true;
                     break;
+                }
+            }
+            if (!matched) {
+                for (const glyphId of this._dormantGlyphStates.keys()) {
+                    if (this._glyphNameById.get(glyphId) === glyphName) {
+                        this._glyphIdByName.set(glyphName, glyphId);
+                        const displacedIndex = displaced.indexOf(glyphId);
+                        if (displacedIndex >= 0) {
+                            displaced.splice(displacedIndex, 1);
+                        }
+                        break;
+                    }
                 }
             }
         }
@@ -5542,7 +5755,7 @@ export class PatchSyncEngine {
         for (const glyphId of displaced) {
             const mapped = this._glyphNameById.get(glyphId);
             if (!mapped || !remaining.has(mapped)) {
-                if (!this._glyphDocs.has(glyphId)) {
+                if (!this._hasHeldGlyphDoc(glyphId)) {
                     this._forgetGlyphNameForId(glyphId);
                 }
             }
@@ -6281,18 +6494,38 @@ export class PatchSyncEngine {
         fontJson: Record<string, Unsafe> | null;
         yDocStore: unknown;
         decodedStructs: number;
+        dormantGlyphCount: number;
+        dormantGlyphBytes: number;
+        liveGlyphCount: number;
         changeLog: ChangeLogEntry[];
         collaborationLog: CollaborationLogItem[];
     } {
         let decodedStructs = 0;
-        this.yDoc.store.clients.forEach((structs) => {
-            decodedStructs += structs.length;
-        });
+        const countDoc = (doc: Y.Doc) => {
+            doc.store.clients.forEach((structs) => {
+                decodedStructs += structs.length;
+            });
+        };
+        countDoc(this.yDoc);
+        countDoc(this.depsDoc);
+        for (const doc of this._glyphDocs.values()) {
+            countDoc(doc);
+        }
+        for (const doc of this._layoutDocs.values()) {
+            countDoc(doc);
+        }
+        let dormantGlyphBytes = 0;
+        for (const bytes of this._dormantGlyphStates.values()) {
+            dormantGlyphBytes += bytes.byteLength;
+        }
 
         return {
             fontJson: this._fontJson,
             yDocStore: this.yDoc.store,
             decodedStructs,
+            dormantGlyphCount: this._dormantGlyphStates.size,
+            dormantGlyphBytes,
+            liveGlyphCount: this._glyphDocs.size,
             changeLog: this._changeLog,
             collaborationLog: this._collaborationLog
         };
@@ -6331,6 +6564,7 @@ export class PatchSyncEngine {
             }, USER_EDIT_ORIGIN);
             this._roomLayoutCache = undefined;
             for (const glyph of listGlyphRecords(fontJson)) {
+                sanitizeGlyphEmptyReferenceComponents(glyph);
                 const glyphId = ensureImmutableGlyphId(glyph);
                 const name = String(glyph.name || glyphId);
                 this._ensureGlyphDoc(glyphId, name, glyph);
@@ -6355,6 +6589,87 @@ export class PatchSyncEngine {
         for (const glyphId of this._glyphDocs.keys()) {
             this._noteWholeStateDelivered(glyphDocumentId(glyphId));
         }
+        // Park excess initial glyph Y.Docs into compact encoded bytes so large
+        // fonts do not retain hundreds/thousands of decoded CRDT trees in heap.
+        this._evictIdleLiveGlyphDocs(PatchSyncEngine.INITIAL_LIVE_GLYPH_DOCS);
+    }
+
+    /**
+     * Populate `depsDoc` directly from precomputed dependency edges during
+     * local sparse open without emitting a user edit packet.
+     */
+    seedFontDepsFromIndex(deps: FontDepsIndex): void {
+        this._pushApplyKind(ApplyKind.ManualEmit);
+        this._isSyncing = true;
+        try {
+            this.depsDoc.transact(() => {
+                writeFontDepsYMap(this.depsDoc.getMap('deps'), deps);
+            }, SYSTEM_REMOTE_ORIGIN);
+        } finally {
+            this._isSyncing = false;
+            this._popApplyKind();
+        }
+        this._noteWholeStateDelivered(FONT_DEPS_DOCUMENT_ID);
+        this._stateLoadedDocumentIds.add(FONT_DEPS_DOCUMENT_ID);
+    }
+
+    /**
+     * Hydrate one or more local sparse glyphs fetched from `fontc-worker`'s
+     * complete `FONT_CACHE` into `PatchSyncEngine` + `_fontJson`, returning
+     * their encoded Yjs shards so the worker binds identical CRDT item IDs.
+     */
+    hydrateLocalGlyphsFromWorker(
+        items: Array<{
+            glyphId: string;
+            glyphName: string;
+            glyphJson: Record<string, unknown>;
+        }>
+    ): EncodedShard[] {
+        if (!items.length) {
+            return [];
+        }
+        const encodedShards: EncodedShard[] = [];
+        this._glyphEvictionSuspendDepth += 1;
+        this._pushApplyKind(ApplyKind.ManualEmit);
+        this._isSyncing = true;
+        try {
+            for (const { glyphId, glyphName, glyphJson } of items) {
+                const documentId = glyphDocumentId(glyphId);
+                if (this._hasHeldGlyphDoc(glyphId)) {
+                    continue;
+                }
+                sanitizeGlyphEmptyReferenceComponents(glyphJson);
+                glyphJson.id = glyphId;
+                const doc = this._ensureGlyphDoc(glyphId, glyphName, glyphJson);
+                this._sparseWorkingGlyphIds.add(glyphId);
+                this._noteWholeStateDelivered(documentId);
+                this._stateLoadedDocumentIds.add(documentId);
+                const bytes = Y.encodeStateAsUpdate(doc);
+                this._lastEncodedShardBytes.set(documentId, bytes.byteLength);
+                encodedShards.push({ documentId, bytes });
+            }
+        } finally {
+            this._isSyncing = false;
+            this._popApplyKind();
+            this._glyphEvictionSuspendDepth -= 1;
+        }
+        if (encodedShards.length) {
+            const hydratedNames = items.map((item) => item.glyphName);
+            this._withGlyphModelRebuild(
+                'hydrate',
+                hydratedNames,
+                () => {
+                    for (const { glyphName } of items) {
+                        this._patchGlyphFromYDoc(glyphName, {
+                            ignoreExisting: true
+                        });
+                    }
+                },
+                { silent: true }
+            );
+            this._evictIdleLiveGlyphDocs(PatchSyncEngine.MAX_LIVE_GLYPH_DOCS);
+        }
+        return encodedShards;
     }
 
     /**
@@ -7462,12 +7777,13 @@ export class PatchSyncEngine {
         }
         this._cloudLocalListeners.clear();
         this._liveBurstDrawings.clear();
-        for (const unsub of this._docUpdateUnsubscribers) {
+        for (const unsub of this._docUpdateUnsubById.values()) {
             unsub();
         }
-        this._docUpdateUnsubscribers = [];
         this._docUpdateUnsubById.clear();
         this._destroyGlyphDocs();
+        this._destroyLayoutDocs();
+        this.dropRetiredLayoutDocs();
         this.depsDoc.destroy();
         this.yDoc.destroy();
         clearBrokenDocumentScope(this._brokenScope);
@@ -8684,7 +9000,7 @@ export class PatchSyncEngine {
      * so a glyph path never belongs in font-core.
      */
     private _fontHasGlyphDocuments(): boolean {
-        return this._glyphDocs.size > 0 || this._glyphIdByName.size > 0;
+        return this._heldGlyphDocCount() > 0 || this._glyphIdByName.size > 0;
     }
 
     /** True for a path inside a glyph's drawings (`glyphs.<name>:layers…`). */
@@ -10085,8 +10401,8 @@ export class PatchSyncEngine {
                 workerReplayTargets,
                 semanticChangeLogEntries: metadataEntries ?? undefined
             });
-            const loggedEntryIndex = this._changeLog.length;
             this._appendChangeLogEntry(entry);
+            const loggedEntryIndex = this._changeLog.length - 1;
             const loggedEntry = this._changeLog[loggedEntryIndex];
             const nameMaps = this._snapshotGlyphNameMaps();
             const committed: Array<[string, ChangeLogEntry[]]> = [];
@@ -10649,12 +10965,12 @@ export class PatchSyncEngine {
         let glyphs: Array<{ name: string; glyphId: string | null }> = [];
         if (documentId.startsWith('glyph:')) {
             const glyphId = documentId.slice('glyph:'.length);
-            const storedName = this._glyphDocs
-                .get(glyphId)
-                ?.getMap('glyph')
-                .get('name');
+            const indexedName = this._glyphNameById.get(glyphId);
+            const storedName = indexedName
+                ? indexedName
+                : this._wakeGlyphDoc(glyphId)?.getMap('glyph').get('name');
             const name =
-                this._glyphNameById.get(glyphId) ||
+                indexedName ||
                 (typeof storedName === 'string' ? storedName : '') ||
                 glyphId;
             glyphs = [{ name, glyphId }];
@@ -10884,7 +11200,38 @@ export class PatchSyncEngine {
             this.depsDoc,
             ...this._glyphDocs.values()
         ];
-        return docs.some((doc) => this._isRemoteUpdateNoop(update, doc));
+        if (docs.some((doc) => this._isRemoteUpdateNoop(update, doc))) {
+            return true;
+        }
+        if (this._dormantGlyphStates.size === 0) {
+            return false;
+        }
+        const decodedUpdate = Y.decodeUpdate(update);
+        const hasDeletes = decodedUpdate.ds.clients.size > 0;
+        for (const [glyphId, bytes] of this._dormantGlyphStates) {
+            const sv = Y.decodeStateVector(
+                Y.encodeStateVectorFromUpdate(bytes)
+            );
+            let structsCovered = true;
+            for (const struct of decodedUpdate.structs) {
+                const knownClock = sv.get(struct.id.client) ?? 0;
+                if (struct.id.clock + struct.length > knownClock) {
+                    structsCovered = false;
+                    break;
+                }
+            }
+            if (!structsCovered) {
+                continue;
+            }
+            if (!hasDeletes) {
+                return true;
+            }
+            const woken = this._wakeGlyphDoc(glyphId);
+            if (woken && this._isRemoteUpdateNoop(update, woken)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private _isRemoteUpdateNoop(
@@ -11621,7 +11968,7 @@ export class PatchSyncEngine {
         }
 
         const yGlyphsMap = this.fontMap.get('glyphs');
-        if (!(yGlyphsMap instanceof Y.Map) && !this._glyphDocs.size) {
+        if (!(yGlyphsMap instanceof Y.Map) && !this._heldGlyphDocCount()) {
             glyphs.push(glyphSnapshot);
             return true;
         }
@@ -12554,129 +12901,142 @@ export class PatchSyncEngine {
         if (!fontModel || !this._fontJson) {
             return [];
         }
-        // What differs from the documents, by glyph document.
-        const pendingWrites = new Map<
-            string,
-            Array<{
-                target: { glyphName: string; layerId: string };
-                drawingMap: Y.Map<unknown>;
-                record: Record<string, unknown>;
-            }>
-        >();
-        for (const target of targets) {
-            const glyphId = this._glyphIdByName.get(target.glyphName);
-            const doc = glyphId ? this._glyphDocs.get(glyphId) : undefined;
-            const drawingMap = (
-                doc?.getMap('glyph').get('layers') as Y.Map<unknown> | undefined
-            )?.get(target.layerId);
-            const modelDrawing = fontModel
-                .findGlyph?.(target.glyphName)
-                ?.findDrawingById?.(target.layerId);
-            if (
-                !glyphId ||
-                !doc ||
-                !(drawingMap instanceof Y.Map) ||
-                !modelDrawing
-            ) {
-                continue;
-            }
-            const record = (
-                typeof modelDrawing.toJSON === 'function'
-                    ? modelDrawing.toJSON()
-                    : modelDrawing
-            ) as Record<string, unknown>;
-            if (
-                drawingFingerprint(record) ===
-                drawingFingerprint(fromYDrawing(drawingMap))
-            ) {
-                continue;
-            }
-            const writes = pendingWrites.get(glyphId) ?? [];
-            writes.push({ target, drawingMap, record });
-            pendingWrites.set(glyphId, writes);
-        }
-        const written: Array<{ glyphName: string; layerId: string }> = [];
-        if (!pendingWrites.size) {
-            return written;
-        }
-        for (const glyphId of pendingWrites.keys()) {
-            assertDocumentWritable(
-                this._glyphDocs.get(glyphId)!,
-                glyphDocumentId(glyphId),
-                this._brokenScope
-            );
-        }
-        // One commit, stamped with glyph revisions like any commit: windows
-        // that keep no socket for these glyphs learn of the writes from the
-        // revision feed, and fetch them. One packet per glyph document.
-        this._withGlyphRevisionCatchUp([...pendingWrites.keys()], () => {
-            for (const [glyphId, writes] of pendingWrites) {
-                const doc = this._glyphDocs.get(glyphId)!;
-                this._transactOrMarkBroken(
-                    doc,
-                    glyphDocumentId(glyphId),
-                    () => {
-                        for (const { drawingMap, record } of writes) {
-                            this._replaceDrawingMapContents(
-                                drawingMap,
-                                cloneHistoryValue(record) as Record<
-                                    string,
-                                    unknown
-                                >
-                            );
-                        }
-                    },
-                    LAYOUT_FORWARD_ORIGIN
-                );
-                const entries = writes.map(({ target, record }) =>
-                    createLogEntry({
-                        timestamp: Date.now(),
-                        windowId: this.windowId,
-                        windowRoleLabel: this._getWindowRoleLabel(),
-                        historyItemId: this._createHistoryItemId(),
-                        historyAction: 'change',
-                        transactionLabel: 'Settle collaborator cascade',
-                        transactionId: null,
-                        op: 'set',
-                        undoScope: 'layer',
-                        path: joinPathWithGlyphSeparator([
-                            'glyphs',
-                            target.glyphName,
-                            'layers',
-                            target.layerId
-                        ]),
-                        oldValue: undefined,
-                        newValue: cloneHistoryValue(record),
-                        replayOldValue: undefined,
-                        replayNewValue: undefined,
-                        compileChangeSource: 'remote-cascade-preview',
-                        compileEditType: 'anchor'
-                    })
-                );
-                // Emitted, not committed: the change log, and so undo, never
-                // holds it.
-                this._emitLocalUpdate(
-                    this._takeOutbox(glyphDocumentId(glyphId)),
-                    entries,
-                    glyphDocumentId(glyphId)
-                );
-            }
-        });
-        // Reads back what the model just wrote.
-        this._withGlyphModelRebuild(
-            'read-back',
-            null,
-            () => {
-                for (const writes of pendingWrites.values()) {
-                    for (const { target } of writes) {
-                        this._patchDrawingFromYDoc(target);
-                        written.push(target);
-                    }
+        // Suspend LRU glyph-doc eviction for the batch so waking >64 target
+        // glyphs cannot destroy earlier woken docs before their writes land.
+        this._glyphEvictionSuspendDepth += 1;
+        try {
+            // What differs from the documents, by glyph document.
+            const pendingWrites = new Map<
+                string,
+                Array<{
+                    target: { glyphName: string; layerId: string };
+                    drawingMap: Y.Map<unknown>;
+                    record: Record<string, unknown>;
+                }>
+            >();
+            for (const target of targets) {
+                const glyphId = this._glyphIdByName.get(target.glyphName);
+                const doc = glyphId ? this._wakeGlyphDoc(glyphId) : undefined;
+                const drawingMap = (
+                    doc?.getMap('glyph').get('layers') as
+                        Y.Map<unknown> | undefined
+                )?.get(target.layerId);
+                const modelDrawing = fontModel
+                    .findGlyph?.(target.glyphName)
+                    ?.findDrawingById?.(target.layerId);
+                if (
+                    !glyphId ||
+                    !doc ||
+                    !(drawingMap instanceof Y.Map) ||
+                    !modelDrawing
+                ) {
+                    continue;
                 }
-            },
-            { silent: true }
-        );
-        return written;
+                const record = (
+                    typeof modelDrawing.toJSON === 'function'
+                        ? modelDrawing.toJSON()
+                        : modelDrawing
+                ) as Record<string, unknown>;
+                if (
+                    drawingFingerprint(record) ===
+                    drawingFingerprint(fromYDrawing(drawingMap))
+                ) {
+                    continue;
+                }
+                const writes = pendingWrites.get(glyphId) ?? [];
+                writes.push({ target, drawingMap, record });
+                pendingWrites.set(glyphId, writes);
+            }
+            const written: Array<{ glyphName: string; layerId: string }> = [];
+            if (!pendingWrites.size) {
+                return written;
+            }
+            for (const glyphId of pendingWrites.keys()) {
+                assertDocumentWritable(
+                    this._glyphDocs.get(glyphId)!,
+                    glyphDocumentId(glyphId),
+                    this._brokenScope
+                );
+            }
+            // One commit, stamped with glyph revisions like any commit: windows
+            // that keep no socket for these glyphs learn of the writes from the
+            // revision feed, and fetch them. One packet per glyph document.
+            this._withGlyphRevisionCatchUp([...pendingWrites.keys()], () => {
+                for (const [glyphId, writes] of pendingWrites) {
+                    const doc = this._glyphDocs.get(glyphId)!;
+                    this._transactOrMarkBroken(
+                        doc,
+                        glyphDocumentId(glyphId),
+                        () => {
+                            for (const { drawingMap, record } of writes) {
+                                this._replaceDrawingMapContents(
+                                    drawingMap,
+                                    cloneHistoryValue(record) as Record<
+                                        string,
+                                        unknown
+                                    >
+                                );
+                            }
+                        },
+                        LAYOUT_FORWARD_ORIGIN
+                    );
+                    const entries = writes.map(({ target, record }) =>
+                        createLogEntry({
+                            timestamp: Date.now(),
+                            windowId: this.windowId,
+                            windowRoleLabel: this._getWindowRoleLabel(),
+                            historyItemId: this._createHistoryItemId(),
+                            historyAction: 'change',
+                            transactionLabel: 'Settle collaborator cascade',
+                            transactionId: null,
+                            op: 'set',
+                            undoScope: 'layer',
+                            path: joinPathWithGlyphSeparator([
+                                'glyphs',
+                                target.glyphName,
+                                'layers',
+                                target.layerId
+                            ]),
+                            oldValue: undefined,
+                            newValue: cloneHistoryValue(record),
+                            replayOldValue: undefined,
+                            replayNewValue: undefined,
+                            compileChangeSource: 'remote-cascade-preview',
+                            compileEditType: 'anchor'
+                        })
+                    );
+                    // Emitted, not committed: the change log, and so undo, never
+                    // holds it.
+                    this._emitLocalUpdate(
+                        this._takeOutbox(glyphDocumentId(glyphId)),
+                        entries,
+                        glyphDocumentId(glyphId)
+                    );
+                }
+            });
+            // Reads back what the model just wrote.
+            this._withGlyphModelRebuild(
+                'read-back',
+                null,
+                () => {
+                    for (const writes of pendingWrites.values()) {
+                        for (const { target } of writes) {
+                            this._patchDrawingFromYDoc(target);
+                            written.push(target);
+                        }
+                    }
+                },
+                { silent: true }
+            );
+            return written;
+        } finally {
+            this._glyphEvictionSuspendDepth -= 1;
+            if (this._glyphEvictionSuspendDepth === 0) {
+                this._evictIdleLiveGlyphDocs(
+                    PatchSyncEngine.MAX_LIVE_GLYPH_DOCS
+                );
+            }
+        }
     }
 
     /** True when the model shows this drawing other than its document. */
@@ -12687,7 +13047,7 @@ export class PatchSyncEngine {
         const fontModel = (window as Unsafe).fontManager?.currentFont
             ?.fontModel;
         const glyphId = this._glyphIdByName.get(target.glyphName);
-        const doc = glyphId ? this._glyphDocs.get(glyphId) : undefined;
+        const doc = glyphId ? this._wakeGlyphDoc(glyphId) : undefined;
         const drawingMap = (
             doc?.getMap('glyph').get('layers') as Y.Map<unknown> | undefined
         )?.get(target.layerId);
@@ -14367,7 +14727,7 @@ export class PatchSyncEngine {
         tokens: Array<{ glyphId: string; revision: string }>
     ): void {
         for (const { glyphId, revision } of tokens) {
-            const doc = this._glyphDocs.get(glyphId);
+            const doc = this._wakeGlyphDoc(glyphId);
             if (!doc) {
                 continue;
             }
@@ -17087,8 +17447,63 @@ export class PatchSyncEngine {
         return 'font';
     }
 
+    private _trimChangeLogIfNeeded(): void {
+        const MAX_CHANGE_LOG_ENTRIES = 2000;
+        if (this._changeLog.length <= MAX_CHANGE_LOG_ENTRIES) {
+            return;
+        }
+        // Only trim entries already emitted and broadcast so pending packet
+        // cursors stay intact, and never split a logical historyItemId group.
+        const maxTrimmable = Math.min(
+            this._lastLocalUpdateLogIndex,
+            this._lastBroadcastLogIndex
+        );
+        const targetTrim = this._changeLog.length - MAX_CHANGE_LOG_ENTRIES;
+        let cut = Math.min(targetTrim, maxTrimmable);
+        if (cut <= 0) {
+            return;
+        }
+        const boundaryItemId = this._changeLog[cut]?.historyItemId;
+        if (boundaryItemId) {
+            while (
+                cut > 0 &&
+                this._changeLog[cut - 1]?.historyItemId === boundaryItemId
+            ) {
+                cut -= 1;
+            }
+        }
+        if (cut <= 0) {
+            return;
+        }
+        this._changeLog.splice(0, cut);
+        this._lastLocalUpdateLogIndex -= cut;
+        this._lastBroadcastLogIndex -= cut;
+        this._historyGlyphNames = null;
+        if (this._collaboratorTouches.length) {
+            const shifted: Array<{ seq: number; path: string }> = [];
+            for (const touch of this._collaboratorTouches) {
+                const nextSeq = touch.seq - cut;
+                if (nextSeq >= 0) {
+                    shifted.push({ seq: nextSeq, path: touch.path });
+                }
+            }
+            this._collaboratorTouches = shifted;
+        }
+        if (this._collaboratorDrawingSetTouches.length) {
+            const shifted: Array<{ seq: number; glyphName: string }> = [];
+            for (const touch of this._collaboratorDrawingSetTouches) {
+                const nextSeq = touch.seq - cut;
+                if (nextSeq >= 0) {
+                    shifted.push({ seq: nextSeq, glyphName: touch.glyphName });
+                }
+            }
+            this._collaboratorDrawingSetTouches = shifted;
+        }
+    }
+
     private _appendChangeLogEntry(entry: ChangeLogEntry): void {
         this._changeLog.push(normalizeChangeLogEntry(entry));
+        this._trimChangeLogIfNeeded();
         this._notifyChangeLogListeners();
     }
 
@@ -17099,6 +17514,7 @@ export class PatchSyncEngine {
         this._changeLog.push(
             ...entries.map((entry) => normalizeChangeLogEntry(entry))
         );
+        this._trimChangeLogIfNeeded();
         this._notifyChangeLogListeners();
     }
 
@@ -17246,6 +17662,13 @@ export class PatchSyncEngine {
                 (left, right) => left.timestamp - right.timestamp
             );
         }
+        const MAX_COLLABORATION_LOG_ITEMS = 200;
+        if (this._collaborationLog.length > MAX_COLLABORATION_LOG_ITEMS) {
+            this._collaborationLog.splice(
+                0,
+                this._collaborationLog.length - MAX_COLLABORATION_LOG_ITEMS
+            );
+        }
         this._notifyCollaborationLogListeners();
     }
 
@@ -17275,7 +17698,7 @@ export class PatchSyncEngine {
 }
 
 function cloneHistoryValue<T>(value: T): T {
-    if (value === undefined) {
+    if (value === undefined || value === null || typeof value !== 'object') {
         return value;
     }
     return JSON.parse(JSON.stringify(value)) as T;

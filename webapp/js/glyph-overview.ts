@@ -296,12 +296,16 @@ class GlyphOverview extends GlyphOverviewView {
             if (!this.outlinePaintAllowed) {
                 return;
             }
+            this.markViewportFullRepaint();
+            this.scheduleViewportPaint();
             void this.renderGlyphOutlines(this.currentLocation);
         });
         window.addEventListener(PATH_FILL_OPACITY_CHANGED_EVENT, () => {
             if (!this.outlinePaintAllowed) {
                 return;
             }
+            this.markViewportFullRepaint();
+            this.scheduleViewportPaint();
             void this.renderGlyphOutlines(this.currentLocation);
         });
 

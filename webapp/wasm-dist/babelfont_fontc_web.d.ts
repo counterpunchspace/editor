@@ -166,6 +166,11 @@ export function dump_layer_state_json(layer_targets_json: string): string;
 export function dump_worker_cache_state_json(): string;
 
 /**
+ * Serialize the worker's complete cached `FONT_CACHE` directly as `.babelfont` JSON.
+ */
+export function export_cached_font_as_babelfont_json(): string;
+
+/**
  * Run FIP001 boolean subtraction on the cached font and return per-layer
  * outline fingerprints for `glyph_name`. Does not run DropIncompatiblePaths.
  */
@@ -261,6 +266,11 @@ export function get_glyph_name(font_bytes: Uint8Array, glyph_id: number): string
 export function get_glyph_order(font_bytes: Uint8Array): string[];
 
 /**
+ * Hydrate a batch of glyphs directly from `FONT_CACHE` as a JSON array string.
+ */
+export function get_glyphs_json_batch(glyph_names_json: string): string;
+
+/**
  * Get outlines for multiple glyphs with optional component flattening
  *
  * Requires that a font has been stored via store_font() first.
@@ -274,6 +284,12 @@ export function get_glyph_order(font_bytes: Uint8Array): string[];
  * * `String` - JSON array of glyph outline data: '[{"name": "A", "width": 600, "shapes": [...], "bounds": {...}}, ...]'
  */
 export function get_glyphs_outlines(glyph_names_json: string, location_json: string, flatten_components: boolean): string;
+
+/**
+ * Compact binary overview outlines (direct Canvas2D path commands + bounds),
+ * eliminating JSON serialization/parsing and duplicate component flattening.
+ */
+export function get_glyphs_overview_binary(glyph_names_json: string, location_json: string): Uint8Array;
 
 /**
  * Compute layout closure for a set of glyphs
@@ -394,19 +410,26 @@ export function load_glyphspackage_glyphs(fontinfo: string, glyph_files_json: st
 export function load_ufo_glyphs(layout_entries_json: string, glifs_json: string, glyph_names_json: string, master_id: string): string;
 
 /**
- * Open a font file from various formats
- *
- * Supports .glyphs, .glyphspackage, .ufo, .designspace, .vfj, .sfd, .ttf and .babelfont formats.
- * Loads the font, stores it in cache, and returns the babelfont JSON representation.
- *
- * # Arguments
- * * `filename` - The name of the font file (used to determine format)
- * * `contents` - File contents as a JS string (text formats) or `Uint8Array` (raw bytes)
- *
- * # Returns
- * * `String` - Babelfont JSON representation
+ * Merge `font-core` metadata + seeded glyph shards into the existing complete
+ * `FONT_CACHE` (used for local sparse opens so untouched local glyphs remain
+ * resident for compilation, overview rendering, and local save).
  */
+export function merge_ydoc_set_into_font_cache(): void;
+
 export function open_font_file(filename: string, contents: any): string;
+
+/**
+ * Zero-monolithic-JSON local sparse open: parses the source ONCE into
+ * `FONT_CACHE`, populates `CANONICAL_GLYPH_INDEX_CACHE` & feature caches,
+ * and returns only `{ coreFontJson, glyphOrder, glyphCatalog }` (no drawings).
+ */
+export function open_font_file_sparse(filename: string, contents: any): string;
+
+/**
+ * Patch only the named seeded glyph shards into the existing `FONT_CACHE`
+ * in O(k) without rebuilding untouched local glyphs.
+ */
+export function patch_seeded_glyph_shards_into_font_cache(glyph_ids_json: string): void;
 
 /**
  * Prime the committed-state debug layout-closure cache on a lane isolated
@@ -438,6 +461,25 @@ export function remove_masters_yjs(master_ids_json: string): any;
 export function reset_ydoc_set(): void;
 
 /**
+ * Reset Y.Doc state without clearing `FONT_CACHE`, so a local sparse open can
+ * bind `font-core` + initial working-set shards while keeping all untouched
+ * local glyphs resident in `FONT_CACHE`.
+ */
+export function reset_ydoc_set_preserving_font_cache(): void;
+
+/**
+ * Serialize the worker's complete cached `FONT_CACHE` directly as a Glyphs 3
+ * source file (zero JS→Rust monolithic JSON round-trip).
+ */
+export function save_cached_font_as_glyphs(): string;
+
+/**
+ * Serialize the worker's complete cached `FONT_CACHE` as folder source entries
+ * (`"ufo"`, `"glyphspackage"`, or `"designspace"`) without JS→Rust JSON transfer.
+ */
+export function save_cached_font_source_entries(format: string, request_json: string): string;
+
+/**
  * Serialize a babelfont JSON string as a Glyphs 3 source file.
  *
  * Input: a babelfont JSON string (as produced by `open_font_file`).
@@ -445,21 +487,6 @@ export function reset_ydoc_set(): void;
  */
 export function save_font_as_glyphs(babelfont_json: string): string;
 
-/**
- * Serialize a babelfont JSON string as the files of a folder source.
- *
- * `format` is `"ufo"`, `"glyphspackage"` or `"designspace"`; a designspace
- * project's paths are relative to the document's folder, and its request
- * names the `document`. `request_json` is
- * `{ "glyphs": [names] | null, "fontLevel": bool, "layoutEntries": { path: text } }`:
- * with `glyphs`, only those glyphs' files are written (and the font-level
- * files with `fontLevel`), so that a change to one glyph saves one file.
- *
- * Returns `{ "files": { path: text }, "removed": [path] }` with paths relative
- * to the source folder; `removed` lists files a partial save made obsolete.
- * A partial UFO save that would change the UFO's glyph set or layers returns
- * `{ "needsFullSave": reason }` instead.
- */
 export function save_font_source_entries(format: string, babelfont_json: string, request_json: string): string;
 
 /**
@@ -535,10 +562,13 @@ export interface InitOutput {
     readonly designspace_source_files: (a: number, b: number) => [number, number, number, number];
     readonly dump_layer_state_json: (a: number, b: number) => [number, number, number, number];
     readonly dump_worker_cache_state_json: () => [number, number, number, number];
+    readonly export_cached_font_as_babelfont_json: () => [number, number, number, number];
     readonly filtered_boolean_fingerprints: (a: number, b: number) => [number, number, number];
     readonly get_cache_memory_stats: () => [number, number, number, number];
     readonly get_debug_cached_font_bytes: (a: number, b: number) => [number, number, number, number];
+    readonly get_glyphs_json_batch: (a: number, b: number) => [number, number, number, number];
     readonly get_glyphs_outlines: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly get_glyphs_overview_binary: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly get_layout_closure: (a: number, b: number) => [number, number, number, number];
     readonly get_layout_closure_cached: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly init: () => void;
@@ -549,12 +579,18 @@ export interface InitOutput {
     readonly load_designspace_glyphs: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
     readonly load_glyphspackage_glyphs: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly load_ufo_glyphs: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly merge_ydoc_set_into_font_cache: () => [number, number];
     readonly open_font_file: (a: number, b: number, c: any) => [number, number, number, number];
+    readonly open_font_file_sparse: (a: number, b: number, c: any) => [number, number, number, number];
+    readonly patch_seeded_glyph_shards_into_font_cache: (a: number, b: number) => [number, number];
     readonly prime_debug_layout_closure_cache: (a: number, b: number) => [number, number, number];
     readonly prime_layout_closure_cache: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly prime_preview_layout_closure_cache: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly rebuild_caches_from_ydoc_set: () => [number, number];
     readonly reset_ydoc_set: () => void;
+    readonly reset_ydoc_set_preserving_font_cache: () => void;
+    readonly save_cached_font_as_glyphs: () => [number, number, number, number];
+    readonly save_cached_font_source_entries: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly save_font_as_glyphs: (a: number, b: number) => [number, number, number, number];
     readonly save_font_source_entries: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly seed_ydoc: (a: number, b: number) => [number, number];

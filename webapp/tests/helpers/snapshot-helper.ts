@@ -1035,8 +1035,11 @@ export async function waitForOverviewTilesRendered(page: any) {
                         '#glyph-overview-container .glyph-tile canvas'
                     )
                 ) as HTMLCanvasElement[];
+                const viewportCanvas = document.querySelector(
+                    '.glyph-overview-viewport-canvas'
+                ) as HTMLCanvasElement | null;
 
-                if (tileCanvases.length === 0) {
+                if (tileCanvases.length === 0 && !viewportCanvas) {
                     return false;
                 }
 
@@ -1067,6 +1070,48 @@ export async function waitForOverviewTilesRendered(page: any) {
                         '#glyph-overview-container .glyph-tile canvas'
                     )
                 ) as HTMLCanvasElement[];
+
+                if (canvases.length === 0) {
+                    const viewportCanvas = document.querySelector(
+                        '.glyph-overview-viewport-canvas'
+                    ) as HTMLCanvasElement | null;
+                    if (!viewportCanvas) {
+                        return 0;
+                    }
+                    const vw =
+                        viewportCanvas.width || viewportCanvas.clientWidth;
+                    const vh =
+                        viewportCanvas.height || viewportCanvas.clientHeight;
+                    if (vw < 2 || vh < 2) {
+                        return 0;
+                    }
+                    const ctx = viewportCanvas.getContext('2d', {
+                        willReadFrequently: true
+                    });
+                    if (!ctx) {
+                        return 0;
+                    }
+                    try {
+                        const imageData = ctx.getImageData(
+                            0,
+                            0,
+                            Math.min(512, vw),
+                            Math.min(512, vh)
+                        );
+                        const data = imageData.data;
+                        for (let idx = 3; idx < data.length; idx += 16) {
+                            if (data[idx] > 0) {
+                                const visibleTiles = document.querySelectorAll(
+                                    '#glyph-overview-container .glyph-tile'
+                                ).length;
+                                return Math.max(3, Math.min(24, visibleTiles));
+                            }
+                        }
+                    } catch {
+                        return 0;
+                    }
+                    return 0;
+                }
 
                 let paintedCount = 0;
 

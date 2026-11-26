@@ -83,6 +83,12 @@ static SUBSET_GLYPH_INDEX_CACHE: Mutex<Option<(String, HashMap<String, usize>)>>
 /// Shared so read-only callers borrow it instead of copying the whole font.
 static FONT_CACHE: Mutex<Option<Arc<babelfont::Font>>> = Mutex::new(None);
 static FONT_CACHE_BUILT_AT_EPOCH: AtomicU64 = AtomicU64::new(0);
+/// True when `FONT_CACHE` holds a complete local font opened via
+/// `open_font_file_sparse` whose untouched glyphs are not seeded in `GLYPH_DOCS`.
+/// Any cache rebuild must merge Y.Doc changes into `FONT_CACHE` rather than
+/// streaming only seeded shards.
+static LOCAL_SPARSE_BACKED_FONT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// Subset babelfont::Font derived from SUBSET_JSON_CACHE.
 /// Rebuilt lazily — keyed by (subset_key, epoch).
@@ -122,6 +128,11 @@ static Y_DOC_EPOCH: AtomicU64 = AtomicU64::new(0);
 static Y_DOC: Mutex<Option<yrs::Doc>> = Mutex::new(None);
 static GLYPH_DOCS: LazyLock<Mutex<HashMap<String, yrs::Doc>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+static DORMANT_GLYPH_STATES: LazyLock<Mutex<HashMap<String, Vec<u8>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static GLYPH_DOC_LRU: LazyLock<Mutex<VecDeque<String>>> =
+    LazyLock::new(|| Mutex::new(VecDeque::new()));
+const MAX_LIVE_GLYPH_DOCS: usize = 64;
 static GLYPH_ID_BY_NAME: LazyLock<Mutex<HashMap<String, String>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 const FONT_CORE_DOCUMENT_ID: &str = "font-core";
@@ -171,7 +182,9 @@ struct FilteredFontCacheEntry {
     font: Arc<babelfont::Font>,
 }
 
-#[derive(Default)]
+const DEFAULT_DEBUG_FONT_CACHE_MAX_BYTES: usize = 32 * 1024 * 1024;
+const MAX_LAYOUT_CLOSURE_CACHE_ENTRIES: usize = 64;
+
 struct DebugFontBytesCache {
     max_bytes: usize,
     total_bytes: usize,
@@ -179,9 +192,24 @@ struct DebugFontBytesCache {
     lru: VecDeque<String>,
 }
 
+impl Default for DebugFontBytesCache {
+    fn default() -> Self {
+        Self {
+            max_bytes: DEFAULT_DEBUG_FONT_CACHE_MAX_BYTES,
+            total_bytes: 0,
+            entries: HashMap::new(),
+            lru: VecDeque::new(),
+        }
+    }
+}
+
 impl DebugFontBytesCache {
     fn set_max_bytes(&mut self, max_bytes: usize) {
-        self.max_bytes = max_bytes;
+        self.max_bytes = if max_bytes == 0 {
+            DEFAULT_DEBUG_FONT_CACHE_MAX_BYTES
+        } else {
+            max_bytes
+        };
         self.evict_if_needed();
     }
 
@@ -407,9 +435,28 @@ fn json_contains_fip001_boolean(value: &serde_json::Value) -> bool {
     }
 }
 
+fn font_has_fip001_boolean(font: &babelfont::Font) -> bool {
+    font.glyphs.iter().any(|glyph| {
+        glyph.layers.iter().any(|layer| {
+            layer.shapes.iter().any(|shape| match shape {
+                babelfont::Shape::Path(path) => path.format_specific.contains_key("fip001-boolean"),
+                babelfont::Shape::Component(comp) => {
+                    comp.format_specific.contains_key("fip001-boolean")
+                }
+                babelfont::Shape::FormatSpecific(fs) => fs.contains_key("fip001-boolean"),
+            })
+        })
+    })
+}
+
 fn canonical_json_has_fip001_boolean() -> bool {
-    match CANONICAL_JSON_CACHE.lock() {
-        Ok(guard) => guard.as_ref().is_some_and(json_contains_fip001_boolean),
+    if let Ok(guard) = CANONICAL_JSON_CACHE.lock() {
+        if let Some(canonical) = guard.as_ref() {
+            return json_contains_fip001_boolean(canonical);
+        }
+    }
+    match FONT_CACHE.lock() {
+        Ok(guard) => guard.as_deref().is_some_and(font_has_fip001_boolean),
         Err(_) => false,
     }
 }
@@ -583,17 +630,17 @@ fn get_committed_font_fingerprint() -> Result<String, JsValue> {
 }
 
 fn store_subset_cache_json(subset_key: &str, subset_json: serde_json::Value) -> u64 {
+    let glyph_index = build_glyph_index(&subset_json);
     let next_epoch = {
         let mut subset_cache = SUBSET_JSON_CACHE.lock().unwrap();
         let next_epoch = subset_cache
             .as_ref()
             .map_or(1, |(_, epoch, _)| epoch.saturating_add(1));
-        *subset_cache = Some((subset_key.to_string(), next_epoch, subset_json.clone()));
+        *subset_cache = Some((subset_key.to_string(), next_epoch, subset_json));
         next_epoch
     };
 
-    *SUBSET_GLYPH_INDEX_CACHE.lock().unwrap() =
-        Some((subset_key.to_string(), build_glyph_index(&subset_json)));
+    *SUBSET_GLYPH_INDEX_CACHE.lock().unwrap() = Some((subset_key.to_string(), glyph_index));
 
     next_epoch
 }
@@ -1642,14 +1689,24 @@ fn apply_glyph_rename_transaction(
     refresh_masters: bool,
     refresh_features: bool,
 ) -> Result<(), JsValue> {
-    let mut candidate_canonical =
+    let had_canonical_json = CANONICAL_JSON_CACHE.lock().unwrap().is_some();
+    let mut candidate_canonical = if had_canonical_json {
         CANONICAL_JSON_CACHE
             .lock()
             .unwrap()
             .clone()
             .ok_or_else(|| {
                 JsValue::from_str("glyph rename transaction: canonical cache is not initialized")
-            })?;
+            })?
+    } else {
+        let font = get_or_rebuild_font_cache()?;
+        serde_json::to_value(&*font).map_err(|error| {
+            JsValue::from_str(&format!(
+                "glyph rename transaction: failed to serialize native cache: {}",
+                error
+            ))
+        })?
+    };
     let pre_existing_missing = collect_missing_component_references(&candidate_canonical);
     let mut candidate_index = build_glyph_index(&candidate_canonical);
     if refresh_masters {
@@ -1739,7 +1796,9 @@ fn apply_glyph_rename_transaction(
         ))
     })?;
 
-    *CANONICAL_JSON_CACHE.lock().unwrap() = Some(candidate_canonical);
+    if had_canonical_json {
+        *CANONICAL_JSON_CACHE.lock().unwrap() = Some(candidate_canonical);
+    }
     *CANONICAL_GLYPH_INDEX_CACHE.lock().unwrap() = Some(candidate_index);
     *FONT_CACHE.lock().unwrap() = Some(Arc::new(candidate_native));
     *FEATURE_FILE_CACHE.lock().unwrap() = Some(feature_file);
@@ -1918,31 +1977,49 @@ fn get_or_rebuild_font_cache() -> Result<Arc<babelfont::Font>, JsValue> {
     }
 
     let _rebuild_span = PerfSpan::start("rebuild_font_cache");
-    let mut canonical = CANONICAL_JSON_CACHE.lock().unwrap();
-    let json_value = canonical
-        .as_mut()
-        .ok_or_else(|| JsValue::from_str("No font loaded. Open a font first."))?;
-    if let Some(features) = json_value.get_mut("features") {
-        normalize_babelfont_feature_code(features);
-    }
-
-    let font: babelfont::Font = match deserialize_json(json_value) {
-        Ok(font) => font,
-        Err(error) => {
-            let path_diagnostic = serde_json::to_string(json_value)
-                .ok()
-                .and_then(|json_text| {
-                    let mut deserializer = serde_json::Deserializer::from_str(&json_text);
-                    serde_path_to_error::deserialize::<_, babelfont::Font>(&mut deserializer)
-                        .err()
-                        .map(|path_error| format!(" (path: {})", path_error.path()))
-                })
-                .unwrap_or_default();
-            return Err(JsValue::from_str(&format!(
-                "Font deserialization error: {}{}",
-                error, path_diagnostic
-            )));
+    let has_canonical = CANONICAL_JSON_CACHE.lock().unwrap().is_some();
+    let font: babelfont::Font = if has_canonical {
+        let mut canonical = CANONICAL_JSON_CACHE.lock().unwrap();
+        let json_value = canonical
+            .as_mut()
+            .ok_or_else(|| JsValue::from_str("No font loaded. Open a font first."))?;
+        if let Some(features) = json_value.get_mut("features") {
+            normalize_babelfont_feature_code(features);
         }
+
+        match deserialize_json(json_value) {
+            Ok(font) => font,
+            Err(error) => {
+                let path_diagnostic = serde_json::to_string(json_value)
+                    .ok()
+                    .and_then(|json_text| {
+                        let mut deserializer = serde_json::Deserializer::from_str(&json_text);
+                        serde_path_to_error::deserialize::<_, babelfont::Font>(&mut deserializer)
+                            .err()
+                            .map(|path_error| format!(" (path: {})", path_error.path()))
+                    })
+                    .unwrap_or_default();
+                return Err(JsValue::from_str(&format!(
+                    "Font deserialization error: {}{}",
+                    error, path_diagnostic
+                )));
+            }
+        }
+    } else if Y_DOC.lock().unwrap().is_some() {
+        if LOCAL_SPARSE_BACKED_FONT.load(Ordering::Relaxed)
+            && FONT_CACHE.lock().unwrap().is_some()
+        {
+            merge_ydoc_set_into_font_cache()?;
+            return FONT_CACHE
+                .lock()
+                .unwrap()
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| JsValue::from_str("No font loaded. Open a font first."));
+        }
+        stream_native_font_from_ydoc_set()?
+    } else {
+        return Err(JsValue::from_str("No font loaded. Open a font first."));
     };
 
     let font = Arc::new(font);
@@ -2131,6 +2208,37 @@ fn collect_fea_parse_universe_names(
                 }
                 if let Some(name) = entry.get("name").and_then(|v| v.as_str()) {
                     names.insert(name.to_string());
+                }
+            }
+        }
+    } else if let Ok(core_guard) = Y_DOC.lock() {
+        if let Some(core) = core_guard.as_ref() {
+            let txn = core.transact();
+            if let Some(font_map) = txn.get_map("font") {
+                if let Some(order_val) = font_map.get(&txn, "glyphOrder") {
+                    if let Ok(serde_json::Value::Array(order)) =
+                        yrs_value_to_json(order_val, &txn)
+                    {
+                        for name in order {
+                            if let Some(name) = name.as_str() {
+                                names.insert(name.to_string());
+                            }
+                        }
+                    }
+                }
+                if let Some(catalog_val) = font_map.get(&txn, "glyphCatalog") {
+                    if let Ok(serde_json::Value::Object(catalog)) =
+                        yrs_value_to_json(catalog_val, &txn)
+                    {
+                        for entry in catalog.values() {
+                            if entry.get("deleted").and_then(|v| v.as_bool()) == Some(true) {
+                                continue;
+                            }
+                            if let Some(name) = entry.get("name").and_then(|v| v.as_str()) {
+                                names.insert(name.to_string());
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -3306,6 +3414,26 @@ fn compute_layout_closure_cached_internal(
     let mut closure_cache = LAYOUT_CLOSURE_CACHE.lock().unwrap();
     prune_layout_closure_cache_for_subset(&mut closure_cache, &subset_key);
     closure_cache.insert(cache_key.clone(), result.clone());
+    if closure_cache.len() > MAX_LAYOUT_CLOSURE_CACHE_ENTRIES {
+        let pinned_main = LAST_LAYOUT_CLOSURE_CACHE_KEY.lock().unwrap().clone();
+        let pinned_debug = LAST_DEBUG_LAYOUT_CLOSURE_CACHE_KEY.lock().unwrap().clone();
+        let pinned_preview = LAST_PREVIEW_LAYOUT_CLOSURE_CACHE_KEY.lock().unwrap().clone();
+        let excess = closure_cache.len() - MAX_LAYOUT_CLOSURE_CACHE_ENTRIES;
+        let to_evict: Vec<String> = closure_cache
+            .keys()
+            .filter(|k| {
+                *k != &cache_key
+                    && pinned_main.as_ref() != Some(*k)
+                    && pinned_debug.as_ref() != Some(*k)
+                    && pinned_preview.as_ref() != Some(*k)
+            })
+            .take(excess)
+            .cloned()
+            .collect();
+        for key in to_evict {
+            closure_cache.remove(&key);
+        }
+    }
     drop(_store_span);
 
     Ok((cache_key, result))
@@ -4437,12 +4565,108 @@ fn named_glyph_map<T: yrs::ReadTxn>(txn: &T) -> Option<yrs::MapRef> {
 
 #[wasm_bindgen]
 pub fn reset_ydoc_set() {
+    clear_font_cache();
+    reset_ydoc_set_preserving_font_cache();
+}
+
+/// Reset Y.Doc state without clearing `FONT_CACHE`, so a local sparse open can
+/// bind `font-core` + initial working-set shards while keeping all untouched
+/// local glyphs resident in `FONT_CACHE`.
+#[wasm_bindgen]
+pub fn reset_ydoc_set_preserving_font_cache() {
     GLYPH_DOCS.lock().unwrap().clear();
+    DORMANT_GLYPH_STATES.lock().unwrap().clear();
+    GLYPH_DOC_LRU.lock().unwrap().clear();
     GLYPH_ID_BY_NAME.lock().unwrap().clear();
     *FEATURES_DOC.lock().unwrap() = None;
     KERNING_DOCS.lock().unwrap().clear();
     *Y_DOC.lock().unwrap() = None;
     update_integrity::clear_all_broken_documents();
+}
+
+pub(crate) fn has_any_glyph_shards() -> bool {
+    !GLYPH_DOCS.lock().unwrap().is_empty() || !DORMANT_GLYPH_STATES.lock().unwrap().is_empty()
+}
+
+pub(crate) fn decode_glyph_doc_from_bytes(
+    glyph_id: &str,
+    bytes: &[u8],
+) -> Result<yrs::Doc, JsValue> {
+    let document_id = format!("glyph:{}", glyph_id);
+    let doc = yrs::Doc::new();
+    {
+        let mut txn = doc.transact_mut();
+        update_integrity::apply_update_with_integrity(&mut txn, bytes, &document_id)
+            .map_err(|error| JsValue::from_str(&format!("decode_glyph_doc: {}", error)))?;
+    }
+    Ok(doc)
+}
+
+fn touch_glyph_doc_lru(glyph_id: &str) {
+    let mut lru = GLYPH_DOC_LRU.lock().unwrap();
+    if let Some(pos) = lru.iter().position(|id| id == glyph_id) {
+        lru.remove(pos);
+    }
+    lru.push_back(glyph_id.to_string());
+}
+
+fn evict_idle_live_glyph_docs(keep_glyph_id: &str) {
+    let mut docs = GLYPH_DOCS.lock().unwrap();
+    if docs.len() <= MAX_LIVE_GLYPH_DOCS {
+        return;
+    }
+    let mut dormant = DORMANT_GLYPH_STATES.lock().unwrap();
+    let mut lru = GLYPH_DOC_LRU.lock().unwrap();
+    while docs.len() > MAX_LIVE_GLYPH_DOCS {
+        let Some(candidate) = lru.pop_front() else {
+            break;
+        };
+        if candidate == keep_glyph_id {
+            lru.push_back(candidate);
+            break;
+        }
+        if let Some(doc) = docs.remove(&candidate) {
+            let encoded = doc
+                .transact()
+                .encode_state_as_update_v1(&yrs::StateVector::default());
+            dormant.insert(candidate, encoded);
+        }
+    }
+}
+
+fn wake_glyph_doc_into_live(glyph_id: &str) -> Result<bool, JsValue> {
+    if GLYPH_DOCS.lock().unwrap().contains_key(glyph_id) {
+        touch_glyph_doc_lru(glyph_id);
+        return Ok(true);
+    }
+    let maybe_bytes = DORMANT_GLYPH_STATES.lock().unwrap().remove(glyph_id);
+    let Some(bytes) = maybe_bytes else {
+        return Ok(false);
+    };
+    let doc = decode_glyph_doc_from_bytes(glyph_id, &bytes)?;
+    GLYPH_DOCS.lock().unwrap().insert(glyph_id.to_string(), doc);
+    touch_glyph_doc_lru(glyph_id);
+    evict_idle_live_glyph_docs(glyph_id);
+    Ok(true)
+}
+
+fn with_glyph_doc_readonly<F, R>(glyph_id: &str, f: F) -> Result<Option<R>, String>
+where
+    F: FnOnce(&yrs::Doc) -> Result<R, String>,
+{
+    {
+        let docs = GLYPH_DOCS.lock().unwrap();
+        if let Some(doc) = docs.get(glyph_id) {
+            return f(doc).map(Some);
+        }
+    }
+    let maybe_bytes = DORMANT_GLYPH_STATES.lock().unwrap().get(glyph_id).cloned();
+    let Some(bytes) = maybe_bytes else {
+        return Ok(None);
+    };
+    let temp_doc = decode_glyph_doc_from_bytes(glyph_id, &bytes)
+        .map_err(|err| err.as_string().unwrap_or_else(|| format!("{:?}", err)))?;
+    f(&temp_doc).map(Some)
 }
 
 fn layout_bucket(document_id: &str, prefix: &str) -> Option<u32> {
@@ -4615,7 +4839,12 @@ pub fn seed_ydoc_document(document_id: &str, state_update: &[u8]) -> Result<(), 
     }
     if let Some(glyph_id) = glyph_id_from_document_id(document_id) {
         remember_glyph_name(glyph_id, &doc);
-        GLYPH_DOCS.lock().unwrap().insert(glyph_id.to_string(), doc);
+        drop(doc);
+        GLYPH_DOCS.lock().unwrap().remove(glyph_id);
+        DORMANT_GLYPH_STATES
+            .lock()
+            .unwrap()
+            .insert(glyph_id.to_string(), state_update.to_vec());
         return Ok(());
     }
     if document_id == FONT_DEPS_DOCUMENT_ID || is_catalog_document_id(document_id) {
@@ -4639,20 +4868,327 @@ pub fn seed_ydoc_document(document_id: &str, state_update: &[u8]) -> Result<(), 
     Ok(())
 }
 
+/// Stream a `babelfont::Font` directly from `Y_DOC` + dormant/live glyph shards
+/// one glyph at a time, without materializing a full-font `serde_json::Value` tree.
+fn stream_native_font_from_ydoc_set() -> Result<babelfont::Font, JsValue> {
+    let mut core_json = {
+        let core_guard = Y_DOC.lock().unwrap();
+        let Some(core) = core_guard.as_ref() else {
+            return Err(JsValue::from_str("No font loaded. Open a font first."));
+        };
+        let txn = core.transact();
+        ydoc_to_babelfont_json_with_txn(&txn).map_err(|error| JsValue::from_str(&error))?
+    };
+
+    if !has_any_glyph_shards() {
+        if core_json.get("glyphs").is_none() {
+            core_json["glyphs"] = serde_json::Value::Array(Vec::new());
+        }
+        if let Some(features) = core_json.get_mut("features") {
+            normalize_babelfont_feature_code(features);
+        }
+        return deserialize_font_from_value(&core_json);
+    }
+
+    let order: Vec<String> = core_json
+        .get("glyphOrder")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_else(|| GLYPH_ID_BY_NAME.lock().unwrap().keys().cloned().collect());
+    let id_by_name = GLYPH_ID_BY_NAME.lock().unwrap().clone();
+    let order = complete_glyph_order(order, &id_by_name);
+
+    core_json["glyphs"] = serde_json::Value::Array(Vec::new());
+    if let Some(features) = core_json.get_mut("features") {
+        normalize_babelfont_feature_code(features);
+    }
+    let mut font = deserialize_font_from_value(&core_json)?;
+    drop(core_json);
+
+    for name in order {
+        let Some(glyph_id) = id_by_name.get(&name) else {
+            continue;
+        };
+        let maybe_glyph = with_glyph_doc_readonly(glyph_id, |glyph_doc| {
+            let glyph_txn = glyph_doc.transact();
+            let Some(glyph_map) = named_glyph_map(&glyph_txn) else {
+                return Ok(None);
+            };
+            let glyph_json = ydoc_glyph_to_json(&name, &glyph_map, &glyph_txn)?;
+            let glyph: babelfont::Glyph = serde_json::from_value(glyph_json)
+                .map_err(|error| format!("glyph {}: {}", name, error))?;
+            Ok(Some(glyph))
+        })
+        .map_err(|error| JsValue::from_str(&error))?;
+        if let Some(Some(glyph)) = maybe_glyph {
+            font.glyphs.push(glyph);
+        }
+    }
+
+    Ok(font)
+}
+
+fn install_native_font_cache(font: babelfont::Font) {
+    let glyph_index: HashMap<String, usize> = font
+        .glyphs
+        .iter()
+        .enumerate()
+        .map(|(idx, g)| (g.name.to_string(), idx))
+        .collect();
+    let fea = font.features.to_fea();
+    let font_glyphs: Vec<String> = font.glyphs.iter().map(|g| g.name.to_string()).collect();
+    let font_glyphs_ref: Vec<&str> = font_glyphs.iter().map(|s| s.as_str()).collect();
+    let new_feature_file =
+        FeatureFile::new_from_fea(&fea, Some(&font_glyphs_ref), font.source.clone()).ok();
+
+    *CANONICAL_JSON_CACHE.lock().unwrap() = None;
+    *CANONICAL_GLYPH_INDEX_CACHE.lock().unwrap() = Some(glyph_index);
+    reset_debug_font_caches_with_fingerprint(Some(next_canonical_fingerprint()));
+    *FONT_CACHE.lock().unwrap() = Some(Arc::new(font));
+    *FEATURE_FILE_CACHE.lock().unwrap() = new_feature_file;
+    *FEATURE_FEA_STRING_CACHE.lock().unwrap() = Some((fea, font_glyphs));
+
+    let next_epoch = FONT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed) + 1;
+    FONT_CACHE_BUILT_AT_EPOCH.store(next_epoch, Ordering::Relaxed);
+    SUBSET_FONT_CACHE_BUILT_AT_EPOCH.store(0, Ordering::Relaxed);
+    FILTER_EPOCH.fetch_add(1, Ordering::Relaxed);
+}
+
 #[wasm_bindgen]
 pub fn rebuild_caches_from_ydoc_set() -> Result<(), JsValue> {
     let _span = PerfSpan::start("rebuild_caches_from_ydoc_set.total");
-    let json_value = {
-        let _assemble_span = PerfSpan::start("rebuild_caches_from_ydoc_set.assemble_json");
-        assembled_babelfont_json()?
+    LOCAL_SPARSE_BACKED_FONT.store(false, Ordering::Relaxed);
+    // Drop stale caches BEFORE streaming the new native Font so WASM linear
+    // memory never holds two full fonts or a full-font serde_json::Value tree.
+    *CANONICAL_JSON_CACHE.lock().unwrap() = None;
+    *CANONICAL_GLYPH_INDEX_CACHE.lock().unwrap() = None;
+    *FONT_CACHE.lock().unwrap() = None;
+    *SUBSET_JSON_CACHE.lock().unwrap() = None;
+    *SUBSET_GLYPH_INDEX_CACHE.lock().unwrap() = None;
+    *SUBSET_FONT_CACHE.lock().unwrap() = None;
+    *FILTERED_FONT_CACHE.lock().unwrap() = None;
+    *FEATURE_FILE_CACHE.lock().unwrap() = None;
+    *FEATURE_FEA_STRING_CACHE.lock().unwrap() = None;
+    glyph_outlines::clear_outline_cache();
+    clear_preview_overlay_internal();
+
+    let font = stream_native_font_from_ydoc_set()?;
+    install_native_font_cache(font);
+    Ok(())
+}
+
+/// Merge `font-core` metadata + seeded glyph shards into the existing complete
+/// `FONT_CACHE` (used for local sparse opens so untouched local glyphs remain
+/// resident for compilation, overview rendering, and local save).
+#[wasm_bindgen]
+pub fn merge_ydoc_set_into_font_cache() -> Result<(), JsValue> {
+    let _span = PerfSpan::start("merge_ydoc_set_into_font_cache.total");
+    if FONT_CACHE.lock().unwrap().is_none() {
+        return rebuild_caches_from_ydoc_set();
+    }
+
+    let mut core_json = {
+        let core_guard = Y_DOC.lock().unwrap();
+        let Some(core) = core_guard.as_ref() else {
+            return Err(JsValue::from_str("No font loaded. Open a font first."));
+        };
+        let txn = core.transact();
+        ydoc_to_babelfont_json_with_txn(&txn).map_err(|error| JsValue::from_str(&error))?
     };
-    store_font_from_value(json_value)
+
+    let deleted_names: HashSet<String> = core_json
+        .get("glyphCatalog")
+        .and_then(|v| v.as_object())
+        .map(|catalog| {
+            catalog
+                .values()
+                .filter(|entry| entry.get("deleted").and_then(|v| v.as_bool()) == Some(true))
+                .filter_map(|entry| entry.get("name").and_then(|v| v.as_str()).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let id_by_name = GLYPH_ID_BY_NAME.lock().unwrap().clone();
+    let mut order: Vec<String> = core_json
+        .get("glyphOrder")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    core_json["glyphs"] = serde_json::Value::Array(Vec::new());
+    if let Some(features) = core_json.get_mut("features") {
+        normalize_babelfont_feature_code(features);
+    }
+    let mut merged_font = deserialize_font_from_value(&core_json)?;
+    drop(core_json);
+
+    // Take FONT_CACHE only after core deserialization succeeded so an error
+    // never leaves FONT_CACHE empty.
+    let Some(previous_font_arc) = FONT_CACHE.lock().unwrap().take() else {
+        return rebuild_caches_from_ydoc_set();
+    };
+    *CANONICAL_JSON_CACHE.lock().unwrap() = None;
+    *CANONICAL_GLYPH_INDEX_CACHE.lock().unwrap() = None;
+    *SUBSET_JSON_CACHE.lock().unwrap() = None;
+    *SUBSET_GLYPH_INDEX_CACHE.lock().unwrap() = None;
+    *SUBSET_FONT_CACHE.lock().unwrap() = None;
+    *FILTERED_FONT_CACHE.lock().unwrap() = None;
+    *FEATURE_FILE_CACHE.lock().unwrap() = None;
+    *FEATURE_FEA_STRING_CACHE.lock().unwrap() = None;
+    glyph_outlines::clear_outline_cache();
+    clear_preview_overlay_internal();
+
+    // Unwrap without cloning when we hold the sole Arc reference (the normal case).
+    let previous_font = match Arc::try_unwrap(previous_font_arc) {
+        Ok(font) => font,
+        Err(arc) => (*arc).clone(),
+    };
+    let mut untouched_by_name: HashMap<String, babelfont::Glyph> =
+        HashMap::with_capacity(previous_font.glyphs.len());
+    let mut prev_order: Vec<String> = Vec::with_capacity(previous_font.glyphs.len());
+    for glyph in previous_font.glyphs.0 {
+        let name = glyph.name.to_string();
+        prev_order.push(name.clone());
+        untouched_by_name.insert(name, glyph);
+    }
+
+    if order.is_empty() {
+        order = prev_order;
+    } else {
+        let mut seen: HashSet<String> = order.iter().cloned().collect();
+        for name in prev_order {
+            if !deleted_names.contains(&name) && seen.insert(name.clone()) {
+                order.push(name);
+            }
+        }
+    }
+    let order = complete_glyph_order(order, &id_by_name);
+
+    for name in order {
+        if deleted_names.contains(&name) {
+            continue;
+        }
+        if let Some(glyph_id) = id_by_name.get(&name) {
+            let maybe_glyph = with_glyph_doc_readonly(glyph_id, |glyph_doc| {
+                let glyph_txn = glyph_doc.transact();
+                let Some(glyph_map) = named_glyph_map(&glyph_txn) else {
+                    return Ok(None);
+                };
+                let glyph_json = ydoc_glyph_to_json(&name, &glyph_map, &glyph_txn)?;
+                let glyph: babelfont::Glyph = serde_json::from_value(glyph_json)
+                    .map_err(|error| format!("glyph {}: {}", name, error))?;
+                Ok(Some(glyph))
+            })
+            .map_err(|error| JsValue::from_str(&error))?;
+            untouched_by_name.remove(&name);
+            if let Some(Some(glyph)) = maybe_glyph {
+                merged_font.glyphs.push(glyph);
+            }
+        } else if let Some(glyph) = untouched_by_name.remove(&name) {
+            merged_font.glyphs.push(glyph);
+        }
+    }
+
+    install_native_font_cache(merged_font);
+    LOCAL_SPARSE_BACKED_FONT.store(true, Ordering::Relaxed);
+    Ok(())
+}
+
+/// Patch only the named seeded glyph shards into the existing `FONT_CACHE`
+/// in O(k) without rebuilding untouched local glyphs.
+#[wasm_bindgen]
+pub fn patch_seeded_glyph_shards_into_font_cache(glyph_ids_json: &str) -> Result<(), JsValue> {
+    let glyph_ids: Vec<String> = serde_json::from_str(glyph_ids_json)
+        .map_err(|e| JsValue::from_str(&format!("Invalid glyph_ids_json: {}", e)))?;
+    if glyph_ids.is_empty() {
+        return Ok(());
+    }
+
+    let mut font_guard = FONT_CACHE.lock().unwrap();
+    let Some(font_arc) = font_guard.as_mut() else {
+        drop(font_guard);
+        return rebuild_caches_from_ydoc_set();
+    };
+    let font = Arc::make_mut(font_arc);
+    let mut index_guard = CANONICAL_GLYPH_INDEX_CACHE.lock().unwrap();
+    let index_map = index_guard.get_or_insert_with(|| {
+        font.glyphs
+            .iter()
+            .enumerate()
+            .map(|(i, g)| (g.name.to_string(), i))
+            .collect()
+    });
+
+    let mut touched_names: Vec<String> = Vec::with_capacity(glyph_ids.len());
+    for glyph_id in &glyph_ids {
+        let maybe_glyph = with_glyph_doc_readonly(glyph_id, |glyph_doc| {
+            let glyph_txn = glyph_doc.transact();
+            let Some(glyph_map) = named_glyph_map(&glyph_txn) else {
+                return Ok(None);
+            };
+            let name = match glyph_map.get(&glyph_txn, "name") {
+                Some(yrs::types::Value::Any(yrs::Any::String(n))) => n.to_string(),
+                _ => return Ok(None),
+            };
+            let glyph_json = ydoc_glyph_to_json(&name, &glyph_map, &glyph_txn)?;
+            let glyph: babelfont::Glyph = serde_json::from_value(glyph_json)
+                .map_err(|error| format!("glyph {}: {}", name, error))?;
+            Ok(Some(glyph))
+        })
+        .map_err(|error| JsValue::from_str(&error))?;
+
+        if let Some(Some(glyph)) = maybe_glyph {
+            let name = glyph.name.to_string();
+            touched_names.push(name.clone());
+            if let Some(&idx) = index_map.get(&name) {
+                if let Some(slot) = font.glyphs.get_by_index_mut(idx) {
+                    *slot = glyph;
+                }
+            } else {
+                let idx = font.glyphs.len();
+                font.glyphs.push(glyph);
+                index_map.insert(name, idx);
+            }
+        }
+    }
+    drop(index_guard);
+    drop(font_guard);
+
+    for name in &touched_names {
+        glyph_outlines::clear_outline_cache_for_glyph(name);
+    }
+    *SUBSET_JSON_CACHE.lock().unwrap() = None;
+    *SUBSET_GLYPH_INDEX_CACHE.lock().unwrap() = None;
+    *SUBSET_FONT_CACHE.lock().unwrap() = None;
+    *FILTERED_FONT_CACHE.lock().unwrap() = None;
+    let next_epoch = FONT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed) + 1;
+    FONT_CACHE_BUILT_AT_EPOCH.store(next_epoch, Ordering::Relaxed);
+    SUBSET_FONT_CACHE_BUILT_AT_EPOCH.store(0, Ordering::Relaxed);
+    FILTER_EPOCH.fetch_add(1, Ordering::Relaxed);
+    Ok(())
 }
 
 /// Apply a delta to a loaded glyph document. A glyph document is only ever
 /// created from its whole state by `seed_ydoc_document`, never from a delta.
 fn apply_update_to_glyph_doc(glyph_id: &str, update: &[u8]) -> Result<(), JsValue> {
     let document_id = format!("glyph:{}", glyph_id);
+    if !wake_glyph_doc_into_live(glyph_id)? {
+        return Err(JsValue::from_str(&format!(
+            "apply_yjs_update: {}: document {} is not loaded; seed it with its whole state first",
+            update_integrity::CLOCK_GAP_ERROR,
+            document_id
+        )));
+    }
     let mut docs = GLYPH_DOCS.lock().unwrap();
     let doc = docs.get_mut(glyph_id).ok_or_else(|| {
         JsValue::from_str(&format!(
@@ -4671,46 +5207,56 @@ fn apply_update_to_glyph_doc(glyph_id: &str, update: &[u8]) -> Result<(), JsValu
 }
 
 fn ydoc_glyph_json_from_shards(glyph_name: &str) -> Result<Option<serde_json::Value>, String> {
-    let docs = GLYPH_DOCS.lock().unwrap();
-    if docs.is_empty() {
+    if !has_any_glyph_shards() {
         return Ok(None);
     }
-    let ids = GLYPH_ID_BY_NAME.lock().unwrap();
-    let Some(doc) = ids.get(glyph_name).and_then(|glyph_id| docs.get(glyph_id)) else {
+    let glyph_id = {
+        let ids = GLYPH_ID_BY_NAME.lock().unwrap();
+        ids.get(glyph_name).cloned()
+    };
+    let Some(glyph_id) = glyph_id else {
         return Ok(None);
     };
-    let txn = doc.transact();
-    let Some(glyph_map) = named_glyph_map(&txn) else {
-        return Ok(None);
-    };
-    ydoc_glyph_to_json(glyph_name, &glyph_map, &txn).map(Some)
+    let result = with_glyph_doc_readonly(&glyph_id, |doc| {
+        let txn = doc.transact();
+        let Some(glyph_map) = named_glyph_map(&txn) else {
+            return Ok(None);
+        };
+        ydoc_glyph_to_json(glyph_name, &glyph_map, &txn).map(Some)
+    })?;
+    Ok(result.flatten())
 }
 
 fn ydoc_layer_json_from_shards(
     glyph_name: &str,
     layer_id: &str,
 ) -> Result<Option<serde_json::Value>, String> {
-    let docs = GLYPH_DOCS.lock().unwrap();
-    if docs.is_empty() {
+    if !has_any_glyph_shards() {
         return Ok(None);
     }
-    let ids = GLYPH_ID_BY_NAME.lock().unwrap();
-    let Some(doc) = ids.get(glyph_name).and_then(|glyph_id| docs.get(glyph_id)) else {
+    let glyph_id = {
+        let ids = GLYPH_ID_BY_NAME.lock().unwrap();
+        ids.get(glyph_name).cloned()
+    };
+    let Some(glyph_id) = glyph_id else {
         return Ok(None);
     };
-    let txn = doc.transact();
-    let Some(glyph_map) = txn.get_map("glyph") else {
-        return Ok(None);
-    };
-    let Some(yrs::types::Value::YMap(layers_map)) = glyph_map.get(&txn, "layers") else {
-        return Ok(None);
-    };
-    let Some(layer_val) = layers_map.get(&txn, layer_id) else {
-        return Ok(None);
-    };
-    ydoc_layer_to_json(layer_id, layer_val, &txn)
-        .map(Some)
-        .map_err(|error| format!("glyph {glyph_name}: {error}"))
+    let result = with_glyph_doc_readonly(&glyph_id, |doc| {
+        let txn = doc.transact();
+        let Some(glyph_map) = txn.get_map("glyph") else {
+            return Ok(None);
+        };
+        let Some(yrs::types::Value::YMap(layers_map)) = glyph_map.get(&txn, "layers") else {
+            return Ok(None);
+        };
+        let Some(layer_val) = layers_map.get(&txn, layer_id) else {
+            return Ok(None);
+        };
+        ydoc_layer_to_json(layer_id, layer_val, &txn)
+            .map(Some)
+            .map_err(|error| format!("glyph {glyph_name}: {error}"))
+    })?;
+    Ok(result.flatten())
 }
 
 fn complete_glyph_order(
@@ -4727,58 +5273,6 @@ fn complete_glyph_order(
     remaining_names.sort();
     order.extend(remaining_names);
     order
-}
-
-fn assembled_babelfont_json() -> Result<serde_json::Value, JsValue> {
-    let mut json = {
-        let core_guard = Y_DOC.lock().unwrap();
-        let Some(core) = core_guard.as_ref() else {
-            return Ok(serde_json::Value::Object(serde_json::Map::new()));
-        };
-        let txn = core.transact();
-        ydoc_to_babelfont_json_with_txn(&txn).map_err(|error| JsValue::from_str(&error))?
-    };
-    if json.get("glyphs").is_none() {
-        json["glyphs"] = serde_json::Value::Array(Vec::new());
-    }
-    let glyph_docs = GLYPH_DOCS.lock().unwrap();
-    if glyph_docs.is_empty() {
-        return Ok(json);
-    }
-    let order: Vec<String> = json
-        .get("glyphOrder")
-        .and_then(|value| value.as_array())
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_else(|| GLYPH_ID_BY_NAME.lock().unwrap().keys().cloned().collect());
-    let id_by_name = GLYPH_ID_BY_NAME.lock().unwrap();
-    // Sparse core keeps only the opening subset in glyphOrder. Glyph shards
-    // hydrated later must still enter the canonical worker font so overview
-    // outline requests can render them.
-    let order = complete_glyph_order(order, &id_by_name);
-    let mut glyphs = Vec::new();
-    for name in order {
-        let Some(glyph_id) = id_by_name.get(&name) else {
-            continue;
-        };
-        let Some(glyph_doc) = glyph_docs.get(glyph_id) else {
-            continue;
-        };
-        let glyph_txn = glyph_doc.transact();
-        let Some(glyph_map) = named_glyph_map(&glyph_txn) else {
-            continue;
-        };
-        glyphs.push(
-            ydoc_glyph_to_json(&name, &glyph_map, &glyph_txn)
-                .map_err(|error| JsValue::from_str(&error))?,
-        );
-    }
-    json["glyphs"] = serde_json::Value::Array(glyphs);
-    Ok(json)
 }
 
 fn clear_active_subset_caches_for_closure_invalidation() {
@@ -4895,12 +5389,13 @@ fn replace_axes_in_font_cache(
 fn refresh_masters_related_caches_from_ydoc<T: ReadTxn>(txn: &T) -> Result<(), JsValue> {
     let masters_json = top_level_json_or_js("masters", txn)?;
 
+    let has_native = FONT_CACHE.lock().unwrap().is_some();
     let mut canonical_missing = false;
     {
         let mut canonical_lock = CANONICAL_JSON_CACHE.lock().unwrap();
         if let Some(ref mut canonical) = *canonical_lock {
             replace_top_level_json_entry(canonical, "masters", masters_json.clone());
-        } else {
+        } else if !has_native {
             canonical_missing = true;
         }
     }
@@ -4973,6 +5468,7 @@ fn refresh_kerning_related_caches_from_ydoc<T: ReadTxn>(
         None
     };
 
+    let has_native = FONT_CACHE.lock().unwrap().is_some();
     let mut canonical_missing = false;
     {
         let mut canonical_lock = CANONICAL_JSON_CACHE.lock().unwrap();
@@ -4997,7 +5493,7 @@ fn refresh_kerning_related_caches_from_ydoc<T: ReadTxn>(
                     second_kern_groups_json.clone(),
                 );
             }
-        } else {
+        } else if !has_native {
             canonical_missing = true;
         }
     }
@@ -5050,9 +5546,18 @@ fn refresh_kerning_related_caches_from_ydoc<T: ReadTxn>(
     let font_cache_was_current = FONT_CACHE_EPOCH.load(Ordering::Relaxed)
         == FONT_CACHE_BUILT_AT_EPOCH.load(Ordering::Relaxed);
     let patched_font_cache = font_cache_was_current
-        && patch_native_font_kerning_from_canonical(refresh_master_kerning, refresh_kern_groups)
-            .is_some();
-    if !patched_font_cache {
+        && (patch_native_font_kerning_from_canonical(refresh_master_kerning, refresh_kern_groups)
+            .is_some()
+            || patch_native_font_kerning_from_json(
+                refresh_master_kerning,
+                refresh_kern_groups,
+                masters_json.as_ref(),
+                format_specific_json.as_ref(),
+                first_kern_groups_json.as_ref(),
+                second_kern_groups_json.as_ref(),
+            )
+            .is_some());
+    if !patched_font_cache && !LOCAL_SPARSE_BACKED_FONT.load(Ordering::Relaxed) {
         *FONT_CACHE.lock().unwrap() = None;
     }
     *SUBSET_FONT_CACHE.lock().unwrap() = None;
@@ -5124,6 +5629,42 @@ fn patch_native_font_kerning_from_canonical(
     Some(())
 }
 
+fn patch_native_font_kerning_from_json(
+    refresh_master_kerning: bool,
+    refresh_kern_groups: bool,
+    masters_json: Option<&serde_json::Value>,
+    format_specific_json: Option<&serde_json::Value>,
+    first_kern_groups_json: Option<&serde_json::Value>,
+    second_kern_groups_json: Option<&serde_json::Value>,
+) -> Option<()> {
+    let mut font_lock = FONT_CACHE.lock().unwrap();
+    let font = Arc::make_mut(font_lock.as_mut()?);
+    if refresh_master_kerning {
+        if let Some(masters_val) = masters_json {
+            let incoming_masters: Vec<babelfont::Master> = deserialize_json(masters_val).ok()?;
+            for (existing, incoming) in font.masters.iter_mut().zip(incoming_masters.into_iter()) {
+                existing.kerning = incoming.kerning;
+                existing.kerning_rtl = incoming.kerning_rtl;
+            }
+        }
+        font.format_specific = match format_specific_json {
+            Some(val) => deserialize_json(val).ok()?,
+            None => Default::default(),
+        };
+    }
+    if refresh_kern_groups {
+        font.first_kern_groups = match first_kern_groups_json {
+            Some(val) => deserialize_json(val).ok()?,
+            None => Default::default(),
+        };
+        font.second_kern_groups = match second_kern_groups_json {
+            Some(val) => deserialize_json(val).ok()?,
+            None => Default::default(),
+        };
+    }
+    Some(())
+}
+
 fn refresh_top_level_caches_from_ydoc<T: ReadTxn>(txn: &T, keys: &[&str]) -> Result<(), JsValue> {
     if keys.is_empty() {
         return Err(JsValue::from_str(
@@ -5136,15 +5677,17 @@ fn refresh_top_level_caches_from_ydoc<T: ReadTxn>(txn: &T, keys: &[&str]) -> Res
         .map(|key| top_level_json_or_js(key, txn).map(|value| (*key, value)))
         .collect::<Result<_, _>>()?;
 
+    let has_native = FONT_CACHE.lock().unwrap().is_some();
     {
         let mut canonical_lock = CANONICAL_JSON_CACHE.lock().unwrap();
-        let Some(canonical) = canonical_lock.as_mut() else {
+        if let Some(canonical) = canonical_lock.as_mut() {
+            for (key, value) in &values {
+                replace_top_level_json_entry(canonical, key, value.clone());
+            }
+        } else if !has_native {
             return Err(JsValue::from_str(
                 "apply_yjs_update: canonical cache is not initialized",
             ));
-        };
-        for (key, value) in &values {
-            replace_top_level_json_entry(canonical, key, value.clone());
         }
     }
 
@@ -5161,7 +5704,9 @@ fn refresh_top_level_caches_from_ydoc<T: ReadTxn>(txn: &T, keys: &[&str]) -> Res
         }
     }
 
-    *FONT_CACHE.lock().unwrap() = None;
+    if !LOCAL_SPARSE_BACKED_FONT.load(Ordering::Relaxed) {
+        *FONT_CACHE.lock().unwrap() = None;
+    }
     *SUBSET_FONT_CACHE.lock().unwrap() = None;
     *FILTERED_FONT_CACHE.lock().unwrap() = None;
     *FEATURE_FILE_CACHE.lock().unwrap() = None;
@@ -5180,12 +5725,13 @@ fn refresh_top_level_caches_from_ydoc<T: ReadTxn>(txn: &T, keys: &[&str]) -> Res
 fn refresh_feature_related_caches_from_ydoc<T: ReadTxn>(txn: &T) -> Result<(), JsValue> {
     let features_json = top_level_json_or_js("features", txn)?;
 
+    let has_native = FONT_CACHE.lock().unwrap().is_some();
     let mut canonical_missing = false;
     {
         let mut canonical_lock = CANONICAL_JSON_CACHE.lock().unwrap();
         if let Some(ref mut canonical) = *canonical_lock {
             replace_top_level_json_entry(canonical, "features", features_json.clone());
-        } else {
+        } else if !has_native {
             canonical_missing = true;
         }
     }
@@ -5209,7 +5755,7 @@ fn refresh_feature_related_caches_from_ydoc<T: ReadTxn>(txn: &T) -> Result<(), J
                 Some(())
             })
             .is_some();
-    if !patched_font_cache {
+    if !patched_font_cache && !LOCAL_SPARSE_BACKED_FONT.load(Ordering::Relaxed) {
         *FONT_CACHE.lock().unwrap() = None;
     }
     // A subset holds feature source already pruned by RetainGlyphs. Replacing
@@ -5279,6 +5825,18 @@ fn store_font_from_value(mut json_value: serde_json::Value) -> Result<(), JsValu
     if json_value.get("glyphs").is_none() {
         json_value["glyphs"] = serde_json::Value::Array(Vec::new());
     }
+    // Release stale derived caches BEFORE allocating the new babelfont::Font
+    // and FeatureFile so WASM linear memory does not double at peak.
+    *FONT_CACHE.lock().unwrap() = None;
+    *SUBSET_JSON_CACHE.lock().unwrap() = None;
+    *SUBSET_GLYPH_INDEX_CACHE.lock().unwrap() = None;
+    *SUBSET_FONT_CACHE.lock().unwrap() = None;
+    *FILTERED_FONT_CACHE.lock().unwrap() = None;
+    *FEATURE_FILE_CACHE.lock().unwrap() = None;
+    *FEATURE_FEA_STRING_CACHE.lock().unwrap() = None;
+    glyph_outlines::clear_outline_cache();
+    clear_preview_overlay_internal();
+
     // Deserialize into babelfont::Font straight from the value (no string
     // round trip), then move the value into the canonical cache. The cache is
     // installed before a deserialization error is returned, as before.
@@ -5304,19 +5862,11 @@ fn store_font_from_value(mut json_value: serde_json::Value) -> Result<(), JsValu
     *FEATURE_FILE_CACHE.lock().unwrap() = new_feature_file;
     *FEATURE_FEA_STRING_CACHE.lock().unwrap() = Some((fea, font_glyphs));
 
-    // Clear subset caches — they need rebuilding with the new font
-    *SUBSET_JSON_CACHE.lock().unwrap() = None;
-    *SUBSET_GLYPH_INDEX_CACHE.lock().unwrap() = None;
-    *SUBSET_FONT_CACHE.lock().unwrap() = None;
-    *FILTERED_FONT_CACHE.lock().unwrap() = None;
-
     let next_epoch = FONT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed) + 1;
     FONT_CACHE_BUILT_AT_EPOCH.store(next_epoch, Ordering::Relaxed);
     SUBSET_FONT_CACHE_BUILT_AT_EPOCH.store(0, Ordering::Relaxed);
     FILTER_EPOCH.fetch_add(1, Ordering::Relaxed);
 
-    glyph_outlines::clear_outline_cache();
-    clear_preview_overlay_internal();
     Ok(())
 }
 
@@ -5384,7 +5934,23 @@ pub fn init_ydoc_from_state(state_update: &[u8]) -> Result<(), JsValue> {
     // Could be made incremental with targeted top-level key patching — lower
     // priority since no boundary crossing.
     let _span = PerfSpan::start("init_ydoc_from_state.total");
+    // Drop previous Y.Doc and derived caches before decoding the new state
+    // so WASM linear memory does not hold two full documents at peak.
+    *Y_DOC.lock().unwrap() = None;
+    *CANONICAL_JSON_CACHE.lock().unwrap() = None;
+    *CANONICAL_GLYPH_INDEX_CACHE.lock().unwrap() = None;
+    *FONT_CACHE.lock().unwrap() = None;
+    *SUBSET_JSON_CACHE.lock().unwrap() = None;
+    *SUBSET_GLYPH_INDEX_CACHE.lock().unwrap() = None;
+    *SUBSET_FONT_CACHE.lock().unwrap() = None;
+    *FILTERED_FONT_CACHE.lock().unwrap() = None;
+    *FEATURE_FILE_CACHE.lock().unwrap() = None;
+    *FEATURE_FEA_STRING_CACHE.lock().unwrap() = None;
+    glyph_outlines::clear_outline_cache();
+    clear_preview_overlay_internal();
     GLYPH_DOCS.lock().unwrap().clear();
+    DORMANT_GLYPH_STATES.lock().unwrap().clear();
+    GLYPH_DOC_LRU.lock().unwrap().clear();
     GLYPH_ID_BY_NAME.lock().unwrap().clear();
     update_integrity::clear_all_broken_documents();
 
@@ -5861,8 +6427,9 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                 } else {
                     let _partial_span = PerfSpan::start("apply_yjs_update.partial_update");
                     let mut canonical_lock = CANONICAL_JSON_CACHE.lock().unwrap();
-                    if let Some(ref mut canonical) = *canonical_lock {
-                        {
+                    let has_native_font = FONT_CACHE.lock().unwrap().is_some();
+                    if canonical_lock.is_some() || has_native_font {
+                        if let Some(ref mut canonical) = *canonical_lock {
                             let mut canonical_index_lock =
                                 CANONICAL_GLYPH_INDEX_CACHE.lock().unwrap();
                             let glyph_index = canonical_index_lock
@@ -5889,8 +6456,8 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                                 )
                             {
                                 return Err(JsValue::from_str(
-                            "apply_yjs_update: glyph rename could not update canonical cache",
-                        ));
+                                    "apply_yjs_update: glyph rename could not update canonical cache",
+                                ));
                             }
 
                             for (target, layer_json) in &changed_layer_snapshots {
@@ -5913,6 +6480,21 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                                     glyph_name,
                                     glyph_json.clone(),
                                 );
+                            }
+                        } else {
+                            // Native-first path (no CANONICAL_JSON_CACHE): keep
+                            // CANONICAL_GLYPH_INDEX_CACHE in sync for added/deleted glyphs.
+                            let mut canonical_index_lock =
+                                CANONICAL_GLYPH_INDEX_CACHE.lock().unwrap();
+                            if let Some(ref mut glyph_index) = *canonical_index_lock {
+                                for (glyph_name, glyph_json) in &changed_glyph_snapshots {
+                                    if glyph_json.is_some() {
+                                        let next_idx = glyph_index.len();
+                                        glyph_index.entry(glyph_name.clone()).or_insert(next_idx);
+                                    } else {
+                                        glyph_index.remove(glyph_name);
+                                    }
+                                }
                             }
                         }
 
@@ -6232,6 +6814,16 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
                                 glyph_outlines::clear_outline_cache_for_glyph(glyph_name);
                             }
                         }
+                    } else if LOCAL_SPARSE_BACKED_FONT.load(Ordering::Relaxed) {
+                        // Local sparse font: keep FONT_CACHE intact (with all untouched
+                        // local glyphs) and advance FONT_CACHE_EPOCH so the next compile
+                        // merges Y.Doc changes into FONT_CACHE.
+                        *SUBSET_JSON_CACHE.lock().unwrap() = None;
+                        *SUBSET_GLYPH_INDEX_CACHE.lock().unwrap() = None;
+                        *SUBSET_FONT_CACHE.lock().unwrap() = None;
+                        *FILTERED_FONT_CACHE.lock().unwrap() = None;
+                        FONT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed);
+                        SUBSET_FONT_CACHE_BUILT_AT_EPOCH.store(0, Ordering::Relaxed);
                     } else {
                         // No canonical cache yet — fall back to full rebuild
                         let json_value = ydoc_to_babelfont_json_with_txn(&txn)
@@ -6315,6 +6907,7 @@ pub fn apply_yjs_update(update: &[u8], update_metadata_json: &str) -> Result<Str
 /// Clear the cached font from memory
 #[wasm_bindgen]
 pub fn clear_font_cache() {
+    LOCAL_SPARSE_BACKED_FONT.store(false, Ordering::Relaxed);
     let mut cache = FONT_CACHE.lock().unwrap();
     *cache = None;
 
@@ -6374,13 +6967,20 @@ fn js_open_font_contents_to_bytes(contents: &JsValue) -> Result<Vec<u8>, JsValue
 ///
 /// # Returns
 /// * `String` - Babelfont JSON representation
-#[wasm_bindgen]
-pub fn open_font_file(filename: &str, contents: JsValue) -> Result<String, JsValue> {
-    let raw_contents = contents;
-    // FULLJSON_NECESSARY (A1/N1): Parses .glyphs/.ufo/etc. to babelfont::Font,
-    // then serializes to JSON string for JS — the one unavoidable full JSON crossing.
-    web_sys::console::log_1(&format!("[Rust] Opening font file: {}", filename).into());
+fn sanitize_imported_font(font: &mut babelfont::Font) {
+    // Drop malformed empty-reference components on import (e.g. IBM Plex Sans KR.glyphs)
+    // so downstream Y.Doc geometry hydration never fails on a blank component ref.
+    for glyph in &mut font.glyphs.0 {
+        for layer in &mut glyph.layers {
+            layer.shapes.retain(|shape| match shape {
+                babelfont::Shape::Component(comp) => !comp.reference.trim().is_empty(),
+                _ => true,
+            });
+        }
+    }
+}
 
+fn parse_font_from_file(filename: &str, raw_contents: JsValue) -> Result<babelfont::Font, JsValue> {
     let path = std::path::PathBuf::from(filename);
     let extension = path
         .extension()
@@ -6388,91 +6988,193 @@ pub fn open_font_file(filename: &str, contents: JsValue) -> Result<String, JsVal
         .unwrap_or("")
         .to_ascii_lowercase();
 
-    // Binary formats read the bytes; the others read text.
-    let text_contents = if extension == "ttf" {
-        String::new()
-    } else {
-        js_open_font_contents_to_str(&raw_contents)?
-    };
-    let contents = text_contents.as_str();
+    // Parse inside an inner scope so raw source text / package entry maps are
+    // freed BEFORE returning (WASM linear memory can never shrink).
+    let mut font: babelfont::Font = {
+        let text_contents = if extension == "ttf" {
+            String::new()
+        } else {
+            js_open_font_contents_to_str(&raw_contents)?
+        };
+        let contents = text_contents.as_str();
 
-    // Parse the font based on file extension
-    let font: babelfont::Font = match extension.as_str() {
-        "ttf" => {
-            let bytes = js_open_font_contents_to_bytes(&raw_contents)?;
-            babelfont::convertors::ttf::load_bytes(&bytes)
-                .map_err(|e| JsValue::from_str(&format!("Failed to load .ttf file: {}", e)))?
-        }
+        match extension.as_str() {
+            "ttf" => {
+                let bytes = js_open_font_contents_to_bytes(&raw_contents)?;
+                babelfont::convertors::ttf::load_bytes(&bytes)
+                    .map_err(|e| JsValue::from_str(&format!("Failed to load .ttf file: {}", e)))?
+            }
 
-        "babelfont" => {
-            // For .babelfont, just parse the JSON directly
-            serde_json::from_str(contents).map_err(|e| {
+            "babelfont" => serde_json::from_str(contents).map_err(|e| {
                 JsValue::from_str(&format!("Failed to parse .babelfont JSON: {}", e))
-            })?
-        }
+            })?,
 
-        "glyphs" => {
-            // Load Glyphs 2/3 format
-            babelfont::convertors::glyphs3::load_str(contents, path.clone())
-                .map_err(|e| JsValue::from_str(&format!("Failed to load .glyphs file: {:?}", e)))?
-        }
+            "glyphs" => babelfont::convertors::glyphs3::load_str(contents, path.clone()).map_err(
+                |e| JsValue::from_str(&format!("Failed to load .glyphs file: {:?}", e)),
+            )?,
 
-        "glyphspackage" => {
-            // Load Glyphs package from a JSON-encoded in-memory file tree.
-            // Expected format: { "relative/path": "file contents", ... }
-            let entries: HashMap<String, String> = serde_json::from_str(contents).map_err(|e| {
-                JsValue::from_str(&format!(
-                    "Failed to parse .glyphspackage entries JSON: {}",
-                    e
-                ))
-            })?;
+            "glyphspackage" => {
+                let entries: HashMap<String, String> =
+                    serde_json::from_str(contents).map_err(|e| {
+                        JsValue::from_str(&format!(
+                            "Failed to parse .glyphspackage entries JSON: {}",
+                            e
+                        ))
+                    })?;
 
-            babelfont::convertors::glyphs3::load_package_entries(path.clone(), &entries).map_err(
-                |e| JsValue::from_str(&format!("Failed to load .glyphspackage: {:?}", e)),
-            )?
-        }
+                babelfont::convertors::glyphs3::load_package_entries(path.clone(), &entries)
+                    .map_err(|e| {
+                        JsValue::from_str(&format!("Failed to load .glyphspackage: {:?}", e))
+                    })?
+            }
 
-        "vfj" => {
-            // Load FontLab VFJ format
-            babelfont::convertors::fontlab::load_str(contents)
-                .map_err(|e| JsValue::from_str(&format!("Failed to load .vfj file: {:?}", e)))?
-        }
+            "vfj" => babelfont::convertors::fontlab::load_str(contents)
+                .map_err(|e| JsValue::from_str(&format!("Failed to load .vfj file: {:?}", e)))?,
 
-        "sfd" => {
-            // Load FontForge SFD format from string content
-            babelfont::convertors::fontforge::load_str(contents)
-                .map_err(|e| JsValue::from_str(&format!("Failed to load .sfd file: {:?}", e)))?
-        }
+            "sfd" => babelfont::convertors::fontforge::load_str(contents)
+                .map_err(|e| JsValue::from_str(&format!("Failed to load .sfd file: {:?}", e)))?,
 
-        "ufo" => {
-            // Load UFO from a JSON-encoded in-memory file tree.
-            // Expected format: { "relative/path": "file contents", ... }
-            let entries: HashMap<String, String> = serde_json::from_str(contents).map_err(|e| {
-                JsValue::from_str(&format!("Failed to parse .ufo entries JSON: {}", e))
-            })?;
+            "ufo" => {
+                let entries: HashMap<String, String> =
+                    serde_json::from_str(contents).map_err(|e| {
+                        JsValue::from_str(&format!("Failed to parse .ufo entries JSON: {}", e))
+                    })?;
 
-            babelfont::convertors::ufo::load_entries(path.clone(), &entries)
-                .map_err(|e| JsValue::from_str(&format!("Failed to load .ufo: {:?}", e)))?
-        }
+                babelfont::convertors::ufo::load_entries(path.clone(), &entries)
+                    .map_err(|e| JsValue::from_str(&format!("Failed to load .ufo: {:?}", e)))?
+            }
 
-        "designspace" => {
-            // Load DesignSpace from a JSON-encoded in-memory file tree.
-            // Expected format: { "relative/path": "file contents", ... }
-            let entries: HashMap<String, String> = serde_json::from_str(contents).map_err(|e| {
-                JsValue::from_str(&format!("Failed to parse .designspace entries JSON: {}", e))
-            })?;
+            "designspace" => {
+                let entries: HashMap<String, String> =
+                    serde_json::from_str(contents).map_err(|e| {
+                        JsValue::from_str(&format!(
+                            "Failed to parse .designspace entries JSON: {}",
+                            e
+                        ))
+                    })?;
 
-            babelfont::convertors::designspace::load_entries(path.clone(), &entries)
-                .map_err(|e| JsValue::from_str(&format!("Failed to load .designspace: {:?}", e)))?
-        }
+                babelfont::convertors::designspace::load_entries(path.clone(), &entries).map_err(
+                    |e| JsValue::from_str(&format!("Failed to load .designspace: {:?}", e)),
+                )?
+            }
 
-        _ => {
-            return Err(JsValue::from_str(&format!(
-                "Unsupported file format: .{}. Supported formats: .babelfont, .glyphs, .glyphspackage, .ufo, .designspace, .vfj, .sfd, .ttf",
-                extension
-            )));
+            _ => {
+                return Err(JsValue::from_str(&format!(
+                    "Unsupported file format: .{}. Supported formats: .babelfont, .glyphs, .glyphspackage, .ufo, .designspace, .vfj, .sfd, .ttf",
+                    extension
+                )));
+            }
         }
     };
+    sanitize_imported_font(&mut font);
+    Ok(font)
+}
+
+fn extract_metric_dep_glyph_name(raw_key: &str) -> Option<String> {
+    let trimmed = raw_key.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Strip leading Glyphs metric-key prefixes (=, ==, =|, =+|, etc.)
+    let rest = trimmed
+        .trim_start_matches('=')
+        .trim_start_matches('|')
+        .trim();
+    if rest.is_empty() {
+        return None;
+    }
+    // Strip trailing +N / -N / *N / /N arithmetic expressions
+    let base = rest
+        .split(|c: char| c == '+' || c == '-' || c == '*' || c == '/' || c.is_whitespace())
+        .next()
+        .unwrap_or("")
+        .trim();
+    if base.is_empty() || base.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        return None;
+    }
+    Some(base.to_string())
+}
+
+#[derive(serde::Serialize)]
+struct SparseGlyphCatalogEntry {
+    name: String,
+    codepoints: Vec<u32>,
+    category: babelfont::GlyphCategory,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    production_name: Option<String>,
+    exported: bool,
+    component_deps: Vec<String>,
+    metrics_deps: Vec<String>,
+}
+
+fn build_sparse_glyph_catalog(font: &babelfont::Font) -> (Vec<String>, Vec<SparseGlyphCatalogEntry>) {
+    const METRIC_KEYS: [&str; 6] = [
+        "com.schriftgestalt.Glyphs.metricLeft",
+        "com.schriftgestalt.Glyphs.metricRight",
+        "com.schriftgestalt.Glyphs.metricWidth",
+        "metric_left",
+        "metric_right",
+        "metric_width",
+    ];
+
+    let mut glyph_order = Vec::with_capacity(font.glyphs.len());
+    let mut catalog = Vec::with_capacity(font.glyphs.len());
+
+    for glyph in font.glyphs.iter() {
+        let name = glyph.name.to_string();
+        glyph_order.push(name.clone());
+
+        let mut comp_deps: Vec<String> = Vec::new();
+        let mut metrics_deps: Vec<String> = Vec::new();
+
+        for key in &METRIC_KEYS {
+            if let Some(raw) = format_specific_string(&glyph.format_specific, key) {
+                if let Some(dep) = extract_metric_dep_glyph_name(&raw) {
+                    if dep != name && !metrics_deps.contains(&dep) {
+                        metrics_deps.push(dep);
+                    }
+                }
+            }
+        }
+
+        for layer in &glyph.layers {
+            for shape in &layer.shapes {
+                if let babelfont::Shape::Component(comp) = shape {
+                    let reference = comp.reference.to_string();
+                    if !reference.is_empty() && !comp_deps.contains(&reference) {
+                        comp_deps.push(reference);
+                    }
+                }
+            }
+            for key in &METRIC_KEYS {
+                if let Some(raw) = format_specific_string(&layer.format_specific, key) {
+                    if let Some(dep) = extract_metric_dep_glyph_name(&raw) {
+                        if dep != name && !metrics_deps.contains(&dep) {
+                            metrics_deps.push(dep);
+                        }
+                    }
+                }
+            }
+        }
+
+        catalog.push(SparseGlyphCatalogEntry {
+            name,
+            codepoints: glyph.codepoints.clone(),
+            category: glyph.category.clone(),
+            production_name: glyph.production_name.as_ref().map(|s| s.to_string()),
+            exported: glyph.exported,
+            component_deps: comp_deps,
+            metrics_deps,
+        });
+    }
+
+    (glyph_order, catalog)
+}
+
+#[wasm_bindgen]
+pub fn open_font_file(filename: &str, contents: JsValue) -> Result<String, JsValue> {
+    web_sys::console::log_1(&format!("[Rust] Opening font file: {}", filename).into());
+    let font = parse_font_from_file(filename, contents)?;
 
     web_sys::console::log_1(
         &format!(
@@ -6482,18 +7184,83 @@ pub fn open_font_file(filename: &str, contents: JsValue) -> Result<String, JsVal
         .into(),
     );
 
-    // Store in cache
+    // Share via Arc without deep-cloning the full babelfont::Font at peak.
+    let font = Arc::new(font);
     let mut cache = FONT_CACHE.lock().unwrap();
-    *cache = Some(Arc::new(font.clone()));
+    *cache = Some(Arc::clone(&font));
     drop(cache);
 
     // Serialize to JSON for JavaScript
-    let json = serde_json::to_string(&font)
+    let json = serde_json::to_string(&*font)
         .map_err(|e| JsValue::from_str(&format!("Failed to serialize font to JSON: {}", e)))?;
 
     web_sys::console::log_1(&format!("[Rust] Serialized to JSON ({} bytes)", json.len()).into());
 
     Ok(json)
+}
+
+/// Zero-monolithic-JSON local sparse open: parses the source ONCE into
+/// `FONT_CACHE`, populates `CANONICAL_GLYPH_INDEX_CACHE` & feature caches,
+/// and returns only `{ coreFontJson, glyphOrder, glyphCatalog }` (no drawings).
+#[wasm_bindgen]
+pub fn open_font_file_sparse(filename: &str, contents: JsValue) -> Result<String, JsValue> {
+    web_sys::console::log_1(&format!("[Rust] Opening font file (sparse): {}", filename).into());
+    clear_font_cache();
+    let mut font = parse_font_from_file(filename, contents)?;
+
+    web_sys::console::log_1(
+        &format!(
+            "[Rust] Successfully loaded sparse local font with {} glyphs",
+            font.glyphs.len()
+        )
+        .into(),
+    );
+
+    let (glyph_order, glyph_catalog) = build_sparse_glyph_catalog(&font);
+
+    // Temporarily swap out `font.glyphs` in O(1) to serialize core metadata
+    // without cloning or serializing any glyph outlines.
+    let all_glyphs = std::mem::take(&mut font.glyphs);
+    let core_font_json = serde_json::to_string(&font)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize core font JSON: {}", e)))?;
+    font.glyphs = all_glyphs;
+
+    install_native_font_cache(font);
+    LOCAL_SPARSE_BACKED_FONT.store(true, Ordering::Relaxed);
+
+    let envelope = serde_json::json!({
+        "coreFontJson": core_font_json,
+        "glyphOrder": glyph_order,
+        "glyphCatalog": glyph_catalog,
+    });
+    serde_json::to_string(&envelope)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize sparse open response: {}", e)))
+}
+
+/// Hydrate a batch of glyphs directly from `FONT_CACHE` as a JSON array string.
+#[wasm_bindgen]
+pub fn get_glyphs_json_batch(glyph_names_json: &str) -> Result<String, JsValue> {
+    let glyph_names: Vec<String> = serde_json::from_str(glyph_names_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse glyph names: {}", e)))?;
+    if glyph_names.is_empty() {
+        return Ok("[]".to_string());
+    }
+    let font = get_or_rebuild_font_cache()?;
+    let index_guard = CANONICAL_GLYPH_INDEX_CACHE.lock().unwrap();
+    let mut matched: Vec<&babelfont::Glyph> = Vec::with_capacity(glyph_names.len());
+    for name in &glyph_names {
+        if let Some(idx) = index_guard.as_ref().and_then(|map| map.get(name)).copied() {
+            if let Some(glyph) = font.glyphs.get_by_index(idx) {
+                matched.push(glyph);
+                continue;
+            }
+        }
+        if let Some(glyph) = font.glyphs.get(name.as_str()) {
+            matched.push(glyph);
+        }
+    }
+    serde_json::to_string(&matched)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize glyph batch: {}", e)))
 }
 
 /// Interpolate a glyph at a specific location in design space
@@ -6594,6 +7361,19 @@ pub fn get_glyphs_outlines(
     )
 }
 
+/// Compact binary overview outlines (direct Canvas2D path commands + bounds),
+/// eliminating JSON serialization/parsing and duplicate component flattening.
+#[wasm_bindgen]
+pub fn get_glyphs_overview_binary(
+    glyph_names_json: &str,
+    location_json: &str,
+) -> Result<Vec<u8>, JsValue> {
+    let glyph_names: Vec<String> = serde_json::from_str(glyph_names_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse glyph names: {}", e)))?;
+    let interpolation_font = generation_font_for_glyphs(&glyph_names)?;
+    glyph_outlines::get_glyphs_overview_binary(&interpolation_font, &glyph_names, location_json)
+}
+
 #[derive(serde::Deserialize)]
 struct LayerDumpRequest {
     #[serde(rename = "glyphName")]
@@ -6664,7 +7444,7 @@ pub fn dump_layer_state_json(layer_targets_json: &str) -> Result<String, JsValue
             .map_err(|_| dump_lock_error("FONT_CACHE"))?;
 
         let has_ydoc = ydoc_lock.is_some();
-        let has_canonical_cache = canonical_lock.is_some();
+        let has_canonical_cache = canonical_lock.is_some() || font_cache_lock.is_some();
         let has_subset_cache = subset_lock.is_some();
         let has_font_cache = font_cache_lock.is_some();
 
@@ -6690,22 +7470,19 @@ pub fn dump_layer_state_json(layer_targets_json: &str) -> Result<String, JsValue
         let dumps: Vec<serde_json::Value> = targets
             .iter()
             .map(|target| {
-                let canonical_layer = canonical_json.and_then(|json| {
-                    cached_layer_json_from_font_json(
-                        json,
-                        &target.glyph_name,
-                        &target.layer_id,
-                        canonical_index,
-                    )
-                });
-                let subset_layer = subset_json.and_then(|json| {
-                    cached_layer_json_from_font_json(
-                        json,
-                        &target.glyph_name,
-                        &target.layer_id,
-                        subset_index,
-                    )
-                });
+                let font_cache_layer = font_cache
+                    .and_then(|font| {
+                        font.glyphs
+                            .iter()
+                            .find(|glyph| glyph.name.as_str() == target.glyph_name)
+                    })
+                    .and_then(|glyph| {
+                        glyph
+                            .layers
+                            .iter()
+                            .find(|layer| layer.id.as_deref() == Some(&target.layer_id))
+                    })
+                    .and_then(|layer| serde_json::to_value(layer).ok());
                 // A malformed drawing is reported in the dump, never filled in.
                 let ydoc_layer = ydoc_txn.as_ref().and_then(|txn| {
                     match ydoc_get_layer_json_with_txn(&target.glyph_name, &target.layer_id, txn)
@@ -6720,19 +7497,29 @@ pub fn dump_layer_state_json(layer_targets_json: &str) -> Result<String, JsValue
                         Err(error) => Some(serde_json::json!({ "ydocError": error })),
                     }
                 });
-                let font_cache_layer = font_cache
-                    .and_then(|font| {
-                        font.glyphs
-                            .iter()
-                            .find(|glyph| glyph.name.as_str() == target.glyph_name)
+                // On the native-first sharded path, CANONICAL_JSON_CACHE is retired
+                // (None). Fall back to the canonical Y.Doc layer JSON (preserving
+                // explicit defaults like empty anchors/guides/identity transform)
+                // and then FONT_CACHE if no Y.Doc shard is loaded.
+                let canonical_layer = canonical_json
+                    .and_then(|json| {
+                        cached_layer_json_from_font_json(
+                            json,
+                            &target.glyph_name,
+                            &target.layer_id,
+                            canonical_index,
+                        )
                     })
-                    .and_then(|glyph| {
-                        glyph
-                            .layers
-                            .iter()
-                            .find(|layer| layer.id.as_deref() == Some(&target.layer_id))
-                    })
-                    .and_then(|layer| serde_json::to_value(layer).ok());
+                    .or_else(|| ydoc_layer.clone())
+                    .or_else(|| font_cache_layer.clone());
+                let subset_layer = subset_json.and_then(|json| {
+                    cached_layer_json_from_font_json(
+                        json,
+                        &target.glyph_name,
+                        &target.layer_id,
+                        subset_index,
+                    )
+                });
                 let canonical_index_entry =
                     canonical_index.and_then(|index| index.get(&target.glyph_name).copied());
                 let subset_index_entry =
@@ -6847,9 +7634,23 @@ pub fn dump_worker_cache_state_json() -> Result<String, JsValue> {
                 "features": ydoc_features,
             },
             "canonical": {
-                "present": canonical_json.is_some(),
-                "glyphNames": cache_glyph_names(canonical_json),
-                "features": canonical_json.and_then(|json| json.get("features")).cloned(),
+                "present": canonical_json.is_some() || font_cache_lock.is_some(),
+                "glyphNames": if canonical_json.is_some() {
+                    cache_glyph_names(canonical_json)
+                } else {
+                    font_cache_lock
+                        .as_ref()
+                        .map(|font| font.glyphs.iter().map(|g| g.name.to_string()).collect())
+                        .unwrap_or_default()
+                },
+                "features": canonical_json
+                    .and_then(|json| json.get("features"))
+                    .cloned()
+                    .or_else(|| {
+                        font_cache_lock
+                            .as_ref()
+                            .and_then(|font| serde_json::to_value(&font.features).ok())
+                    }),
             },
             "subset": {
                 "present": subset_entry.is_some(),
@@ -6970,8 +7771,23 @@ pub fn get_cache_memory_stats() -> Result<String, JsValue> {
             .unwrap_or(0)
     };
     let ydoc_bytes = {
-        let ydoc = Y_DOC.lock().map_err(|_| dump_lock_error("Y_DOC"))?;
-        ydoc.as_ref().map(cache_memory::yrs_doc_bytes).unwrap_or(0)
+        let core_bytes = {
+            let ydoc = Y_DOC.lock().map_err(|_| dump_lock_error("Y_DOC"))?;
+            ydoc.as_ref().map(cache_memory::yrs_doc_bytes).unwrap_or(0)
+        };
+        let live_glyph_bytes: u64 = GLYPH_DOCS
+            .lock()
+            .unwrap()
+            .values()
+            .map(cache_memory::yrs_doc_bytes)
+            .sum();
+        let dormant_glyph_bytes: u64 = DORMANT_GLYPH_STATES
+            .lock()
+            .unwrap()
+            .values()
+            .map(|bytes| 24 + bytes.len() as u64)
+            .sum();
+        core_bytes + live_glyph_bytes + dormant_glyph_bytes
     };
     let feature_fea_bytes = {
         let cache = FEATURE_FEA_STRING_CACHE
@@ -7941,6 +8757,25 @@ pub fn save_font_as_glyphs(babelfont_json: &str) -> Result<String, JsValue> {
         .map_err(|e| JsValue::from_str(&format!("Failed to serialize Glyphs file: {}", e)))
 }
 
+/// Serialize the worker's complete cached `FONT_CACHE` directly as a Glyphs 3
+/// source file (zero JS→Rust monolithic JSON round-trip).
+#[wasm_bindgen]
+pub fn save_cached_font_as_glyphs() -> Result<String, JsValue> {
+    let font = get_or_rebuild_font_cache()?;
+    font.as_glyphslib()
+        .map_err(|e| JsValue::from_str(&format!("Failed to convert font to Glyphs: {:?}", e)))?
+        .to_string()
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize Glyphs file: {}", e)))
+}
+
+/// Serialize the worker's complete cached `FONT_CACHE` directly as `.babelfont` JSON.
+#[wasm_bindgen]
+pub fn export_cached_font_as_babelfont_json() -> Result<String, JsValue> {
+    let font = get_or_rebuild_font_cache()?;
+    serde_json::to_string(&*font)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize .babelfont JSON: {}", e)))
+}
+
 /// What `save_font_source_entries` writes.
 #[derive(serde::Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -7977,14 +8812,11 @@ fn js_error(context: &str) -> impl Fn(babelfont::BabelfontError) -> JsValue + '_
 /// to the source folder; `removed` lists files a partial save made obsolete.
 /// A partial UFO save that would change the UFO's glyph set or layers returns
 /// `{ "needsFullSave": reason }` instead.
-#[wasm_bindgen]
-pub fn save_font_source_entries(
+fn save_font_source_entries_for_font(
     format: &str,
-    babelfont_json: &str,
+    font: &babelfont::Font,
     request_json: &str,
 ) -> Result<String, JsValue> {
-    let font: babelfont::Font = serde_json::from_str(babelfont_json)
-        .map_err(|e| JsValue::from_str(&format!("Failed to parse babelfont JSON: {}", e)))?;
     let request: SourceSaveRequest = serde_json::from_str(request_json)
         .map_err(|e| JsValue::from_str(&format!("Invalid save request: {}", e)))?;
     let result = match format {
@@ -7993,7 +8825,7 @@ pub fn save_font_source_entries(
                 babelfont::convertors::ufo::UfoLayout::from_entries(&request.layout_entries)
                     .map_err(js_error("Failed to read UFO layout"))?;
             let save = babelfont::convertors::ufo::save_entries(
-                &font,
+                font,
                 babelfont::convertors::ufo::UfoSaveRequest {
                     layout: Some(&layout),
                     glyphs: request.glyphs.as_deref(),
@@ -8012,12 +8844,12 @@ pub fn save_font_source_entries(
         }
         "designspace" => {
             let layouts = babelfont::convertors::designspace::layouts_for_font(
-                &font,
+                font,
                 &request.layout_entries,
             )
             .map_err(js_error("Failed to read UFO layouts"))?;
             let save = babelfont::convertors::designspace::save_entries(
-                &font,
+                font,
                 babelfont::convertors::designspace::DesignspaceSaveRequest {
                     document: &request.document,
                     layouts: &layouts,
@@ -8037,7 +8869,7 @@ pub fn save_font_source_entries(
         }
         "glyphspackage" => serde_json::to_value(
             babelfont::convertors::glyphs3::save_package_entries(
-                &font,
+                font,
                 babelfont::convertors::glyphs3::PackageSaveRequest {
                     glyphs: request.glyphs.as_deref(),
                     font_level: request.font_level,
@@ -8054,6 +8886,28 @@ pub fn save_font_source_entries(
     result
         .map(|value| value.to_string())
         .map_err(|e| JsValue::from_str(&format!("Failed to serialize entries: {}", e)))
+}
+
+#[wasm_bindgen]
+pub fn save_font_source_entries(
+    format: &str,
+    babelfont_json: &str,
+    request_json: &str,
+) -> Result<String, JsValue> {
+    let font: babelfont::Font = serde_json::from_str(babelfont_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse babelfont JSON: {}", e)))?;
+    save_font_source_entries_for_font(format, &font, request_json)
+}
+
+/// Serialize the worker's complete cached `FONT_CACHE` as folder source entries
+/// (`"ufo"`, `"glyphspackage"`, or `"designspace"`) without JS→Rust JSON transfer.
+#[wasm_bindgen]
+pub fn save_cached_font_source_entries(
+    format: &str,
+    request_json: &str,
+) -> Result<String, JsValue> {
+    let font = get_or_rebuild_font_cache()?;
+    save_font_source_entries_for_font(format, &font, request_json)
 }
 
 /// The glyphs that changed `.glif` files of a UFO belong to, with every
@@ -13711,5 +14565,123 @@ mod tests {
         assert!(first == second, "compiles differ");
         // A valid font sums to the magic number with its checkSumAdjustment.
         assert_eq!(sfnt_checksum(&first), 0xB1B0_AFBA);
+    }
+
+    #[test]
+    fn sparse_catalog_and_batch_hydration_and_cached_save_work_without_monolithic_json() {
+        let mut font_json: serde_json::Value = serde_json::from_str(TEST_FONT_JSON).unwrap();
+        font_json["glyphs"] = json!([
+            {
+                "name": "A",
+                "category": "Base",
+                "codepoints": [65],
+                "exported": true,
+                "layers": [
+                    {
+                        "id": "m1",
+                        "master": { "type": "DefaultForMaster", "master": "master-1" },
+                        "width": 600,
+                        "shapes": [
+                            { "Path": { "closed": true, "nodes": [
+                                { "x": 0.0, "y": 0.0, "nodetype": "Line" },
+                                { "x": 100.0, "y": 0.0, "nodetype": "Line" },
+                                { "x": 100.0, "y": 700.0, "nodetype": "Line" }
+                            ]}}
+                        ]
+                    }
+                ]
+            },
+            {
+                "name": "Aacute",
+                "category": "Base",
+                "codepoints": [193],
+                "exported": true,
+                "format_specific": { "com.schriftgestalt.Glyphs.metricLeft": "=A+10" },
+                "layers": [
+                    {
+                        "id": "m1",
+                        "master": { "type": "DefaultForMaster", "master": "master-1" },
+                        "width": 600,
+                        "shapes": [
+                            { "reference": "A", "transform": { "translation": [0.0, 0.0] } },
+                            { "reference": "", "transform": { "translation": [0.0, 0.0] } }
+                        ]
+                    }
+                ]
+            }
+        ]);
+        let mut font: babelfont::Font = serde_json::from_value(font_json).unwrap();
+        sanitize_imported_font(&mut font);
+        // Empty-reference component was dropped cleanly
+        assert_eq!(font.glyphs.get("Aacute").unwrap().layers[0].shapes.len(), 1);
+
+        let (order, catalog) = build_sparse_glyph_catalog(&font);
+        assert_eq!(order, vec!["A", "Aacute"]);
+        assert_eq!(catalog[1].component_deps, vec!["A"]);
+        assert_eq!(catalog[1].metrics_deps, vec!["A"]);
+
+        install_native_font_cache(font);
+
+        // Batch hydration returns only requested glyphs from FONT_CACHE
+        let batch_json = get_glyphs_json_batch(r#"["Aacute"]"#).unwrap();
+        let batch: Vec<serde_json::Value> = serde_json::from_str(&batch_json).unwrap();
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0]["name"], "Aacute");
+
+        // Cached save exports complete font directly from FONT_CACHE
+        let glyphs_src = save_cached_font_as_glyphs().unwrap();
+        assert!(glyphs_src.contains("glyphname = Aacute"));
+        let babelfont_out = export_cached_font_as_babelfont_json().unwrap();
+        let parsed_out: serde_json::Value = serde_json::from_str(&babelfont_out).unwrap();
+        assert_eq!(parsed_out["glyphs"].as_array().unwrap().len(), 2);
+
+        clear_font_cache();
+    }
+
+    #[test]
+    fn merge_ydoc_set_preserves_untouched_local_glyphs_in_font_cache() {
+        let mut font_json: serde_json::Value = serde_json::from_str(TEST_FONT_JSON).unwrap();
+        let glyph_a = font_json["glyphs"][0].clone();
+        let mut glyph_b = glyph_a.clone();
+        glyph_b["name"] = json!("B");
+        glyph_b["codepoints"] = json!([66]);
+        font_json["glyphs"] = json!([glyph_a, glyph_b]);
+
+        let font: babelfont::Font = serde_json::from_value(font_json.clone()).unwrap();
+        install_native_font_cache(font);
+
+        // Seed only font-core (without glyph:B!) and verify merge preserves B
+        reset_ydoc_set_preserving_font_cache();
+        let core_doc = yrs::Doc::new();
+        {
+            let mut txn = core_doc.transact_mut();
+            let font_map = txn.get_or_insert_map("font");
+            font_map.insert(&mut txn, "upm", 1000i64);
+            let version_arr = font_map.insert(&mut txn, "version", yrs::ArrayPrelim::default());
+            version_arr.push_back(&mut txn, 1i64);
+            version_arr.push_back(&mut txn, 0i64);
+            font_map.insert(&mut txn, "date", "2026-01-01T00:00:00.000Z");
+            let names_map = font_map.insert(&mut txn, "names", yrs::MapPrelim::<yrs::Any>::new());
+            let family = names_map.insert(&mut txn, "family_name", yrs::MapPrelim::<yrs::Any>::new());
+            family.insert(&mut txn, "dflt", "Test");
+            font_map.insert(&mut txn, "axes", yrs::ArrayPrelim::default());
+            font_map.insert(&mut txn, "masters", yrs::ArrayPrelim::default());
+            let features = font_map.insert(&mut txn, "features", yrs::MapPrelim::<yrs::Any>::new());
+            features.insert(&mut txn, "classes", yrs::MapPrelim::<yrs::Any>::new());
+            features.insert(&mut txn, "prefixes", yrs::MapPrelim::<yrs::Any>::new());
+            features.insert(&mut txn, "features", yrs::ArrayPrelim::default());
+            let order_arr = font_map.insert(&mut txn, "glyphOrder", yrs::ArrayPrelim::default());
+            order_arr.push_back(&mut txn, "A");
+            order_arr.push_back(&mut txn, "B");
+        }
+        let core_state = core_doc.transact().encode_state_as_update_v1(&yrs::StateVector::default());
+        seed_ydoc_document("font-core", &core_state).unwrap();
+        merge_ydoc_set_into_font_cache().unwrap();
+
+        let merged = get_or_rebuild_font_cache().unwrap();
+        let names: Vec<&str> = merged.glyphs.iter().map(|g| g.name.as_str()).collect();
+        assert_eq!(names, vec!["A", "B"]);
+
+        clear_font_cache();
     }
 }

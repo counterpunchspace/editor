@@ -7,8 +7,9 @@ import {
     type QaGlyphObservation
 } from './auto-qa-identity';
 import {
+    lookupQaIdentity,
     qaCorpusIndex,
-    type QaCorpusTable,
+    type QaCorpusLookup,
     type QaIdentityRow
 } from './auto-qa-corpus';
 import {
@@ -100,7 +101,7 @@ type QaFontMatchContext = {
     font: Font;
     /** The glyph list the cached glyphs belong to (replaced on add, delete, rename). */
     glyphs: Glyph[];
-    table: QaCorpusTable;
+    table: QaCorpusLookup;
     options: ResolvedMatchOptions;
     glyphCount: number;
     glyphsByName: Map<string, Glyph>;
@@ -150,7 +151,7 @@ function takePendingChangedGlyphs(): Set<string> | 'all' {
  */
 export function matchOpenFont(
     font: Font,
-    table: QaCorpusTable | null = qaCorpusIndex.getTable(),
+    table: QaCorpusLookup | null = qaCorpusIndex.getTable(),
     options: QaMatchOptions = {}
 ): QaLabel[] {
     const context = getMatchContext(font, table, options);
@@ -167,7 +168,7 @@ export function matchOpenFont(
 export function labelsForGlyph(
     font: Font,
     glyphName: string,
-    table: QaCorpusTable | null = qaCorpusIndex.getTable(),
+    table: QaCorpusLookup | null = qaCorpusIndex.getTable(),
     options: QaMatchOptions = {}
 ): QaLabel[] {
     const context = getMatchContext(font, table, options);
@@ -200,7 +201,7 @@ export function labelsForGlyph(
 export function glyphQaLabels(
     font: Font,
     glyphName: string,
-    table: QaCorpusTable | null = qaCorpusIndex.getTable(),
+    table: QaCorpusLookup | null = qaCorpusIndex.getTable(),
     options: QaMatchOptions = {}
 ): QaLabel[] {
     const glyph = font.findGlyph(glyphName);
@@ -241,7 +242,7 @@ export function invalidateQaMatchCache(): void {
 export function matchObservations(
     font: Font,
     observations: QaGlyphObservation[],
-    table: QaCorpusTable,
+    table: QaCorpusLookup,
     options: QaMatchOptions = {}
 ): QaLabel[] {
     const resolved = resolveOptions(options);
@@ -261,7 +262,7 @@ export function matchObservations(
 
 function getMatchContext(
     font: Font,
-    table: QaCorpusTable | null,
+    table: QaCorpusLookup | null,
     options: QaMatchOptions
 ): QaFontMatchContext | null {
     if (!table) {
@@ -285,7 +286,7 @@ function getMatchContext(
 
 function buildFullContext(
     font: Font,
-    table: QaCorpusTable,
+    table: QaCorpusLookup,
     options: ResolvedMatchOptions
 ): QaFontMatchContext {
     pendingChangedGlyphs = new Set();
@@ -354,7 +355,7 @@ function refreshObservations(
 function contextMatches(
     context: QaFontMatchContext,
     font: Font,
-    table: QaCorpusTable,
+    table: QaCorpusLookup,
     options: ResolvedMatchOptions
 ): boolean {
     return (
@@ -374,7 +375,7 @@ function contextMatches(
 
 function buildContextFromObservations(
     font: Font,
-    table: QaCorpusTable,
+    table: QaCorpusLookup,
     options: ResolvedMatchOptions,
     glyphsByName: Map<string, Glyph>,
     observations: QaGlyphObservation[],
@@ -414,7 +415,7 @@ function labelsForObservation(
 ): QaLabel[] {
     const { table, options, hasMarkSystem, markAnchorNames, peerStats } =
         context;
-    const row = table.identities[observation.identity];
+    const row = lookupQaIdentity(table, observation.identity);
     if (!row || row.n < options.nMin) {
         return [];
     }
@@ -538,14 +539,14 @@ function slotIfViable(
 
 function buildPeerStats(
     observations: QaGlyphObservation[],
-    table: QaCorpusTable,
+    table: QaCorpusLookup,
     options: ResolvedMatchOptions,
     markAnchorNames: Set<string>,
     hasMarkSystem: boolean
 ): Map<string, WithinFontStatus> {
     const tallies = new Map<string, { peerCount: number; have: number }>();
     for (const observation of observations) {
-        const row = table.identities[observation.identity];
+        const row = lookupQaIdentity(table, observation.identity);
         if (!row || row.n < options.nMin) {
             continue;
         }

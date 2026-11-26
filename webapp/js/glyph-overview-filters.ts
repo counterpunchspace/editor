@@ -66,6 +66,12 @@ import {
     type GlyphFilterCombineMode
 } from './glyph-filter-selection';
 import { QA_CORPUS_READY_EVENT } from './auto-qa/auto-qa-corpus';
+import {
+    BUILTIN_JS_FILTER_KEYWORDS,
+    classifyEncodedGlyph,
+    createBuiltinFilterDescriptors
+} from './glyph-filter-builtins';
+import { runHostPythonAsync } from './skills/host-python';
 
 /** Drag data type of a user filter being moved between folders. */
 const USER_FILTER_DRAG_TYPE = 'application/x-counterpunch-user-filter';
@@ -182,6 +188,7 @@ interface GlyphFilterPlugin {
 type FilterPyodide = {
     globals: {
         set: (name: string, value: unknown) => void;
+        delete?: (name: string) => void;
     };
     runPython?: (code: string) => unknown;
     _originalRunPython?: (code: string) => unknown;
@@ -329,6 +336,7 @@ export class GlyphOverviewFilterManager {
         key: string;
         categories: Map<string, string>;
         scripts: Map<string, GlyphScripts>;
+        catalogCodepoints: Map<string, number[]>;
     } | null = null;
     /** Active filters in click order; the last one owns the group legend. */
     private activeFilters: GlyphFilterPlugin[] = [];
@@ -1274,143 +1282,74 @@ export class GlyphOverviewFilterManager {
         this.updatePluginCount(plugin);
     }
 
+    private isCatalogOnlyBuiltinPlugin(plugin: GlyphFilterPlugin): boolean {
+        return (
+            plugin.keyword === ALL_GLYPHS_FILTER_KEYWORD ||
+            plugin.keyword === 'com.context.encoded' ||
+            plugin.keyword === 'com.context.unencoded' ||
+            plugin.unicodeCategories !== undefined ||
+            plugin.unicodeScripts !== undefined
+        );
+    }
+
+    private async ensureLocalSparseGlyphsForPythonFilter(): Promise<void> {
+        const manager = window.fontManager as
+            | {
+                  isLocalSparseFont?: () => boolean;
+                  hydrateAllLocalGlyphs?: () => Promise<void>;
+              }
+            | undefined;
+        if (manager?.isLocalSparseFont?.()) {
+            await manager.hydrateAllLocalGlyphs?.();
+        }
+    }
+
+    private isBuiltinJsPlugin(plugin: GlyphFilterPlugin): boolean {
+        return (
+            BUILTIN_JS_FILTER_KEYWORDS.has(plugin.keyword) ||
+            plugin.unicodeCategories !== undefined ||
+            plugin.unicodeScripts !== undefined
+        );
+    }
+
     /**
-     * Discover and load all glyph filter plugins from installed packages.
-     * Uses Python's entry_points system to find plugins in the 'counterpunch_glyphfilter_plugins' group.
+     * Discover built-in glyph filters in pure JS (no Pyodide required),
+     * plus any installed Python glyph filter plugins if Pyodide is already loaded.
      */
     async discoverPlugins(): Promise<void> {
-        if (!window.pyodide) {
-            console.error('Pyodide not available');
-            return;
-        }
-
         try {
             console.log('Discovering glyph filter plugins...');
 
-            // Use importlib.metadata to discover plugins via entry points
-            const pluginsResult = await window.pyodide.runPythonAsync(`
-                import sys
-                from importlib.metadata import entry_points
-
-                # Discover plugins in the 'counterpunch_glyphfilter_plugins' group
-                discovered_plugins = []
-                
-                # Handle different Python versions (entry_points API changed in 3.10)
-                if sys.version_info >= (3, 10):
-                    eps = entry_points(group='counterpunch_glyphfilter_plugins')
-                else:
-                    eps = entry_points().get('counterpunch_glyphfilter_plugins', [])
-                
-                for ep in eps:
-                    try:
-                        plugin_class = ep.load()
-                        plugin_instance = plugin_class()
-                        discovered_plugins.append({
-                            'path': getattr(plugin_instance, 'path', ''),
-                            'keyword': getattr(plugin_instance, 'keyword', ep.name),
-                            'display_name': getattr(plugin_instance, 'display_name', ep.name),
-                            'event_types': list(getattr(plugin_instance, 'event_types', [])),
-                            'hide_when_empty': bool(getattr(plugin_instance, 'hide_when_empty', False)),
-                            'unicode_categories': list(getattr(plugin_instance, 'unicode_categories', None) or []) or None,
-                            'sort_order': getattr(plugin_instance, 'sort_order', None),
-                            'unicode_scripts': list(getattr(plugin_instance, 'unicode_scripts', None) or []) or None,
-                            'group_order': list(getattr(plugin_instance, 'group_order', None) or []),
-                            'instance': plugin_instance
-                        })
-                    except Exception as e:
-                        print(f"[GlyphOverviewFilters] Error loading plugin {ep.name}: {e}")
-                        import traceback
-                        traceback.print_exc()
-                
-                discovered_plugins
-            `);
-
-            // Convert PyProxy to JavaScript array
-            let rawPlugins: any[] = [];
-            if (pluginsResult && pluginsResult.toJs) {
-                rawPlugins = pluginsResult.toJs({
-                    dict_converter: Object.fromEntries
-                });
-            }
-
-            // Validate plugin paths and load group definitions
+            this.rootNode = this.buildEmptyTree();
             this.plugins = [];
-            for (const plugin of rawPlugins) {
-                // Check if plugin is visible
-                try {
-                    const instance = plugin.instance;
-                    if (instance && instance.visible) {
-                        const isVisible = instance.visible();
-                        if (!isVisible) {
-                            console.log(
-                                `Plugin "${plugin.keyword}" is hidden (visible=false)`
-                            );
-                            continue;
-                        }
-                    }
-                } catch (error) {
-                    console.error(
-                        `Error checking visibility for ${plugin.keyword}:`,
-                        error
-                    );
-                }
 
-                // Check if path is valid
-                if (!this.isValidPath(plugin.path)) {
-                    console.error(
-                        `Plugin "${plugin.keyword}" has invalid path "${plugin.path}". ` +
-                            `Valid paths are: ${Object.keys(FILTER_PATHS).join(', ')}`
-                    );
+            for (const descriptor of createBuiltinFilterDescriptors()) {
+                if (!this.isValidPath(descriptor.path)) {
                     continue;
                 }
-
-                plugin.groups = {};
-
-                const eventTypes = Array.isArray(plugin.event_types)
-                    ? plugin.event_types.filter(
-                          (
-                              eventType: unknown
-                          ): eventType is GlyphFilterEventType =>
-                              typeof eventType === 'string' &&
-                              isGlyphFilterEventType(eventType)
-                      )
-                    : [];
-                if (
-                    eventTypes.length === 0 &&
-                    plugin.keyword !== ALL_GLYPHS_FILTER_KEYWORD
-                ) {
-                    console.error(
-                        `Plugin "${plugin.keyword}" must declare supported event_types.`
-                    );
-                    continue;
-                }
-                plugin.eventTypes = eventTypes;
-                plugin.classifications = new Map();
-                plugin.hideWhenEmpty = plugin.hide_when_empty === true;
-                plugin.unicodeCategories = this.stringSet(
-                    plugin.unicode_categories
-                );
-                plugin.unicodeScripts = this.stringSet(plugin.unicode_scripts);
-                plugin.sortOrder =
-                    typeof plugin.sort_order === 'number'
-                        ? plugin.sort_order
-                        : undefined;
-                plugin.groupOrder = Array.isArray(plugin.group_order)
-                    ? plugin.group_order.filter(
-                          (name: unknown): name is string =>
-                              typeof name === 'string'
-                      )
-                    : [];
-
-                this.plugins.push(plugin as GlyphFilterPlugin);
-            }
-
-            // Add plugins to tree nodes
-            for (const plugin of this.plugins) {
+                const plugin: GlyphFilterPlugin = {
+                    path: descriptor.path,
+                    keyword: descriptor.keyword,
+                    display_name: descriptor.display_name,
+                    instance: null,
+                    groups: {},
+                    eventTypes: descriptor.eventTypes,
+                    hideWhenEmpty: descriptor.hideWhenEmpty,
+                    unicodeCategories: descriptor.unicodeCategories,
+                    unicodeScripts: descriptor.unicodeScripts,
+                    sortOrder: descriptor.sortOrder,
+                    groupOrder: [],
+                    classifications: new Map()
+                };
+                this.plugins.push(plugin);
                 const node = this.findNode(plugin.path);
                 if (node) {
                     node.plugins.push(plugin);
                 }
+            }
+
+            if (window.pyodide) {
+                await this.mergePythonEntryPointPlugins();
             }
 
             console.log(
@@ -1453,6 +1392,168 @@ export class GlyphOverviewFilterManager {
             console.error('Failed to discover plugins:', error);
             this.plugins = [];
         }
+    }
+
+    /**
+     * Discover any additional third-party Python glyph filter entry points
+     * once Pyodide is lazily initialized.
+     */
+    async discoverPythonPlugins(): Promise<void> {
+        if (!window.pyodide) {
+            return;
+        }
+        const added = await this.mergePythonEntryPointPlugins();
+        if (added > 0) {
+            this.renderSidebar();
+            if (window.currentFontModel) {
+                await this.refreshPlugins({ deferCounts: true });
+            }
+        }
+    }
+
+    private async mergePythonEntryPointPlugins(): Promise<number> {
+        if (!window.pyodide) {
+            return 0;
+        }
+        const existingKeywords = new Set(this.plugins.map((p) => p.keyword));
+        const pluginsResult = (await runHostPythonAsync(`
+            import sys
+            from importlib.metadata import entry_points
+
+            discovered_plugins = []
+            if sys.version_info >= (3, 10):
+                eps = entry_points(group='counterpunch_glyphfilter_plugins')
+            else:
+                eps = entry_points().get('counterpunch_glyphfilter_plugins', [])
+
+            for ep in eps:
+                try:
+                    plugin_class = ep.load()
+                    plugin_instance = plugin_class()
+                    discovered_plugins.append({
+                        'path': getattr(plugin_instance, 'path', ''),
+                        'keyword': getattr(plugin_instance, 'keyword', ep.name),
+                        'display_name': getattr(plugin_instance, 'display_name', ep.name),
+                        'event_types': list(getattr(plugin_instance, 'event_types', [])),
+                        'hide_when_empty': bool(getattr(plugin_instance, 'hide_when_empty', False)),
+                        'unicode_categories': list(getattr(plugin_instance, 'unicode_categories', None) or []) or None,
+                        'sort_order': getattr(plugin_instance, 'sort_order', None),
+                        'unicode_scripts': list(getattr(plugin_instance, 'unicode_scripts', None) or []) or None,
+                        'group_order': list(getattr(plugin_instance, 'group_order', None) or []),
+                        'instance': plugin_instance
+                    })
+                except Exception as e:
+                    print(f"[GlyphOverviewFilters] Error loading plugin {ep.name}: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+            discovered_plugins
+        `)) as {
+            toJs?: (options: {
+                dict_converter: typeof Object.fromEntries;
+            }) => unknown[];
+            destroy?: () => void;
+        } | null;
+
+        interface RawDiscoveredFilterPlugin {
+            path: string;
+            keyword: string;
+            display_name: string;
+            event_types?: unknown;
+            hide_when_empty?: unknown;
+            unicode_categories?: unknown;
+            sort_order?: unknown;
+            unicode_scripts?: unknown;
+            group_order?: unknown;
+            instance?: {
+                visible?: () => unknown;
+                destroy?: () => void;
+            } | null;
+        }
+        let rawPlugins: RawDiscoveredFilterPlugin[] = [];
+        try {
+            if (pluginsResult && pluginsResult.toJs) {
+                rawPlugins = pluginsResult.toJs({
+                    dict_converter: Object.fromEntries
+                }) as RawDiscoveredFilterPlugin[];
+            }
+        } finally {
+            pluginsResult?.destroy?.();
+        }
+
+        let added = 0;
+        for (const rawPlugin of rawPlugins) {
+            if (existingKeywords.has(rawPlugin.keyword)) {
+                rawPlugin.instance?.destroy?.();
+                continue;
+            }
+            try {
+                const instance = rawPlugin.instance;
+                if (instance && instance.visible) {
+                    const isVisible = instance.visible();
+                    if (!isVisible) {
+                        instance.destroy?.();
+                        continue;
+                    }
+                }
+            } catch (error) {
+                console.error(
+                    `Error checking visibility for ${rawPlugin.keyword}:`,
+                    error
+                );
+            }
+
+            if (!this.isValidPath(rawPlugin.path)) {
+                rawPlugin.instance?.destroy?.();
+                continue;
+            }
+
+            const eventTypes = Array.isArray(rawPlugin.event_types)
+                ? rawPlugin.event_types.filter(
+                      (eventType: unknown): eventType is GlyphFilterEventType =>
+                          typeof eventType === 'string' &&
+                          isGlyphFilterEventType(eventType)
+                  )
+                : [];
+            if (
+                eventTypes.length === 0 &&
+                rawPlugin.keyword !== ALL_GLYPHS_FILTER_KEYWORD
+            ) {
+                rawPlugin.instance?.destroy?.();
+                continue;
+            }
+            const plugin: GlyphFilterPlugin = {
+                path: rawPlugin.path,
+                keyword: rawPlugin.keyword,
+                display_name: rawPlugin.display_name,
+                instance: rawPlugin.instance ?? null,
+                groups: {},
+                eventTypes,
+                classifications: new Map(),
+                hideWhenEmpty: rawPlugin.hide_when_empty === true,
+                unicodeCategories: this.stringSet(rawPlugin.unicode_categories),
+                unicodeScripts: this.stringSet(rawPlugin.unicode_scripts),
+                sortOrder:
+                    typeof rawPlugin.sort_order === 'number'
+                        ? rawPlugin.sort_order
+                        : undefined,
+                groupOrder: Array.isArray(rawPlugin.group_order)
+                    ? rawPlugin.group_order.filter(
+                          (name: unknown): name is string =>
+                              typeof name === 'string'
+                      )
+                    : []
+            };
+
+            this.plugins.push(plugin);
+            existingKeywords.add(plugin.keyword);
+            const node = this.findNode(plugin.path);
+            if (node) {
+                node.plugins.push(plugin);
+            }
+            added += 1;
+        }
+        return added;
     }
 
     /**
@@ -1824,15 +1925,19 @@ export class GlyphOverviewFilterManager {
         const pyodide = window.pyodide as FilterPyodide | undefined;
         if (pyodide) {
             pyodide.globals.set('__glyph_filter_check_source', code);
-            const syntax = this.runFilterPython(FILTER_SYNTAX_CHECK);
-            if (typeof syntax === 'string' && syntax) {
-                const newline = syntax.indexOf('\n');
-                const line = Number(syntax.slice(0, newline));
-                errors.push({
-                    kind: 'syntax',
-                    message: syntax.slice(newline + 1),
-                    ...(line > 0 ? { line } : {})
-                });
+            try {
+                const syntax = this.runFilterPython(FILTER_SYNTAX_CHECK);
+                if (typeof syntax === 'string' && syntax) {
+                    const newline = syntax.indexOf('\n');
+                    const line = Number(syntax.slice(0, newline));
+                    errors.push({
+                        kind: 'syntax',
+                        message: syntax.slice(newline + 1),
+                        ...(line > 0 ? { line } : {})
+                    });
+                }
+            } finally {
+                pyodide.globals.delete?.('__glyph_filter_check_source');
             }
         }
         const inspection = this.inspectUserFilterSource(code);
@@ -1900,6 +2005,14 @@ export class GlyphOverviewFilterManager {
                 validation.eventTypes
             );
         }
+
+        if (
+            !window.pyodide &&
+            typeof window.ensurePyodideReady === 'function'
+        ) {
+            await window.ensurePyodideReady();
+        }
+        await this.ensureLocalSparseGlyphsForPythonFilter();
 
         const plugin: GlyphFilterPlugin = {
             path: 'user',
@@ -3020,13 +3133,13 @@ export class GlyphOverviewFilterManager {
     ): boolean {
         const cachedGeneration = plugin.cachedOpenGeneration ?? 0;
         const sourceReady =
-            plugin.keyword === ALL_GLYPHS_FILTER_KEYWORD ||
-            plugin.unicodeCategories !== undefined ||
-            plugin.unicodeScripts !== undefined ||
-            plugin.sourceLoaded === true;
+            this.isBuiltinJsPlugin(plugin) || plugin.sourceLoaded === true;
+        const hasCachedData =
+            Array.isArray(plugin.lastResults) ||
+            typeof plugin.glyphCount === 'number';
         return (
             sourceReady &&
-            Array.isArray(plugin.lastResults) &&
+            hasCachedData &&
             cachedGeneration === this.openGeneration &&
             !plugin.hasError &&
             !plugin.hasNoFilterFunction
@@ -3063,6 +3176,9 @@ export class GlyphOverviewFilterManager {
     }
 
     private applyCachedFilterResults(plugin: GlyphFilterPlugin): void {
+        if (!Array.isArray(plugin.lastResults)) {
+            this.materializePluginResults(plugin);
+        }
         // Re-resolve colors and legend entries from the current host cache.
         const { results, usedGroupKeywords, augmentedGroups } =
             this.processFilterResults(
@@ -3130,6 +3246,15 @@ export class GlyphOverviewFilterManager {
     }
 
     private async rebuildFilterCache(plugin: GlyphFilterPlugin): Promise<void> {
+        if (!this.isBuiltinJsPlugin(plugin)) {
+            if (
+                !window.pyodide &&
+                typeof window.ensurePyodideReady === 'function'
+            ) {
+                await window.ensurePyodideReady();
+            }
+            await this.ensureLocalSparseGlyphsForPythonFilter();
+        }
         // Filters read `glyph.glyphData`; before the catalog loads it is
         // empty and every glyph would land in No Category. A failed load
         // still classifies, without glyph data.
@@ -3142,13 +3267,28 @@ export class GlyphOverviewFilterManager {
             });
         }
         plugin.classifications.clear();
-        const glyphs =
-            plugin.keyword === ALL_GLYPHS_FILTER_KEYWORD
-                ? listOverviewGlyphRecords({
-                      fontJson: window.fontManager?.currentFont?.babelfontData,
-                      hydratedGlyphs: window.currentFontModel?.glyphs || []
-                  })
-                : window.currentFontModel?.glyphs || [];
+        const hydratedGlyphs = window.currentFontModel?.glyphs || [];
+        let glyphs: ReadonlyArray<{ name?: string }> = hydratedGlyphs;
+        if (this.isCatalogOnlyBuiltinPlugin(plugin)) {
+            const catalogRecords = listOverviewGlyphRecords({
+                fontJson: window.fontManager?.currentFont?.babelfontData,
+                hydratedGlyphs
+            });
+            if (
+                plugin.keyword === ALL_GLYPHS_FILTER_KEYWORD ||
+                catalogRecords.length > hydratedGlyphs.length
+            ) {
+                const hydratedByName = new Map<string, { name?: string }>();
+                for (const glyph of hydratedGlyphs) {
+                    if (typeof glyph?.name === 'string' && glyph.name) {
+                        hydratedByName.set(glyph.name, glyph);
+                    }
+                }
+                glyphs = catalogRecords.map(
+                    (record) => hydratedByName.get(record.name) ?? record
+                );
+            }
+        }
         this.classifyGlyphs(plugin, glyphs);
         this.derivePluginResults(plugin);
         this.stampFilterCache(plugin);
@@ -3218,6 +3358,7 @@ export class GlyphOverviewFilterManager {
     private glyphDataLookups(): {
         categories: Map<string, string>;
         scripts: Map<string, GlyphScripts>;
+        catalogCodepoints: Map<string, number[]>;
     } | null {
         const version = this.getCurrentDataVersion();
         if (version === null) {
@@ -3225,13 +3366,69 @@ export class GlyphOverviewFilterManager {
         }
         const key = `${this.openGeneration}:${version}:${glyphDataIndex.isReady()}`;
         if (this.glyphDataCache?.key !== key) {
+            const catalogCodepoints = new Map<string, number[]>();
+            for (const record of listOverviewGlyphRecords({
+                fontJson: window.fontManager?.currentFont?.babelfontData,
+                hydratedGlyphs: window.currentFontModel?.glyphs || []
+            })) {
+                if (record.name && record.codepoints?.length) {
+                    catalogCodepoints.set(record.name, record.codepoints);
+                }
+            }
             this.glyphDataCache = {
                 key,
                 categories: new Map(),
-                scripts: new Map()
+                scripts: new Map(),
+                catalogCodepoints
             };
         }
         return this.glyphDataCache;
+    }
+
+    /**
+     * Resolve GlyphData for either a hydrated `Glyph` model object or an
+     * unhydrated `OverviewGlyphRecord` (matching `Glyph.glyphData` semantics).
+     */
+    private resolveGlyphDataForFilter(glyph: {
+        name: string;
+        codepoints?: number[];
+        glyphData?: {
+            general_category?: unknown;
+            script?: unknown;
+            script_extensions?: unknown;
+        };
+    }):
+        | {
+              general_category?: unknown;
+              script?: unknown;
+              script_extensions?: unknown;
+          }
+        | undefined {
+        if ('glyphData' in glyph) {
+            return glyph.glyphData;
+        }
+        const baseName = glyph.name.split('.', 1)[0] || glyph.name;
+        const catalogCodepoints = this.glyphDataLookups()?.catalogCodepoints;
+        const baseModel =
+            baseName !== glyph.name
+                ? window.currentFontModel?.findGlyph?.(baseName)
+                : undefined;
+        const baseCodepoints =
+            baseName !== glyph.name
+                ? (baseModel?.codepoints ?? catalogCodepoints?.get(baseName))
+                : glyph.codepoints;
+        const hasBase =
+            baseName !== glyph.name &&
+            (Boolean(baseModel) || catalogCodepoints?.has(baseName) === true);
+        const targetName = hasBase ? baseName : glyph.name;
+        const targetCodepoints = hasBase ? baseCodepoints : glyph.codepoints;
+        return (
+            glyphDataIndex.getGlyphDataForUnicode(
+                targetCodepoints?.slice(0, 1)
+            ) ||
+            glyphDataIndex.getGlyphDataForName(targetName) ||
+            (hasBase ? undefined : glyphDataIndex.getGlyphDataForName(baseName))
+        );
     }
 
     /** A glyph's Unicode general category, or '' when glyph data has none. */
@@ -3241,8 +3438,13 @@ export class GlyphOverviewFilterManager {
         if (cached !== undefined) {
             return cached;
         }
-        const data = (glyph as { glyphData?: { general_category?: unknown } })
-            .glyphData;
+        const data = this.resolveGlyphDataForFilter(
+            glyph as {
+                name: string;
+                codepoints?: number[];
+                glyphData?: { general_category?: unknown };
+            }
+        );
         const category =
             typeof data?.general_category === 'string'
                 ? data.general_category
@@ -3263,11 +3465,13 @@ export class GlyphOverviewFilterManager {
         if (cached !== undefined) {
             return cached;
         }
-        const data = (
+        const data = this.resolveGlyphDataForFilter(
             glyph as {
+                name: string;
+                codepoints?: number[];
                 glyphData?: { script?: unknown; script_extensions?: unknown };
             }
-        ).glyphData;
+        );
         let result: GlyphScripts = { scripts: [''], own: '' };
         if (data) {
             const own = typeof data.script === 'string' ? data.script : '';
@@ -3316,6 +3520,55 @@ export class GlyphOverviewFilterManager {
         if (plugin.keyword === ALL_GLYPHS_FILTER_KEYWORD) {
             for (const glyph of namedGlyphs) {
                 plugin.classifications.set(glyph.name, { groups: [] });
+            }
+            return;
+        }
+
+        if (plugin.keyword === 'com.context.encoded') {
+            for (const glyph of namedGlyphs) {
+                const groups = classifyEncodedGlyph(
+                    glyph as { codepoints?: readonly number[] }
+                );
+                if (groups) {
+                    plugin.classifications.set(glyph.name, { groups });
+                } else {
+                    plugin.classifications.delete(glyph.name);
+                }
+            }
+            return;
+        }
+
+        if (plugin.keyword === 'com.context.unencoded') {
+            for (const glyph of namedGlyphs) {
+                const codepoints = (glyph as { codepoints?: readonly number[] })
+                    .codepoints;
+                if (!Array.isArray(codepoints) || codepoints.length === 0) {
+                    plugin.classifications.set(glyph.name, { groups: [] });
+                } else {
+                    plugin.classifications.delete(glyph.name);
+                }
+            }
+            return;
+        }
+
+        if (plugin.keyword === 'com.context.incompatible_outlines') {
+            for (const glyph of namedGlyphs) {
+                if (!(glyph as { isCompatible?: unknown }).isCompatible) {
+                    plugin.classifications.set(glyph.name, { groups: [] });
+                } else {
+                    plugin.classifications.delete(glyph.name);
+                }
+            }
+            return;
+        }
+
+        if (plugin.keyword === 'com.context.auto_qa_issues') {
+            for (const glyph of namedGlyphs) {
+                if ((glyph as { hasQaIssues?: unknown }).hasQaIssues) {
+                    plugin.classifications.set(glyph.name, { groups: [] });
+                } else {
+                    plugin.classifications.delete(glyph.name);
+                }
             }
             return;
         }
@@ -3369,8 +3622,9 @@ export class GlyphOverviewFilterManager {
             pyodide.globals.set('__glyph_filter_instance', plugin.instance);
         }
 
-        const raw = this.runFilterPython(FILTER_CLASSIFY_BATCH);
+        let raw: unknown;
         try {
+            raw = this.runFilterPython(FILTER_CLASSIFY_BATCH);
             const converted = this.toJsObject(raw);
             for (const [glyphName, classification] of Object.entries(
                 converted
@@ -3383,6 +3637,11 @@ export class GlyphOverviewFilterManager {
             }
         } finally {
             this.destroyPyProxy(raw);
+            pyodide.globals.delete?.('__glyph_filter_glyphs');
+            pyodide.globals.delete?.('__glyph_filter_use_candidate');
+            pyodide.globals.delete?.('__glyph_filter_is_user');
+            pyodide.globals.delete?.('__glyph_filter_namespace');
+            pyodide.globals.delete?.('__glyph_filter_instance');
         }
     }
 
@@ -3486,21 +3745,29 @@ export class GlyphOverviewFilterManager {
         plugin.sourceNamespace = `__glyph_filter_${plugin.keyword.replace(/[^A-Za-z0-9_]/g, '_')}`;
         pyodide.globals.set('__glyph_filter_namespace', plugin.sourceNamespace);
         let hasCandidate: unknown;
-        if (plugin.isUserFilter) {
-            pyodide.globals.set(
-                '__glyph_filter_source',
-                plugin.pythonCode || ''
-            );
-            hasCandidate = this.runFilterPython(FILTER_SOURCE_LOAD_USER);
-        } else {
-            pyodide.globals.set('__glyph_filter_instance', plugin.instance);
-            hasCandidate = this.runFilterPython(FILTER_SOURCE_LOAD_INSTANCE);
+        try {
+            if (plugin.isUserFilter) {
+                pyodide.globals.set(
+                    '__glyph_filter_source',
+                    plugin.pythonCode || ''
+                );
+                hasCandidate = this.runFilterPython(FILTER_SOURCE_LOAD_USER);
+            } else {
+                pyodide.globals.set('__glyph_filter_instance', plugin.instance);
+                hasCandidate = this.runFilterPython(
+                    FILTER_SOURCE_LOAD_INSTANCE
+                );
+            }
+        } finally {
+            pyodide.globals.delete?.('__glyph_filter_namespace');
+            pyodide.globals.delete?.('__glyph_filter_source');
+            pyodide.globals.delete?.('__glyph_filter_instance');
         }
         plugin.hasCandidateFunction = hasCandidate === true;
         plugin.sourceLoaded = true;
     }
 
-    private derivePluginResults(plugin: GlyphFilterPlugin): void {
+    private materializePluginResults(plugin: GlyphFilterPlugin): void {
         const groups: Record<string, GroupDefinition> = {};
         const results: FilterResult[] = [];
         for (const [glyphName, classification] of plugin.classifications) {
@@ -3516,7 +3783,11 @@ export class GlyphOverviewFilterManager {
         }
         plugin.groups = groups;
         plugin.lastResults = results;
-        plugin.glyphCount = results.length;
+    }
+
+    private derivePluginResults(plugin: GlyphFilterPlugin): void {
+        this.materializePluginResults(plugin);
+        plugin.glyphCount = plugin.lastResults?.length ?? 0;
         plugin.hasError = false;
         plugin.hasNoFilterFunction = false;
     }
@@ -3938,7 +4209,8 @@ export class GlyphOverviewFilterManager {
 
         const dataVersion = this.getCurrentDataVersion();
         if (this.canUseCachedFilterResults(plugin, dataVersion)) {
-            plugin.glyphCount = plugin.lastResults?.length || 0;
+            plugin.glyphCount =
+                plugin.glyphCount ?? plugin.lastResults?.length ?? 0;
             plugin.hasError = false;
             this.updatePluginCount(plugin);
             return;
@@ -3981,6 +4253,17 @@ export class GlyphOverviewFilterManager {
                 plugin.groups = augmentedGroups;
                 plugin.glyphCount = processedResults.length;
                 plugin.hasError = false;
+                this.updatePluginCount(plugin);
+                return;
+            }
+            if (!this.isActive(plugin)) {
+                plugin.glyphCount = plugin.classifications.size;
+                plugin.hasError = false;
+                plugin.lastResults = undefined;
+                plugin.groups = {};
+                plugin.cachedDataVersion =
+                    dataVersion === null ? undefined : dataVersion;
+                plugin.cachedContextVersion = this.sharedPluginContextVersion;
                 this.updatePluginCount(plugin);
                 return;
             }

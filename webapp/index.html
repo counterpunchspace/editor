@@ -222,6 +222,9 @@
                         .then(function (pyodide) {
                             window.pyodide = pyodide;
                             performance.mark('cp:python.pyodideReady');
+                            window.dispatchEvent(
+                                new CustomEvent('pyodideLoaded')
+                            );
                             resolve(pyodide);
                         })
                         .catch(function (error) {
@@ -243,6 +246,7 @@
                         performance.mark('cp:app.afterFirstPaint');
                         startPyodideLoad();
                     });
+                    return window.__pyodideLoadPromise;
                 };
             });
         </script>

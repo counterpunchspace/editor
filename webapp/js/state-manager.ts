@@ -72,42 +72,6 @@ export interface EditorState {
 }
 
 const HISTORY_RETENTION_MS = 10000; // 10 seconds
-
-/**
- * History and event stacks are source-mapped in the background. Mapping
- * fetches and parses each script's source map (megabytes), so it waits until
- * startup has passed instead of competing with it.
- */
-const STACK_MAPPING_DELAY_MS = 5000;
-const pendingStackRecords: Array<{
-    record: { stack: string };
-    failure: string;
-}> = [];
-let stackMappingTimer: ReturnType<typeof setTimeout> | null = null;
-
-function queueStackMapping(record: { stack: string }, failure: string): void {
-    pendingStackRecords.push({ record, failure });
-    if (stackMappingTimer !== null) {
-        return;
-    }
-    stackMappingTimer = setTimeout(() => {
-        stackMappingTimer = null;
-        for (const {
-            record: pending,
-            failure: message
-        } of pendingStackRecords.splice(0)) {
-            mapStackTrace(pending.stack)
-                .then((mappedStack) => {
-                    if (mappedStack) {
-                        pending.stack = mappedStack;
-                    }
-                })
-                .catch((error) => {
-                    console.warn(message, error);
-                });
-        }
-    }, STACK_MAPPING_DELAY_MS);
-}
 const SYNC_DEBOUNCE_MS = 100; // Debounce URL updates
 const ERROR_REPORT_ENDPOINT = '/api/errors/report';
 
@@ -330,13 +294,6 @@ export class StateManager {
                 target._history.push(change);
                 target._state[prop] = value;
 
-                // Map the stack later so historical records point to original
-                // source without fetching source maps during startup.
-                queueStackMapping(
-                    change,
-                    'Failed to source-map history stack:'
-                );
-
                 // Prune old history and events
                 target._pruneHistory();
 
@@ -512,18 +469,27 @@ export class StateManager {
     }> {
         const snapshot = this.getStateSnapshot();
 
-        // Map all stack traces in parallel
-        const mappedHistory = await Promise.all(
-            snapshot.history.map(async (change) => ({
-                ...change,
-                stack: await mapStackTrace(change.stack)
-            }))
-        );
+        // Map all history and event stack traces on demand (only when an error
+        // report or mapped snapshot is requested, never eagerly at boot).
+        const [mappedHistory, mappedEvents] = await Promise.all([
+            Promise.all(
+                snapshot.history.map(async (change) => ({
+                    ...change,
+                    stack: await mapStackTrace(change.stack)
+                }))
+            ),
+            Promise.all(
+                snapshot.events.map(async (event) => ({
+                    ...event,
+                    stack: await mapStackTrace(event.stack)
+                }))
+            )
+        ]);
 
         return {
             state: snapshot.state,
             history: mappedHistory,
-            events: snapshot.events
+            events: mappedEvents
         };
     }
 
@@ -633,8 +599,6 @@ export class StateManager {
         };
 
         this._events.push(event);
-
-        queueStackMapping(event, 'Failed to source-map event stack:');
 
         this._pruneHistory();
     }

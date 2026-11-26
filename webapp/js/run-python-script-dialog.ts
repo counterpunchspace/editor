@@ -444,6 +444,16 @@ async function refreshScripts(): Promise<void> {
 }
 
 async function executePython(code: string, title: string): Promise<void> {
+    if (!window.pyodide && typeof window.ensurePyodideReady === 'function') {
+        isRunning = true;
+        updateRunButtonState();
+        try {
+            await window.ensurePyodideReady();
+        } finally {
+            isRunning = false;
+            updateRunButtonState();
+        }
+    }
     if (!window.pyodide) {
         alert('Python environment not ready yet');
         return;

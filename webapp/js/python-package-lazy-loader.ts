@@ -159,12 +159,18 @@
     /**
      * Hook into Python execution to install packages as needed
      */
+    let lazyLoaderInstalled = false;
     function setupLazyLoader(): void {
-        if (!window.pyodide) {
-            console.log('[LazyLoader]', 'Waiting for Pyodide...');
-            setTimeout(setupLazyLoader, 500);
+        if (lazyLoaderInstalled) {
             return;
         }
+        if (!window.pyodide) {
+            window.addEventListener('pyodideLoaded', setupLazyLoader, {
+                once: true
+            });
+            return;
+        }
+        lazyLoaderInstalled = true;
 
         console.log('[LazyLoader]', '🔧 Installing lazy package loader...');
 

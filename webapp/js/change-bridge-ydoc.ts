@@ -959,7 +959,7 @@ export function jsonToCoreFontMap(
     json: Record<string, unknown>,
     fontMap: Y.Map<unknown>
 ): void {
-    const glyphNames = Array.isArray(json.glyphs)
+    const residentGlyphNames = Array.isArray(json.glyphs)
         ? (json.glyphs as Record<string, unknown>[])
               .map((glyph) =>
                   typeof glyph?.name === 'string' ? glyph.name : ''
@@ -977,11 +977,19 @@ export function jsonToCoreFontMap(
                         : ''
                 )
                 .filter((name) => name.length > 0)
-          : Array.isArray(json.glyphOrder)
-            ? (json.glyphOrder as unknown[]).map(String)
-            : [];
+          : [];
+    const explicitGlyphOrder = Array.isArray(json.glyphOrder)
+        ? (json.glyphOrder as unknown[])
+              .map(String)
+              .filter((name) => name.length > 0)
+        : [];
+    const glyphNames =
+        explicitGlyphOrder.length > 0 &&
+        explicitGlyphOrder.length >= residentGlyphNames.length
+            ? explicitGlyphOrder
+            : residentGlyphNames;
     for (const [key, value] of Object.entries(json)) {
-        if (key === 'glyphs' || key === 'fontDeps') {
+        if (key === 'glyphs' || key === 'fontDeps' || key === 'glyphOrder') {
             continue;
         }
         if (key === 'format_specific' && isPlainObject(value)) {

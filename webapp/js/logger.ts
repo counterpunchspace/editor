@@ -50,6 +50,7 @@ export const FACILITY_REGISTRY: Record<string, boolean> = {
     FontInterpolation: false,
     FontInfo: false,
     FontManager: false,
+    LocalSparseHydrator: false,
     FontWindows: false,
     Launcher: false,
     GitHubPlugins: false,

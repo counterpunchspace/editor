@@ -1313,16 +1313,29 @@ export class WindowSync {
             for (const name of requested) {
                 this._missingGlyphHydrationNames.add(name);
             }
-            void window.cloudPlugin
-                ?.ensureSparseHydration?.({
-                    glyphNames: requested,
-                    purpose: 'ui'
-                })
-                ?.then(
+            const hydrator =
+                typeof window.fontManager?.ensureSparseHydration === 'function'
+                    ? (input: {
+                          text?: string;
+                          glyphNames?: string[];
+                          purpose?: 'ui' | 'compile';
+                      }) => window.fontManager.ensureSparseHydration(input)
+                    : (input: {
+                          text?: string;
+                          glyphNames?: string[];
+                          purpose?: 'ui' | 'compile';
+                      }) =>
+                          window.cloudPlugin?.ensureSparseHydration?.(input) ??
+                          Promise.resolve([]);
+            void hydrator({
+                glyphNames: requested,
+                purpose: 'ui'
+            })
+                .then(
                     () => undefined,
                     () => undefined
                 )
-                ?.finally(() => {
+                .finally(() => {
                     for (const name of requested) {
                         this._missingGlyphHydrationNames.delete(name);
                     }
@@ -1424,11 +1437,22 @@ export class WindowSync {
                     window.patchSyncEngine?.refreshOwnedCatalogFromYDoc?.();
                     try {
                         names =
-                            (await window.cloudPlugin?.ensureSparseHydration?.({
-                                text: msg.text,
-                                glyphNames: msg.glyphNames,
-                                purpose: msg.purpose
-                            })) ?? [];
+                            (typeof window.fontManager
+                                ?.ensureSparseHydration === 'function'
+                                ? await window.fontManager.ensureSparseHydration(
+                                      {
+                                          text: msg.text,
+                                          glyphNames: msg.glyphNames,
+                                          purpose: msg.purpose
+                                      }
+                                  )
+                                : await window.cloudPlugin?.ensureSparseHydration?.(
+                                      {
+                                          text: msg.text,
+                                          glyphNames: msg.glyphNames,
+                                          purpose: msg.purpose
+                                      }
+                                  )) ?? [];
                     } catch {
                         names = [];
                     }

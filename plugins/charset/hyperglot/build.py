@@ -8,6 +8,7 @@ dependencies: this script resolves upstream YAML references into data.json.
 from __future__ import annotations
 
 import base64
+import gzip
 import hashlib
 import json
 import re
@@ -214,7 +215,11 @@ def write_wheel(project_root: Path, license_text: bytes) -> Path:
     files = {
         f"{PACKAGE_NAME}/__init__.py": (package_directory / "__init__.py").read_bytes(),
         f"{PACKAGE_NAME}/plugin.py": (package_directory / "plugin.py").read_bytes(),
-        f"{PACKAGE_NAME}/data.json": (package_directory / "data.json").read_bytes(),
+        f"{PACKAGE_NAME}/data.json.gz": gzip.compress(
+            (package_directory / "data.json").read_bytes(),
+            compresslevel=9,
+            mtime=0,
+        ),
         f"{PACKAGE_NAME}/LICENSE": license_text,
         f"{dist_info}/METADATA": (
             "Metadata-Version: 2.1\n"

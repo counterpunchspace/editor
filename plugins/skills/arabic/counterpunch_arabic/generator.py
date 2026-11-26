@@ -10,7 +10,7 @@ import re
 from typing import Any
 
 from counterpunch_arabic.conn_names import class_name, parse_conn_name
-from counterpunch_arabic.font_source import ArabicFontSource
+from counterpunch_arabic.font_source import get_arabic_font_source
 
 _RULE = re.compile(r"^\s*sub\s+(\S+)\s+by\s+(.+?)\s*;\s*$")
 _LOOKUP_NAME = re.compile(r"\blookup\s+(\S+)\s*\{")
@@ -28,13 +28,31 @@ class ArabicFormsGenerator:
     INTENT_KEYS = ["arabic"]
 
     def __init__(self) -> None:
-        source = ArabicFontSource()
-        self._characters = source.characters
-        self._mark_variants = source.mark_variants
-        self._rlig = source.rlig
-        self._mark_orders = source.mark_orders
-        self._kasra_display = source.kasra_display
-        self._lam_alef_alefs = source.lam_alef_alefs
+        pass
+
+    @property
+    def _characters(self) -> Any:
+        return get_arabic_font_source().characters
+
+    @property
+    def _mark_variants(self) -> Any:
+        return get_arabic_font_source().mark_variants
+
+    @property
+    def _rlig(self) -> Any:
+        return get_arabic_font_source().rlig
+
+    @property
+    def _mark_orders(self) -> Any:
+        return get_arabic_font_source().mark_orders
+
+    @property
+    def _kasra_display(self) -> Any:
+        return get_arabic_font_source().kasra_display
+
+    @property
+    def _lam_alef_alefs(self) -> Any:
+        return get_arabic_font_source().lam_alef_alefs
 
     def needs_rebuild(self, batch: dict[str, Any], font: Any, context: dict[str, Any]) -> bool:
         del font, context

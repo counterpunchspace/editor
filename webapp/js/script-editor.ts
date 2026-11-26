@@ -1480,6 +1480,29 @@ import {
             return;
         }
 
+        if (
+            !window.pyodide &&
+            typeof window.ensurePyodideReady === 'function'
+        ) {
+            runButton!.disabled = true;
+            runButton!.style.opacity = '0.65';
+            runButton!.textContent = '⏳ Loading Python...';
+            try {
+                await window.ensurePyodideReady();
+            } catch (error) {
+                console.error(
+                    '[ScriptEditor]',
+                    'Failed to load Python:',
+                    error
+                );
+                runButton!.disabled = false;
+                runButton!.style.opacity = '1';
+                updateRunButtonState();
+                alert('Failed to initialize Python environment');
+                return;
+            }
+        }
+
         if (!window.pyodide) {
             alert('Python environment not ready yet');
             return;

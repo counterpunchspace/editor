@@ -21,6 +21,53 @@ type TimelineSpanOptions = {
 
 const activeSpans: Map<string, TimelineSpanState> = new Map();
 let spanCounter = 0;
+let timelineEntryCounter = 0;
+
+const TIMELINE_PRUNE_INTERVAL = 200;
+const TIMELINE_MAX_RETAINED_ENTRIES = 200;
+
+function prunePerformanceTimelineIfNeeded(): void {
+    timelineEntryCounter += 1;
+    if (timelineEntryCounter % TIMELINE_PRUNE_INTERVAL !== 0) {
+        return;
+    }
+    const perf = globalThis.performance;
+    if (!perf || typeof perf.getEntriesByType !== 'function') {
+        return;
+    }
+    if (typeof perf.clearMarks === 'function') {
+        const marks = perf.getEntriesByType('mark');
+        const excess = marks.length - TIMELINE_MAX_RETAINED_ENTRIES;
+        if (excess > 0) {
+            const activeStartMarks = new Set<string>();
+            for (const span of activeSpans.values()) {
+                activeStartMarks.add(span.startMark);
+            }
+            let cleared = 0;
+            for (let i = 0; i < marks.length && cleared < excess; i++) {
+                const name = marks[i].name;
+                if (!isCodeLoadingLabel(name) && !activeStartMarks.has(name)) {
+                    perf.clearMarks(name);
+                    cleared += 1;
+                }
+            }
+        }
+    }
+    if (typeof perf.clearMeasures === 'function') {
+        const measures = perf.getEntriesByType('measure');
+        const excess = measures.length - TIMELINE_MAX_RETAINED_ENTRIES;
+        if (excess > 0) {
+            let cleared = 0;
+            for (let i = 0; i < measures.length && cleared < excess; i++) {
+                const name = measures[i].name;
+                if (!isCodeLoadingLabel(name)) {
+                    perf.clearMeasures(name);
+                    cleared += 1;
+                }
+            }
+        }
+    }
+}
 
 type TimelineDetail = Record<string, unknown>;
 
@@ -104,6 +151,7 @@ export function timelineMark(stage: string, context?: TimelineContext): void {
     const label = toLabel(stage) + contextSuffix(context);
     if (canMark()) {
         globalThis.performance.mark(label);
+        prunePerformanceTimelineIfNeeded();
     }
     safeTimeStamp(label);
 }
@@ -143,11 +191,16 @@ export function timelineSpanEnd(spanId: string): void {
         globalThis.performance.mark(endMark);
     }
     if (canMeasure()) {
-        globalThis.performance.measure(
-            toLabel(activeSpan.stage) + activeSpan.contextSuffix,
-            activeSpan.startMark,
-            endMark
-        );
+        try {
+            globalThis.performance.measure(
+                toLabel(activeSpan.stage) + activeSpan.contextSuffix,
+                activeSpan.startMark,
+                endMark
+            );
+        } catch {
+            // Ignore if the start mark was externally cleared while the span was open.
+        }
+        prunePerformanceTimelineIfNeeded();
     }
     safeTimeStamp(endMark);
 

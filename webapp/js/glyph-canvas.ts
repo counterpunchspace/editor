@@ -33,7 +33,7 @@ import {
 } from './glyph-canvas/feature-change-animator';
 import { MeasurementTool } from './glyph-canvas/measurement-tool';
 import { StackPreviewAnimator } from './glyph-canvas/stack-preview-animator';
-import { get_glyph_name } from '../wasm-dist/babelfont_fontc_web';
+import { get_glyph_name } from './opentype-table-reader';
 import fontManager from './font-manager';
 import { OutlineEditor } from './glyph-canvas/outline-editor';
 import { transformBoundsWithAffine } from './glyph-path-geometry';
@@ -3509,6 +3509,23 @@ class GlyphCanvas {
                 // Increment sequence counter to track this selection
                 this.glyphSelectionSequence++;
                 const currentSequence = this.glyphSelectionSequence;
+
+                if (ix >= 0 && ix < this.textRunEditor!.shapedGlyphs.length) {
+                    const targetGlyphName = this.getCurrentGlyphName();
+                    if (
+                        targetGlyphName &&
+                        targetGlyphName !== 'undefined' &&
+                        window.fontManager?.isLocalSparseFont?.() &&
+                        !window.currentFontModel?.findGlyph?.(targetGlyphName)
+                    ) {
+                        await window.fontManager.ensureLocalGlyphsHydrated([
+                            targetGlyphName
+                        ]);
+                        if (currentSequence !== this.glyphSelectionSequence) {
+                            return;
+                        }
+                    }
+                }
 
                 if (
                     wasInEditMode &&
@@ -8157,14 +8174,25 @@ class GlyphCanvas {
     ): Promise<void> {
         const trimmedValue = value.trim();
 
-        if (
-            trimmedValue &&
-            !isPlainNumericInputValue(trimmedValue) &&
-            window.cloudPlugin?.prepareMetricsKeyInput &&
-            !(await window.cloudPlugin.prepareMetricsKeyInput(trimmedValue))
-        ) {
-            this.updatePropertyPanel();
-            return;
+        if (trimmedValue && !isPlainNumericInputValue(trimmedValue)) {
+            if (window.fontManager?.isLocalSparseFont?.()) {
+                const missing =
+                    window.patchSyncEngine?.listNonResidentMetricsKeyReferences?.(
+                        trimmedValue
+                    ) ?? [];
+                if (missing.length > 0) {
+                    await window.fontManager.ensureSparseHydration({
+                        glyphNames: missing,
+                        purpose: 'ui'
+                    });
+                }
+            } else if (
+                window.cloudPlugin?.prepareMetricsKeyInput &&
+                !(await window.cloudPlugin.prepareMetricsKeyInput(trimmedValue))
+            ) {
+                this.updatePropertyPanel();
+                return;
+            }
         }
 
         const drawing = this.getCurrentEditingDrawingModel();

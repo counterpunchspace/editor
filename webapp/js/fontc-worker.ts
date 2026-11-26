@@ -13,8 +13,11 @@ import init, {
     init_ydoc_from_state,
     apply_yjs_update,
     reset_ydoc_set,
+    reset_ydoc_set_preserving_font_cache,
     seed_ydoc_document,
     rebuild_caches_from_ydoc_set,
+    merge_ydoc_set_into_font_cache,
+    patch_seeded_glyph_shards_into_font_cache,
     apply_preview_layer_overlay,
     clear_preview_layer_overlay,
     dump_layer_state_json,
@@ -36,12 +39,26 @@ import init, {
     reinterpolate_master_layers_yjs,
     clear_font_cache,
     open_font_file,
+    open_font_file_sparse,
+    get_glyphs_json_batch,
     get_glyphs_outlines,
+    get_glyphs_overview_binary,
     set_debug_font_cache_max_bytes,
     validate_feature_source_with_full_filter_pipeline,
     set_compile_feature_overlay,
     filtered_boolean_fingerprints,
     boolean_op_paths,
+    save_font_as_glyphs,
+    save_cached_font_as_glyphs,
+    export_cached_font_as_babelfont_json,
+    save_font_source_entries,
+    save_cached_font_source_entries,
+    designspace_source_files,
+    ufo_glyph_files_for_paths,
+    load_ufo_glyphs,
+    load_glyphspackage_glyphs,
+    designspace_glyph_files_for_paths,
+    load_designspace_glyphs,
     version
 } from '../wasm-dist/babelfont_fontc_web.js';
 import {
@@ -876,18 +893,10 @@ self.onmessage = async (event) => {
                 );
                 const startTime = performance.now();
 
-                // Clean font data before compilation
-                const parseJsonSpanId = timelineSpanStart(
-                    'font.worker.compile.parseInputJson'
-                );
-                const fontData = JSON.parse(data.babelfontJson);
-                timelineSpanEnd(parseJsonSpanId);
-
-                const stringifyJsonSpanId = timelineSpanStart(
-                    'font.worker.compile.stringifyInputJson'
-                );
-                cleanedJson = JSON.stringify(fontData);
-                timelineSpanEnd(stringifyJsonSpanId);
+                cleanedJson =
+                    typeof data.babelfontJson === 'string'
+                        ? data.babelfontJson
+                        : JSON.stringify(data.babelfontJson);
 
                 // Explicit export compilation for a Python-produced font. Editor
                 // commits compile from the worker's Yjs-backed cache instead.
@@ -895,7 +904,7 @@ self.onmessage = async (event) => {
                 // Send debug info to main thread
                 self.postMessage({
                     type: 'debug',
-                    message: `Before compile: ${fontData.glyphs.length} glyphs, JSON ${cleanedJson.length} bytes, options: ${JSON.stringify(data.options)}`
+                    message: `Before compile: JSON ${cleanedJson.length} bytes, options: ${JSON.stringify(data.options)}`
                 });
 
                 const wasmCompileBridgeSpanId = timelineSpanStart(
@@ -1699,13 +1708,17 @@ self.onmessage = async (event) => {
         // populated at seed time, making the worker compile-ready without a
         // separate storeFontJson call.
         if (data.type === 'seedYdoc') {
-            const { id, state, documents } = data;
+            const { id, state, documents, preserveLocalFont } = data;
             try {
                 if (!initialized) {
                     await initializeWasm();
                 }
                 if (Array.isArray(documents) && documents.length) {
-                    reset_ydoc_set();
+                    if (preserveLocalFont === true) {
+                        reset_ydoc_set_preserving_font_cache();
+                    } else {
+                        reset_ydoc_set();
+                    }
                     for (const document of documents) {
                         const raw =
                             document.state instanceof Uint8Array
@@ -1717,7 +1730,11 @@ self.onmessage = async (event) => {
                                 : raw;
                         seed_ydoc_document(document.documentId, bytes);
                     }
-                    rebuild_caches_from_ydoc_set();
+                    if (preserveLocalFont === true) {
+                        merge_ydoc_set_into_font_cache();
+                    } else {
+                        rebuild_caches_from_ydoc_set();
+                    }
                 } else {
                     const raw =
                         state instanceof Uint8Array
@@ -1751,7 +1768,7 @@ self.onmessage = async (event) => {
         }
 
         if (data.type === 'replaceYdocDocuments') {
-            const { id, documents } = data;
+            const { id, documents, preserveLocalFont } = data;
             try {
                 if (!initialized) {
                     await initializeWasm();
@@ -1761,14 +1778,36 @@ self.onmessage = async (event) => {
                         'replaceYdocDocuments requires at least one shard'
                     );
                 }
+                const seededGlyphIds: string[] = [];
+                let hasNonGlyphShard = false;
                 for (const document of documents) {
                     const bytes =
                         document.state instanceof Uint8Array
                             ? document.state
                             : new Uint8Array(document.state);
                     seed_ydoc_document(document.documentId, bytes);
+                    if (
+                        typeof document.documentId === 'string' &&
+                        document.documentId.startsWith('glyph:')
+                    ) {
+                        seededGlyphIds.push(
+                            document.documentId.slice('glyph:'.length)
+                        );
+                    } else {
+                        hasNonGlyphShard = true;
+                    }
                 }
-                rebuild_caches_from_ydoc_set();
+                if (preserveLocalFont === true) {
+                    if (hasNonGlyphShard) {
+                        merge_ydoc_set_into_font_cache();
+                    } else if (seededGlyphIds.length > 0) {
+                        patch_seeded_glyph_shards_into_font_cache(
+                            JSON.stringify(seededGlyphIds)
+                        );
+                    }
+                } else {
+                    rebuild_caches_from_ydoc_set();
+                }
                 cachedBabelfontJson = null;
                 cachedBaseSubsetKey = null;
                 cachedClosureGlyphCount = null;
@@ -2433,6 +2472,118 @@ self.onmessage = async (event) => {
             return;
         }
 
+        // Handle local sparse open (zero monolithic JSON crossing)
+        if (data.type === 'openFontSparse') {
+            const openFontSpanId = timelineSpanStart(
+                'font.worker.openFontSparse'
+            );
+            const { id, filename, contents, packageEntries, projectEntries } =
+                data;
+            const entryMap = packageEntries || projectEntries;
+
+            if (!filename || (!contents && !entryMap)) {
+                self.postMessage({
+                    id,
+                    type: 'openFontSparse',
+                    error: 'Missing filename or input contents'
+                });
+                return;
+            }
+
+            try {
+                if (!initialized) {
+                    await initializeWasm();
+                }
+                timelineMark('font.worker.openFontSparse.started');
+                cachedBabelfontJson = null;
+                cachedFontRevisionKey = null;
+                cachedBaseSubsetKey = null;
+                cachedClosureGlyphCount = null;
+                cachedPreviewBaseSubsetKey = null;
+                cachedPreviewClosureGlyphCount = null;
+                fontCacheEpoch += 1;
+                dragCompilesSinceStore = 0;
+                lastStoreFontAtMs = 0;
+
+                const payload =
+                    entryMap && typeof entryMap === 'object'
+                        ? prepareOpenFontWasmInput(undefined, entryMap)
+                        : prepareOpenFontWasmInput(contents);
+
+                const envelopeJson = open_font_file_sparse(filename, payload);
+                const envelope = JSON.parse(envelopeJson) as {
+                    coreFontJson: string;
+                    glyphOrder: string[];
+                    glyphCatalog: Array<{
+                        name: string;
+                        codepoints: number[];
+                        category: string;
+                        production_name?: string;
+                        exported: boolean;
+                        component_deps: string[];
+                        metrics_deps: string[];
+                    }>;
+                };
+
+                self.postMessage({
+                    id,
+                    type: 'openFontSparse',
+                    filename,
+                    coreFontJson: envelope.coreFontJson,
+                    glyphOrder: envelope.glyphOrder,
+                    glyphCatalog: envelope.glyphCatalog
+                });
+                timelineMark('font.worker.openFontSparse.success');
+            } catch (e: unknown) {
+                timelineMark('font.worker.openFontSparse.failed');
+                const normalizedError = normalizeWorkerError(e);
+                console.error('[Fontc Worker] Error opening font (sparse):', e);
+                self.postMessage({
+                    id,
+                    type: 'openFontSparse',
+                    error: normalizedError.message
+                });
+            } finally {
+                timelineSpanEnd(openFontSpanId);
+            }
+            return;
+        }
+
+        // Handle on-demand batch glyph hydration from FONT_CACHE
+        if (data.type === 'getGlyphsJsonBatch') {
+            const batchSpanId = timelineSpanStart(
+                'font.worker.getGlyphsJsonBatch'
+            );
+            const { id, glyphNames } = data as {
+                id: number;
+                glyphNames: string[];
+            };
+            try {
+                if (!initialized) {
+                    await initializeWasm();
+                }
+                const glyphsJson = get_glyphs_json_batch(
+                    JSON.stringify(Array.isArray(glyphNames) ? glyphNames : [])
+                );
+                self.postMessage({
+                    id,
+                    type: 'getGlyphsJsonBatch',
+                    glyphsJson
+                });
+            } catch (e: unknown) {
+                const normalizedError = normalizeWorkerError(e);
+                console.error('[Fontc Worker] Error hydrating glyph batch:', e);
+                self.postMessage({
+                    id,
+                    type: 'getGlyphsJsonBatch',
+                    error: normalizedError.message
+                });
+            } finally {
+                timelineSpanEnd(batchSpanId);
+            }
+            return;
+        }
+
         // Handle get glyph outlines request
         if (data.type === 'getGlyphOutlines') {
             const outlinesSpanId = timelineSpanStart(
@@ -2478,6 +2629,55 @@ self.onmessage = async (event) => {
                 self.postMessage({
                     id,
                     type: 'getGlyphOutlines',
+                    error
+                });
+            } finally {
+                timelineSpanEnd(outlinesSpanId);
+            }
+            return;
+        }
+
+        // Handle compact binary overview outlines request (zero-copy Transferable)
+        if (data.type === 'getGlyphOutlinesBinary') {
+            const outlinesSpanId = timelineSpanStart(
+                'font.worker.getGlyphOutlinesBinary'
+            );
+            const { id, glyphNames, location } = data;
+
+            try {
+                const locationJson =
+                    Object.keys(location).length > 0
+                        ? JSON.stringify(location)
+                        : '{}';
+                const glyphNamesJson = JSON.stringify(glyphNames);
+                const bytes = get_glyphs_overview_binary(
+                    glyphNamesJson,
+                    locationJson
+                );
+                // Copy into a tight standalone ArrayBuffer if the Uint8Array is a view into WASM memory
+                const owned = new Uint8Array(bytes.byteLength);
+                owned.set(bytes);
+                self.postMessage(
+                    {
+                        id,
+                        type: 'getGlyphOutlinesBinary',
+                        buffer: owned.buffer,
+                        byteOffset: 0,
+                        byteLength: owned.byteLength
+                    },
+                    { transfer: [owned.buffer] }
+                );
+            } catch (e: unknown) {
+                const error = normalizeWorkerError(e).message;
+                if (!error.includes('No font loaded')) {
+                    console.error(
+                        `[Fontc Worker] Error getting binary glyph outlines:`,
+                        e
+                    );
+                }
+                self.postMessage({
+                    id,
+                    type: 'getGlyphOutlinesBinary',
                     error
                 });
             } finally {
@@ -2649,6 +2849,64 @@ self.onmessage = async (event) => {
                     id,
                     type: 'filteredBooleanFingerprints',
                     error: e?.toString?.() || String(e)
+                });
+            }
+            return;
+        }
+
+        if (data.type === 'sourceWasmOp') {
+            const { id, op, args } = data as {
+                id: number;
+                op: string;
+                args: string[];
+            };
+            try {
+                if (!initialized) {
+                    await initializeWasm();
+                }
+                const sourceOps: Record<
+                    string,
+                    (...opArgs: string[]) => string
+                > = {
+                    save_font_as_glyphs: (a) => save_font_as_glyphs(a),
+                    save_cached_font_as_glyphs: () =>
+                        save_cached_font_as_glyphs(),
+                    export_cached_font_as_babelfont_json: () =>
+                        export_cached_font_as_babelfont_json(),
+                    save_font_source_entries: (a, b, c) =>
+                        save_font_source_entries(a, b, c),
+                    save_cached_font_source_entries: (a, b) =>
+                        save_cached_font_source_entries(a, b),
+                    designspace_source_files: (a) =>
+                        designspace_source_files(a),
+                    ufo_glyph_files_for_paths: (a, b) =>
+                        ufo_glyph_files_for_paths(a, b),
+                    load_ufo_glyphs: (a, b, c, d) =>
+                        load_ufo_glyphs(a, b, c, d),
+                    load_glyphspackage_glyphs: (a, b) =>
+                        load_glyphspackage_glyphs(a, b),
+                    designspace_glyph_files_for_paths: (a, b, c) =>
+                        designspace_glyph_files_for_paths(a, b, c),
+                    load_designspace_glyphs: (a, b, c, d) =>
+                        load_designspace_glyphs(a, b, c, d)
+                };
+                const fn = sourceOps[op];
+                if (!fn) {
+                    throw new Error(`Unknown sourceWasmOp: ${op}`);
+                }
+                const result = fn(...(Array.isArray(args) ? args : []));
+                self.postMessage({
+                    id,
+                    type: 'sourceWasmOp',
+                    result
+                });
+            } catch (e: unknown) {
+                const normalizedError = normalizeWorkerError(e);
+                console.error(`[Fontc Worker] sourceWasmOp(${op}) error:`, e);
+                self.postMessage({
+                    id,
+                    type: 'sourceWasmOp',
+                    error: normalizedError.message
                 });
             }
             return;

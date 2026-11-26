@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import gzip
 import hashlib
 import json
 import zipfile
@@ -143,10 +144,15 @@ def record_line(name: str, content: bytes) -> str:
 def write_wheel(package: dict) -> str:
     wheel_name = f"{package['name']}-{package['version']}-py3-none-any.whl"
     dist_info = f"{package['name']}-{package['version']}.dist-info"
-    files = {
-        f"{package['name']}/{relative}": (package["root"] / relative).read_bytes()
-        for relative in package["files"]
-    }
+    files: dict[str, bytes] = {}
+    for relative in package["files"]:
+        raw = (package["root"] / relative).read_bytes()
+        if relative.endswith(".babelfont"):
+            files[f"{package['name']}/{relative}.gz"] = gzip.compress(
+                raw, compresslevel=9, mtime=0
+            )
+        else:
+            files[f"{package['name']}/{relative}"] = raw
     files[f"{dist_info}/METADATA"] = (
         "Metadata-Version: 2.1\n"
         f"Name: {package['distribution']}\n"

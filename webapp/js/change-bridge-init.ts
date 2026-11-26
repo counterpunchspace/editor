@@ -4062,7 +4062,19 @@ function initializeBridge(detail: FontModelReadyDetail): void {
         timelineSpanEnd(initJsonSpanId);
     }
 
-    if (sparseWorkingGlyphIds) {
+    const localSparseBootstrap = (
+        detail as {
+            localSparseBootstrap?: {
+                workingGlyphIds: string[];
+                fontDeps: import('./filesystem-plugins/cloud-font-deps').FontDepsIndex;
+            };
+        }
+    ).localSparseBootstrap;
+
+    if (localSparseBootstrap) {
+        bridge.seedFontDepsFromIndex(localSparseBootstrap.fontDeps);
+        bridge.beginSparseWorkingSet(localSparseBootstrap.workingGlyphIds);
+    } else if (sparseWorkingGlyphIds) {
         bridge.beginSparseWorkingSet(sparseWorkingGlyphIds);
     }
 
@@ -4188,7 +4200,7 @@ function initializeBridge(detail: FontModelReadyDetail): void {
         // from the same JSON has different item identities, so later bridge
         // deltas can remain pending or fail to update nested arrays.
         const documentSet = bridge.encodeDocumentSet?.();
-        const state = bridge.encodeBridgeState();
+        const state = documentSet?.length ? null : bridge.encodeBridgeState();
         if (!documentSet?.length && !state?.length) {
             fontCompilation.setWorkerCacheDocumentReady(false);
             reportWorkerDocumentFailure(
@@ -4201,7 +4213,12 @@ function initializeBridge(detail: FontModelReadyDetail): void {
             void fontCompilation
                 .trackWorkerDocumentSync(
                     documentSet?.length
-                        ? fontCompilation.seedWorkerDocumentSet(documentSet)
+                        ? fontCompilation.seedWorkerDocumentSet(
+                              documentSet,
+                              localSparseBootstrap
+                                  ? { preserveLocalFont: true }
+                                  : undefined
+                          )
                         : fontCompilation.seedWorkerYDocFromState(state)
                 )
                 .catch((error) => {

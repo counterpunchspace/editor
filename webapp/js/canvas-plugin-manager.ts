@@ -21,6 +21,7 @@
  */
 
 import { Logger } from './logger';
+import { runHostPythonAsync } from './skills/host-python';
 import {
     getEnabledCanvasPluginIds,
     setEnabledCanvasPluginIds
@@ -79,6 +80,10 @@ export class CanvasPluginManager {
         return this.enabledPlugins.has(entryPoint);
     }
 
+    hasEnabledPlugins(): boolean {
+        return this.enabledPlugins.size > 0;
+    }
+
     /**
      * Enable a plugin
      */
@@ -123,8 +128,13 @@ export class CanvasPluginManager {
         try {
             console.log('Discovering canvas plugins...');
 
+            // Release any previously retained Python plugin instance proxies
+            for (const oldPlugin of this.plugins) {
+                oldPlugin?.instance?.destroy?.();
+            }
+
             // Use importlib.metadata to discover plugins via entry points
-            const pluginsResult = await window.pyodide.runPythonAsync(`
+            const pluginsResult = (await runHostPythonAsync(`
                 import sys
                 from importlib.metadata import entry_points
 
@@ -153,15 +163,24 @@ export class CanvasPluginManager {
                         traceback.print_exc()
                 
                 discovered_plugins
-            `);
+            `)) as {
+                toJs?: (options: {
+                    dict_converter: typeof Object.fromEntries;
+                }) => unknown[];
+                destroy?: () => void;
+            } | null;
 
-            // Convert PyProxy to JavaScript array
-            if (pluginsResult && pluginsResult.toJs) {
-                this.plugins = pluginsResult.toJs({
-                    dict_converter: Object.fromEntries
-                });
-            } else {
-                this.plugins = [];
+            // Convert PyProxy to JavaScript array and destroy outer proxy
+            try {
+                if (pluginsResult && pluginsResult.toJs) {
+                    this.plugins = pluginsResult.toJs({
+                        dict_converter: Object.fromEntries
+                    });
+                } else {
+                    this.plugins = [];
+                }
+            } finally {
+                pluginsResult?.destroy?.();
             }
 
             // Get UI elements for each plugin
@@ -170,12 +189,16 @@ export class CanvasPluginManager {
                     const instance = plugin.instance;
                     if (instance && instance.get_ui_elements) {
                         const elementsResult = instance.get_ui_elements();
-                        if (elementsResult && elementsResult.toJs) {
-                            plugin.ui_elements = elementsResult.toJs({
-                                dict_converter: Object.fromEntries
-                            });
-                        } else {
-                            plugin.ui_elements = [];
+                        try {
+                            if (elementsResult && elementsResult.toJs) {
+                                plugin.ui_elements = elementsResult.toJs({
+                                    dict_converter: Object.fromEntries
+                                });
+                            } else {
+                                plugin.ui_elements = [];
+                            }
+                        } finally {
+                            elementsResult?.destroy?.();
                         }
                     } else {
                         plugin.ui_elements = [];
@@ -317,19 +340,18 @@ export class CanvasPluginManager {
                         `[CanvasPluginManager] Calling ${hookName} on ${plugin.name}`
                     );
 
-                    // Convert JS objects to Python
+                    // Convert JS objects to Python and guarantee proxy cleanup
                     const drawingDataPy = window.pyodide.toPy(drawingData);
-
-                    // Call the hook method
-                    pluginPy[hookName](
-                        drawingDataPy,
-                        glyphName,
-                        ctx,
-                        viewportManager
-                    );
-
-                    // Clean up Python proxy
-                    drawingDataPy.destroy();
+                    try {
+                        pluginPy[hookName](
+                            drawingDataPy,
+                            glyphName,
+                            ctx,
+                            viewportManager
+                        );
+                    } finally {
+                        drawingDataPy?.destroy?.();
+                    }
                 } catch (error) {
                     console.error(
                         `Error drawing plugin ${plugin.name} (${hookName}):`,

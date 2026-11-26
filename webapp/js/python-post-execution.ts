@@ -14,7 +14,23 @@ import {
     isAssistantPythonExecutionActive,
     setActiveAssistantPythonExecutionCommit
 } from './assistant-execution-context';
-import { diffFontDataToPatchPairs } from './font-data-diff';
+import {
+    diffFontDataToPatchPairs,
+    type FontDataPatchPair
+} from './font-data-diff';
+
+function serializeFontCoreWithoutGlyphs(
+    fontData: Record<string, unknown>
+): string {
+    const core: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(fontData)) {
+        if (key === 'glyphs') {
+            continue;
+        }
+        core[key] = value;
+    }
+    return JSON.stringify(core);
+}
 
 const console = new Logger('PythonPostExecution');
 
@@ -31,6 +47,8 @@ type SyntheticChangeOperation = {
 
 type PythonExecutionCommitContext = {
     beforeFontDataJson: string | null;
+    beforeCoreJson?: string | null;
+    beforeGlyphJsonByName?: Map<string, string> | null;
     code?: string | null;
     label?: string | null;
     transactionStarted?: boolean;
@@ -68,45 +86,122 @@ export type PythonExecutionOutcome = {
  * segments read back as array indices: a glyph named “1” would become the
  * second glyph of the snapshot.
  */
+function patchPairsToSyntheticOperations(
+    pairs: FontDataPatchPair[]
+): SyntheticChangeOperation[] {
+    return pairs.map(({ forward, inverse }) => {
+        const path = [...forward.path];
+        const oldValue = inverse.op === 'remove' ? undefined : inverse.value;
+        const newValue = forward.op === 'remove' ? undefined : forward.value;
+        const glyphName =
+            path[0] === 'glyphs' && path.length >= 2 ? String(path[1]) : null;
+        const drawingId =
+            glyphName !== null && path[2] === 'layers' && path.length >= 4
+                ? String(path[3])
+                : null;
+        return {
+            op:
+                forward.op === 'replace'
+                    ? 'set'
+                    : forward.op === 'add'
+                      ? 'add'
+                      : 'remove',
+            path,
+            oldValue,
+            newValue,
+            replayOldValue: oldValue,
+            replayNewValue: newValue,
+            workerReplayTargets: normalizeWorkerReplayTargets(
+                glyphName !== null && drawingId !== null
+                    ? [{ glyphName, layerId: drawingId }]
+                    : []
+            )
+        };
+    });
+}
+
 function createSyntheticOperationsFromJsonSnapshots(
     beforeSnapshot: Record<string, unknown>,
     afterSnapshot: Record<string, unknown>
 ): SyntheticChangeOperation[] {
-    return diffFontDataToPatchPairs(beforeSnapshot, afterSnapshot).map(
-        ({ forward, inverse }) => {
-            const path = [...forward.path];
-            const oldValue =
-                inverse.op === 'remove' ? undefined : inverse.value;
-            const newValue =
-                forward.op === 'remove' ? undefined : forward.value;
-            const glyphName =
-                path[0] === 'glyphs' && path.length >= 2
-                    ? String(path[1])
-                    : null;
-            const drawingId =
-                glyphName !== null && path[2] === 'layers' && path.length >= 4
-                    ? String(path[3])
-                    : null;
-            return {
-                op:
-                    forward.op === 'replace'
-                        ? 'set'
-                        : forward.op === 'add'
-                          ? 'add'
-                          : 'remove',
-                path,
-                oldValue,
-                newValue,
-                replayOldValue: oldValue,
-                replayNewValue: newValue,
-                workerReplayTargets: normalizeWorkerReplayTargets(
-                    glyphName !== null && drawingId !== null
-                        ? [{ glyphName, layerId: drawingId }]
-                        : []
-                )
-            };
-        }
+    return patchPairsToSyntheticOperations(
+        diffFontDataToPatchPairs(beforeSnapshot, afterSnapshot)
     );
+}
+
+/**
+ * Diff only changed font-core fields and changed/added/removed glyphs using
+ * per-glyph string equality before parsing, avoiding full-font JSON parse on
+ * large local fonts.
+ */
+function createSyntheticOperationsFromScopedSnapshots(
+    beforeCoreJson: string,
+    beforeGlyphJsonByName: Map<string, string>,
+    afterData: Record<string, unknown>
+): SyntheticChangeOperation[] {
+    const patchPairs: FontDataPatchPair[] = [];
+
+    const afterCoreJson = serializeFontCoreWithoutGlyphs(afterData);
+    if (afterCoreJson !== beforeCoreJson) {
+        const beforeCore = JSON.parse(beforeCoreJson) as Record<
+            string,
+            unknown
+        >;
+        const afterCore = JSON.parse(afterCoreJson) as Record<string, unknown>;
+        diffFontDataToPatchPairs(beforeCore, afterCore, [], null, patchPairs);
+    }
+
+    const afterGlyphs = Array.isArray(afterData.glyphs) ? afterData.glyphs : [];
+    const seenAfterNames = new Set<string>();
+    for (const glyph of afterGlyphs) {
+        if (!glyph || typeof glyph !== 'object') {
+            continue;
+        }
+        const name = (glyph as { name?: unknown }).name;
+        if (typeof name !== 'string' || !name.length) {
+            continue;
+        }
+        seenAfterNames.add(name);
+        const afterGlyphJson = JSON.stringify(glyph);
+        const beforeGlyphJson = beforeGlyphJsonByName.get(name);
+        if (beforeGlyphJson === afterGlyphJson) {
+            continue;
+        }
+        const beforeGlyph =
+            beforeGlyphJson !== undefined
+                ? (JSON.parse(beforeGlyphJson) as Record<string, unknown>)
+                : undefined;
+        const afterGlyph = JSON.parse(afterGlyphJson) as Record<
+            string,
+            unknown
+        >;
+        diffFontDataToPatchPairs(
+            beforeGlyph,
+            afterGlyph,
+            ['glyphs', name],
+            null,
+            patchPairs
+        );
+    }
+
+    for (const [name, beforeGlyphJson] of beforeGlyphJsonByName) {
+        if (seenAfterNames.has(name)) {
+            continue;
+        }
+        const beforeGlyph = JSON.parse(beforeGlyphJson) as Record<
+            string,
+            unknown
+        >;
+        diffFontDataToPatchPairs(
+            beforeGlyph,
+            undefined,
+            ['glyphs', name],
+            null,
+            patchPairs
+        );
+    }
+
+    return patchPairsToSyntheticOperations(patchPairs);
 }
 
 function createCanonicalSerializedFontSnapshot(
@@ -143,25 +238,46 @@ export function commitPythonExecutionSyntheticChanges(
         // derive the authoritative synthetic diff from that post-sync serialization.
         currentFont.syncJsonFromModel();
 
-        const beforeFontDataJson = historyContext?.beforeFontDataJson;
-        if (!beforeFontDataJson || !bridge) {
+        if (!bridge) {
             return;
         }
 
-        const afterSnapshot =
-            createCanonicalSerializedFontSnapshot(currentFont);
-        if (!afterSnapshot) {
-            return;
+        let directOperations: SyntheticChangeOperation[];
+        const beforeCoreJson = historyContext?.beforeCoreJson;
+        const beforeGlyphJsonByName = historyContext?.beforeGlyphJsonByName;
+        if (
+            beforeCoreJson != null &&
+            beforeGlyphJsonByName &&
+            currentFont.babelfontData &&
+            typeof currentFont.babelfontData === 'object'
+        ) {
+            directOperations = createSyntheticOperationsFromScopedSnapshots(
+                beforeCoreJson,
+                beforeGlyphJsonByName,
+                currentFont.babelfontData as Record<string, unknown>
+            );
+        } else {
+            const beforeFontDataJson = historyContext?.beforeFontDataJson;
+            if (!beforeFontDataJson) {
+                return;
+            }
+            if (currentFont.babelfontJson === beforeFontDataJson) {
+                return;
+            }
+            const afterSnapshot =
+                createCanonicalSerializedFontSnapshot(currentFont);
+            if (!afterSnapshot) {
+                return;
+            }
+            const beforeSnapshot = JSON.parse(beforeFontDataJson) as Record<
+                string,
+                unknown
+            >;
+            directOperations = createSyntheticOperationsFromJsonSnapshots(
+                beforeSnapshot,
+                afterSnapshot
+            );
         }
-
-        const beforeSnapshot = JSON.parse(beforeFontDataJson) as Record<
-            string,
-            unknown
-        >;
-        const directOperations = createSyntheticOperationsFromJsonSnapshots(
-            beforeSnapshot,
-            afterSnapshot
-        );
 
         const readOnly =
             window.cloudPlugin?.canMutateCurrentAsset?.() === false;

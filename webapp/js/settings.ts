@@ -83,7 +83,7 @@ const APP_SETTINGS = {
     // Glyph overview tile bitmap + outline-JSON cache
     GLYPH_OVERVIEW: {
         // Cap cached tile backing stores (canvas pixels), not V8 heap.
-        TILE_CACHE_MAX_BYTES: 500 * 1024 * 1024
+        TILE_CACHE_MAX_BYTES: 16 * 1024 * 1024
     },
 
     /**
