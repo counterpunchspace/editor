@@ -13,6 +13,7 @@
         <meta name="apple-mobile-web-app-status-bar-style" content="black" />
         <meta name="apple-mobile-web-app-title" content="counterpunch" />
         <title>Counterpunch Editor</title>
+        <link rel="preload" as="image" href="assets/icons/icon.svg" />
         <script>
             // Without a font to open, go to the launcher before the editor
             // starts loading (font-files.ts still sends a window there if
@@ -308,6 +309,12 @@
                             versionSpan.textContent = '';
                             versionSpan.style.display = 'none';
                         }
+                        const loadingVersion =
+                            document.getElementById('loading-version');
+                        if (loadingVersion) {
+                            loadingVersion.textContent = '';
+                            loadingVersion.style.display = 'none';
+                        }
                     };
 
                     if (document.readyState === 'loading') {
@@ -352,10 +359,21 @@
                                 if (stageLabel) {
                                     stageLabel.hidden = false;
                                 }
-                                versionSpan.textContent = isPreview
+                                const versionText = isPreview
                                     ? 'Preview'
                                     : version;
+                                versionSpan.textContent = versionText;
                                 versionSpan.removeAttribute('title');
+                                const loadingVersion =
+                                    document.getElementById('loading-version');
+                                if (loadingVersion) {
+                                    const stageText =
+                                        (stageLabel &&
+                                            stageLabel.textContent) ||
+                                        'Beta ';
+                                    loadingVersion.textContent =
+                                        stageText + versionText;
+                                }
                             }
                         }
                     })
@@ -367,62 +385,93 @@
 
         <!-- Bootstrap Loading Animation -->
         <script>
-            // Fade in loading screen when DOM is ready, before heavy scripts load
+            // Prefetch logo immediately; fade in loading screen only once the logo is decoded
             (function () {
+                const prefetchedLogo = new Image();
+                prefetchedLogo.src = 'assets/icons/icon.svg';
+
                 let animationComplete = false;
+
+                function triggerFadeIn(
+                    loadingIcon,
+                    loadingLogo,
+                    loadingVersion
+                ) {
+                    if (animationComplete) return;
+                    animationComplete = true;
+
+                    console.log('[Bootstrap] Starting fade-in animation');
+
+                    const transition =
+                        'opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1)';
+                    loadingIcon.style.transition = transition;
+                    loadingLogo.style.transition = transition;
+                    if (loadingVersion) {
+                        loadingVersion.style.transition = transition;
+                    }
+
+                    requestAnimationFrame(() => {
+                        loadingIcon.style.opacity = '0';
+                        loadingLogo.style.opacity = '0';
+                        if (loadingVersion) {
+                            loadingVersion.style.opacity = '0';
+                        }
+
+                        requestAnimationFrame(() => {
+                            loadingIcon.style.opacity = '1';
+                            loadingLogo.style.opacity = '1';
+                            if (loadingVersion) {
+                                loadingVersion.style.opacity = '1';
+                            }
+                            setTimeout(() => {
+                                console.log('[Bootstrap] Fade-in complete');
+                            }, 800);
+                        });
+                    });
+                }
 
                 function fadeInLoadingScreen() {
                     if (animationComplete) return;
 
                     const loadingIcon = document.querySelector('.loading-icon');
                     const loadingLogo = document.querySelector('.loading-logo');
+                    const loadingVersion =
+                        document.getElementById('loading-version');
 
-                    if (loadingIcon && loadingLogo) {
-                        console.log('[Bootstrap] Starting fade-in animation');
-
-                        // Set transition properties
-                        loadingIcon.style.transition =
-                            'opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1)';
-                        loadingLogo.style.transition =
-                            'opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1)';
-
-                        // First frame: ensure opacity is 0
-                        requestAnimationFrame(() => {
-                            loadingIcon.style.opacity = '0';
-                            loadingLogo.style.opacity = '0';
-
-                            // Second frame: trigger fade to opacity 1
-                            requestAnimationFrame(() => {
-                                loadingIcon.style.opacity = '1';
-                                loadingLogo.style.opacity = '1';
-                                animationComplete = true;
-
-                                // After animation, show bootstrapping message
-                                setTimeout(() => {
-                                    console.log('[Bootstrap] Fade-in complete');
-                                    const statusElement =
-                                        document.getElementById(
-                                            'loading-status'
-                                        );
-                                    if (
-                                        statusElement &&
-                                        statusElement.textContent === ''
-                                    ) {
-                                        setTimeout(() => {
-                                            if (
-                                                statusElement.textContent === ''
-                                            ) {
-                                                statusElement.textContent =
-                                                    'Bootstrapping...';
-                                            }
-                                        }, 100);
-                                    }
-                                }, 800);
-                            });
-                        });
-                    } else {
+                    if (!loadingIcon || !loadingLogo) {
                         console.warn('[Bootstrap] Loading elements not found');
+                        return;
                     }
+
+                    const start = () =>
+                        triggerFadeIn(loadingIcon, loadingLogo, loadingVersion);
+
+                    if (
+                        loadingIcon.complete &&
+                        loadingIcon.naturalWidth > 0
+                    ) {
+                        if (typeof loadingIcon.decode === 'function') {
+                            loadingIcon.decode().then(start, start);
+                        } else {
+                            start();
+                        }
+                        return;
+                    }
+
+                    loadingIcon.addEventListener(
+                        'load',
+                        () => {
+                            if (typeof loadingIcon.decode === 'function') {
+                                loadingIcon.decode().then(start, start);
+                            } else {
+                                start();
+                            }
+                        },
+                        { once: true }
+                    );
+                    loadingIcon.addEventListener('error', start, {
+                        once: true
+                    });
                 }
 
                 // Always wait for DOMContentLoaded to ensure elements exist
@@ -585,7 +634,11 @@
                     <div class="loading-logo-line">Font Editor</div>
                 </div>
             </div>
-            <div id="loading-status" class="loading-status"></div>
+            <div
+                id="loading-version"
+                class="loading-version"
+                style="opacity: 0"
+            ></div>
         </div>
         <script>
             if (typeof window.__startPyodideLoad === 'function') {

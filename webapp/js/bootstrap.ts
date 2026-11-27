@@ -95,6 +95,8 @@ fetch('worktree-config.json')
         window.WORKTREE_NAME = config.name;
         const el = document.getElementById('app-version');
         if (el) el.textContent = config.name;
+        const loadingVer = document.getElementById('loading-version');
+        if (loadingVer) loadingVer.textContent = config.name;
         const title = document.title;
         if (title.indexOf('[' + config.name + ']') === -1) {
             document.title = title.replace(
@@ -313,21 +315,9 @@ function showUnsupportedBrowserOverlay() {
     console.warn('Unsupported browser detected; warning overlay shown.');
 }
 
-// Utility function to update loading status (extracted from loading-animation.js)
-window.updateLoadingStatus = function (
-    message: string,
-    isReady: boolean = false
-) {
-    const statusElement = document.getElementById('loading-status');
-    if (statusElement) {
-        statusElement.textContent = message;
-        if (isReady) {
-            statusElement.classList.add('ready');
-        } else {
-            statusElement.classList.remove('ready');
-        }
-    }
-};
+// Status text was replaced by the static app version on the loading screen;
+// keep as a no-op so existing callers stay safe.
+window.updateLoadingStatus = function () {};
 
 // Handle URL-based font opening special case
 const handleURLFontOpen = () => {
@@ -361,12 +351,6 @@ const handleURLFontOpen = () => {
 
     if (fontPath) {
         timelineMark('app.urlFontOpen.fontPathDetected');
-        const statusElement = document.getElementById('loading-status');
-        if (statusElement) {
-            statusElement.style.display = '';
-            const filename = fontPath.split('/').pop() || fontPath;
-            statusElement.textContent = `Opening ${filename}`;
-        }
     }
 
     timelineSpanEnd(urlOpenSpan);

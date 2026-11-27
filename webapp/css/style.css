@@ -1337,7 +1337,7 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 72px;
+    gap: 16px;
     transition: opacity 1s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -1354,11 +1354,11 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 22px;
+    gap: 14px;
 }
 
 .loading-icon {
-    width: 156px;
+    width: 88px;
     height: auto;
     display: block;
     opacity: 0;
@@ -1368,18 +1368,15 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     opacity: 1;
 }
 
-.loading-status {
-    min-height: 22px;
+.loading-version {
+    min-height: 20px;
     text-align: center;
     font-family: 'Inter', sans-serif;
-    font-size: 18px;
+    font-size: 14px;
+    font-weight: 400;
     color: var(--text-muted);
+    opacity: 0;
     z-index: 2;
-}
-
-.loading-status.ready {
-    color: var(--accent-green);
-    font-weight: bold;
 }
 
 .unsupported-browser-overlay {
@@ -1512,12 +1509,12 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 4px;
+    gap: 2px;
     font-family: 'Inter', sans-serif;
-    font-size: 72px;
+    font-size: 36px;
     font-weight: 500;
     color: var(--text-primary);
-    line-height: 1.05;
+    line-height: 1.08;
     letter-spacing: 0;
     opacity: 0;
 }
