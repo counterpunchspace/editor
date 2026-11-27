@@ -140,7 +140,8 @@ const GROUPS = {
         ],
         'path-editing': [
             'tests/open-close-path.spec.ts',
-            'tests/path-context-menu-fuzz.spec.ts'
+            'tests/path-context-menu-fuzz.spec.ts',
+            'tests/overlay-settlement-canvas.spec.ts'
         ],
         'anchors-and-components': [
             'tests/automatic-adieresis-anchor-browser.spec.ts',

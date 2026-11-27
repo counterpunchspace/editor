@@ -20211,28 +20211,36 @@ export class OutlineEditor {
             this._sidebearingAffectedGlyphNames = affectedGlyphNames;
         }
 
-        const { widthDelta } = applyLiveSidebearingVisualSync(
-            this.glyphCanvas,
-            {
-                glyphName,
-                glyphAdvanceDeltas: glyphAdvances
-                    ? this.computeLiveAdvanceDeltas(
-                          previousGlyphAdvances || {},
-                          glyphAdvances
-                      )
-                    : { [glyphName]: nextWidth - previousWidth },
-                side,
-                previousWidth,
-                nextWidth,
-                render: false
-            }
-        );
-        void widthDelta;
+        const deferKeyboardSidebearingAdvanceSync =
+            this._keyboardSidebearingPreviewActive &&
+            Boolean(window.fontCompilation?.isInitialized);
+
+        if (!deferKeyboardSidebearingAdvanceSync) {
+            const { widthDelta } = applyLiveSidebearingVisualSync(
+                this.glyphCanvas,
+                {
+                    glyphName,
+                    glyphAdvanceDeltas: glyphAdvances
+                        ? this.computeLiveAdvanceDeltas(
+                              previousGlyphAdvances || {},
+                              glyphAdvances
+                          )
+                        : { [glyphName]: nextWidth - previousWidth },
+                    side,
+                    previousWidth,
+                    nextWidth,
+                    render: false
+                }
+            );
+            void widthDelta;
+        }
         if (this.isLiveSidebearingInteractionActive()) {
             this.activeSidebearingDragLayout = { width: nextWidth };
         }
 
-        this.applyBoundingBoxCenterScreenAnchor(bboxCenterAnchorScreen);
+        if (!deferKeyboardSidebearingAdvanceSync) {
+            this.applyBoundingBoxCenterScreenAnchor(bboxCenterAnchorScreen);
+        }
 
         if (!this.isDraggingSidebearing && bboxCenterAnchorScreen) {
             this._pendingSidebearingBboxCenterAnchorScreen =
