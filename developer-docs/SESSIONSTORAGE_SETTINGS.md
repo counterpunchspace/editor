@@ -10,12 +10,13 @@ This document lists `sessionStorage` keys discovered in production TypeScript (`
 
 | Keys | Literal | Pattern |
 | ---: | ---: | ---: |
-| 6 | 6 | 0 |
+| 7 | 7 | 0 |
 
 | Key | Purpose | Operations | Files |
 | --- | --- | --- | --- |
 | [`coiReloadedBySelf`](#key-coireloadedbyself) | Persists coi reloaded by self. | getItem, setItem, removeItem | `webapp/coi-serviceworker.js`, `webapp/js/fonteditor.ts` |
 | [`cp-editor-health-unhealthy`](#key-cp-editor-health-unhealthy) | Persists cp editor health unhealthy. | getItem, setItem, removeItem | `webapp/js/editor-health-monitor.ts` |
+| [`folderPermissionsAutoPrompted`](#key-folderpermissionsautoprompted) | Persists folder permissions auto prompted. | getItem, setItem | `webapp/js/folder-permissions-dialog.ts` |
 | [`lastMemory`](#key-lastmemory) | Persists last memory. | getItem, setItem | `webapp/js/cache-manager.ts` |
 | [`loadingCursorLastPointer`](#key-loadingcursorlastpointer) | Persists loading cursor last pointer. | getItem, setItem | `webapp/js/loading-cursor.ts` |
 | [`reloadCount`](#key-reloadcount) | Persists reload count. | getItem, setItem | `webapp/js/cache-manager.ts` |
@@ -35,8 +36,8 @@ This document lists `sessionStorage` keys discovered in production TypeScript (`
   - webapp/coi-serviceworker.js:487 `setItem` via function `reloadForCoiBootstrap`
   - webapp/coi-serviceworker.js:578 `getItem` via module `top-level module code`
   - webapp/coi-serviceworker.js:597 `removeItem` via module `top-level module code`
-  - webapp/js/fonteditor.ts:50 `getItem` via function `initFontEditor`
-  - webapp/js/fonteditor.ts:77 `setItem` via function `initFontEditor`
+  - webapp/js/fonteditor.ts:41 `getItem` via function `checkCrossOriginIsolation`
+  - webapp/js/fonteditor.ts:65 `setItem` via function `checkCrossOriginIsolation`
 
 <a id="key-cp-editor-health-unhealthy"></a>
 
@@ -50,6 +51,18 @@ This document lists `sessionStorage` keys discovered in production TypeScript (`
   - webapp/js/editor-health-monitor.ts:240 `getItem` via method `readSessionFlag`
   - webapp/js/editor-health-monitor.ts:249 `setItem` via method `writeSessionFlag`
   - webapp/js/editor-health-monitor.ts:251 `removeItem` via method `writeSessionFlag`
+
+<a id="key-folderpermissionsautoprompted"></a>
+
+## `folderPermissionsAutoPrompted`
+
+- Purpose: Persists folder permissions auto prompted.
+- Kind: literal
+- Operations: `getItem`, `setItem`
+- Default when unset: `false`
+- Sites:
+  - webapp/js/folder-permissions-dialog.ts:62 `getItem` via function `wasAutoPromptedThisSession`
+  - webapp/js/folder-permissions-dialog.ts:73 `setItem` via function `markAutoPromptedThisSession`
 
 <a id="key-lastmemory"></a>
 

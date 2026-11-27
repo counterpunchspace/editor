@@ -764,4 +764,50 @@ describe('Font Destination plugins', () => {
         );
         expect(closedBridge.postMessage).not.toHaveBeenCalled();
     });
+
+    test('skips scanning Plugins when Settings Folder permission is not granted', async () => {
+        const adapter = installSettingsFolderAdapter({
+            checkPermission: jest.fn().mockResolvedValue('prompt')
+        });
+        const { restore } = mockSettingsFolder(adapter);
+        try {
+            const {
+                fontDestinationPluginManager
+            } = require('../js/font-destination-plugin-manager.ts');
+            await expect(
+                fontDestinationPluginManager.getInstalledWheelFiles()
+            ).resolves.toEqual([]);
+            expect(adapter.scanDirectory).not.toHaveBeenCalled();
+        } finally {
+            restore();
+        }
+    });
+
+    test('NativeAdapter.checkPermission falls back to prompt when queryPermission hangs', async () => {
+        jest.useFakeTimers();
+        const warnSpy = jest
+            .spyOn(console, 'warn')
+            .mockImplementation(() => undefined);
+        try {
+            const { NativeAdapter } = require('../js/file-system-adapter.ts');
+            const adapter = new NativeAdapter('test-handle');
+            const queryPermission = jest.fn(() => new Promise(() => undefined));
+            adapter.directoryHandle = { queryPermission };
+
+            const firstCheck = adapter.checkPermission();
+            const concurrentCheck = adapter.checkPermission();
+            await jest.advanceTimersByTimeAsync(1600);
+
+            await expect(firstCheck).resolves.toBe('prompt');
+            await expect(concurrentCheck).resolves.toBe('prompt');
+            expect(queryPermission).toHaveBeenCalledTimes(1);
+
+            // Subsequent check during cooldown resolves immediately without re-querying.
+            await expect(adapter.checkPermission()).resolves.toBe('prompt');
+            expect(queryPermission).toHaveBeenCalledTimes(1);
+        } finally {
+            warnSpy.mockRestore();
+            jest.useRealTimers();
+        }
+    });
 });

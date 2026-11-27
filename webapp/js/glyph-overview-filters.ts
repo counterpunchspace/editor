@@ -1593,7 +1593,17 @@ export class GlyphOverviewFilterManager {
         if (!isCurrentScan()) {
             return;
         }
-        const adapter = this.filterStore();
+        const candidateAdapter = this.filterStore();
+        const adapter =
+            candidateAdapter !== browserFilterStore &&
+            'checkPermission' in candidateAdapter &&
+            typeof candidateAdapter.checkPermission === 'function' &&
+            (await candidateAdapter.checkPermission()) !== 'granted'
+                ? browserFilterStore
+                : candidateAdapter;
+        if (!isCurrentScan()) {
+            return;
+        }
 
         try {
             // Check if /Filters exists

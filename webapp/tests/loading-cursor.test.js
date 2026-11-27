@@ -1,21 +1,27 @@
-// The busy cursor: the mouse pointer shows `progress` while work runs.
+// The busy cursor: shows our own cursor spinner while work runs,
+// without forcing the browser's system progress pointer.
 
 const { withLoadingCursor } = require('../js/loading-cursor');
 
 const busy = () =>
     document.documentElement.classList.contains('loading-cursor');
 
+const spinnerDisplay = () =>
+    document.getElementById('loading-cursor-spinner')?.style.display ?? null;
+
 describe('the busy cursor', () => {
     test('shows while work runs and goes when it ends', async () => {
         let during = false;
+        let displayDuring = null;
         await withLoadingCursor(async () => {
             during = busy();
+            displayDuring = spinnerDisplay();
         });
         expect(during).toBe(true);
+        expect(displayDuring).toBe('block');
         expect(busy()).toBe(false);
-        expect(
-            document.getElementById('loading-cursor-style').textContent
-        ).toContain('cursor: progress !important');
+        expect(spinnerDisplay()).toBe('none');
+        expect(document.getElementById('loading-cursor-style')).toBeNull();
     });
 
     test('goes when the work fails', async () => {

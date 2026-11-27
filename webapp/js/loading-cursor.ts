@@ -164,24 +164,11 @@ function hideCursorSpinner(): void {
     }
 }
 
-/**
- * The mouse pointer itself shows the system's busy cursor, everywhere,
- * over elements that set their own cursor too (the canvas does, inline).
- */
-function ensureBusyCursorStyle(): void {
-    if (document.getElementById('loading-cursor-style')) return;
-    const style = document.createElement('style');
-    style.id = 'loading-cursor-style';
-    style.textContent = `html.${BUSY_CLASS}, html.${BUSY_CLASS} * { cursor: progress !important; }`;
-    document.head.append(style);
-}
-
 function applyLoadingCursor(): void {
     if (!canUseLoadingCursorDom) {
         return;
     }
 
-    ensureBusyCursorStyle();
     document.documentElement.classList.add(BUSY_CLASS);
 
     const body = document.body;

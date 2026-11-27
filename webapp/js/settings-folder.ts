@@ -180,6 +180,10 @@ class SettingsFolderService {
         }
         this.startInHandles.set('/', root);
 
+        if ((await this.adapter.checkPermission()) !== 'granted') {
+            return;
+        }
+
         for (const path of Object.values(SETTINGS_FOLDER_PATHS)) {
             try {
                 const handle = await this.adapter.getHandleAtPath(path);

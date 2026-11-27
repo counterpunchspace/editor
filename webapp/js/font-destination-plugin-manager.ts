@@ -370,6 +370,12 @@ export class FontDestinationPluginManager {
         if (!(await settingsFolder.isReady())) {
             return [];
         }
+        if (
+            adapter.checkPermission &&
+            (await adapter.checkPermission()) !== 'granted'
+        ) {
+            return [];
+        }
         const files = await adapter.scanDirectory(PLUGINS_DIRECTORY);
         return Object.values(files).filter(
             (file) => !file.is_dir && file.path.toLowerCase().endsWith('.whl')

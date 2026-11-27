@@ -53,6 +53,32 @@ const FOLDER_KIND_CALLOUT_MESSAGE: Record<FolderSetupKind, string> = {
 
 export const LINK_FOLDERS_BUTTON_LABEL = 'Link Folder';
 
+const FOLDER_PERMISSIONS_AUTO_PROMPTED_SESSION_KEY =
+    'folderPermissionsAutoPrompted';
+
+function wasAutoPromptedThisSession(): boolean {
+    try {
+        return (
+            window.sessionStorage.getItem(
+                FOLDER_PERMISSIONS_AUTO_PROMPTED_SESSION_KEY
+            ) === 'true'
+        );
+    } catch {
+        return false;
+    }
+}
+
+function markAutoPromptedThisSession(): void {
+    try {
+        window.sessionStorage.setItem(
+            FOLDER_PERMISSIONS_AUTO_PROMPTED_SESSION_KEY,
+            'true'
+        );
+    } catch {
+        // Ignore storage restrictions.
+    }
+}
+
 export const FOLDER_ACCESS_UNAVAILABLE_COPY = {
     title: 'Folder Access Unavailable',
     intro: 'This browser cannot link folders on disk. Use <strong>Chrome/Chromium, Safari, or Edge</strong>. Counterpunch needs the File System Access pickers. Brave turns that API off by default, and Firefox does not provide it, so fonts on disk and the Settings Folder are unavailable here. Browser storage still works.'
@@ -184,6 +210,7 @@ function closeDialog(): void {
      */
     window.dispatchEvent(new CustomEvent('folderPermissionsDialogClosed'));
     if (shouldSettleAutoPrompt) {
+        markAutoPromptedThisSession();
         settleFolderPermissionsAutoPrompt();
     }
 }
@@ -547,7 +574,12 @@ export async function maybeShowFolderPermissionsDialog(): Promise<void> {
     const host = getHost();
     // The tour link goes straight to the tour; the prompt waits for the
     // next start.
-    if (isAutomatedSession() || host.autoPrompted || isTourLinkLaunch()) {
+    if (
+        isAutomatedSession() ||
+        host.autoPrompted ||
+        wasAutoPromptedThisSession() ||
+        isTourLinkLaunch()
+    ) {
         await refreshFolderSetupStatus();
         if (!host.autoPrompted) {
             host.autoPrompted = true;

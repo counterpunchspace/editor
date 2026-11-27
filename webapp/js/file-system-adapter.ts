@@ -135,6 +135,8 @@ export class NativeAdapter implements FileSystemAdapter {
     protected directoryHandle: FileSystemDirectoryHandle | null = null;
     protected rootPath: string = '';
     private readonly storageKey: string;
+    private pendingPermissionCheck: Promise<PermissionState> | null = null;
+    private permissionQueryTimedOutAt: number | null = null;
 
     constructor(storageKey: string = FONTS_FOLDER_HANDLE_KEY) {
         this.storageKey = storageKey;
@@ -220,6 +222,7 @@ export class NativeAdapter implements FileSystemAdapter {
             const handle = await pickerPromise;
             this.directoryHandle = handle;
             this.rootPath = '/';
+            this.permissionQueryTimedOutAt = null;
 
             await set(this.storageKey, handle);
             await this.requestPermission();
@@ -249,6 +252,7 @@ export class NativeAdapter implements FileSystemAdapter {
         await del(this.storageKey);
         this.directoryHandle = null;
         this.rootPath = '';
+        this.permissionQueryTimedOutAt = null;
         console.log(
             '[NativeAdapter]',
             `Directory handle cleared (${this.storageKey})`
@@ -267,25 +271,70 @@ export class NativeAdapter implements FileSystemAdapter {
         if (!this.directoryHandle) {
             return 'prompt';
         }
-        try {
-            const permission = await (
-                this.directoryHandle as any
-            ).queryPermission({ mode: 'readwrite' });
-            return permission;
-        } catch (error) {
-            console.error(
-                '[NativeAdapter]',
-                'Error checking permission:',
-                error
-            );
-            return 'denied';
+        if (
+            this.permissionQueryTimedOutAt !== null &&
+            Date.now() - this.permissionQueryTimedOutAt < 30_000
+        ) {
+            return 'prompt';
         }
+        if (this.pendingPermissionCheck) {
+            return this.pendingPermissionCheck;
+        }
+        const handle = this.directoryHandle;
+        const check = (async (): Promise<PermissionState> => {
+            let timeoutId: ReturnType<typeof setTimeout> | null = null;
+            try {
+                const queryPromise = (
+                    handle as FileSystemDirectoryHandle & {
+                        queryPermission: (descriptor: {
+                            mode: 'read' | 'readwrite';
+                        }) => Promise<PermissionState>;
+                    }
+                ).queryPermission({ mode: 'readwrite' });
+                const permission = await Promise.race<
+                    PermissionState | 'timeout'
+                >([
+                    queryPromise,
+                    new Promise<'timeout'>((resolve) => {
+                        timeoutId = setTimeout(() => resolve('timeout'), 1500);
+                    })
+                ]);
+                if (permission === 'timeout') {
+                    this.permissionQueryTimedOutAt = Date.now();
+                    console.warn(
+                        '[NativeAdapter]',
+                        `Timed out checking directory permission (${this.storageKey}); treating as prompt`
+                    );
+                    return 'prompt';
+                }
+                this.permissionQueryTimedOutAt = null;
+                return permission;
+            } catch (error) {
+                console.error(
+                    '[NativeAdapter]',
+                    'Error checking permission:',
+                    error
+                );
+                return 'denied';
+            } finally {
+                if (timeoutId !== null) {
+                    clearTimeout(timeoutId);
+                }
+            }
+        })();
+        this.pendingPermissionCheck = check.finally(() => {
+            if (this.pendingPermissionCheck === check) {
+                this.pendingPermissionCheck = null;
+            }
+        });
+        return this.pendingPermissionCheck;
     }
 
     async requestPermission(): Promise<PermissionState> {
         if (!this.directoryHandle) {
             return 'prompt';
         }
+        this.permissionQueryTimedOutAt = null;
         try {
             const permission = await (
                 this.directoryHandle as any
