@@ -13,6 +13,7 @@ jest.mock('../js/ui/confirm-dialog', () => ({ showProceedDialog: jest.fn() }));
 
 const { GlyphOverviewFilterManager } = require('../js/glyph-overview-filters');
 const { settingsFolder } = require('../js/settings-folder');
+const { refreshFolderSetupStatus } = require('../js/folder-permissions-dialog');
 const { showProceedDialog } = require('../js/ui/confirm-dialog');
 const { filterChatRegistry } = require('../js/glyph-filter-chat');
 
@@ -74,10 +75,15 @@ describe('user filter folders', () => {
     let manager;
     let adapter;
 
-    function setup(files, folders) {
+    async function setup(files, folders) {
         adapter = memoryFolder(files, folders);
         jest.spyOn(settingsFolder, 'getAdapter').mockReturnValue(adapter);
         jest.spyOn(settingsFolder, 'hasFolder').mockReturnValue(true);
+        // A linked handle alone is not enough: access must be granted.
+        jest.spyOn(settingsFolder, 'initialize').mockResolvedValue(true);
+        jest.spyOn(settingsFolder, 'getAccessState').mockResolvedValue('ready');
+        jest.spyOn(settingsFolder, 'getFolderName').mockReturnValue('Settings');
+        await refreshFolderSetupStatus();
         manager = new GlyphOverviewFilterManager();
         jest.spyOn(manager, 'discoverUserFilters').mockResolvedValue();
         // The sidebar refresh is covered elsewhere; only file effects matter.
@@ -93,7 +99,7 @@ describe('user filter folders', () => {
     });
 
     test('lists empty folders and nested ones, down to the nesting limit', async () => {
-        setup({ '/Filters/A/x.py': 'x' }, [
+        await setup({ '/Filters/A/x.py': 'x' }, [
             '/Filters/A',
             '/Filters/A/B',
             '/Filters/A/B/Too Deep',
@@ -107,7 +113,7 @@ describe('user filter folders', () => {
     });
 
     test('creates a folder and refuses a taken name ignoring case', async () => {
-        setup({}, ['/Filters/Latin']);
+        await setup({}, ['/Filters/Latin']);
         await expect(
             manager.createUserFilterFolder('/Filters', 'latin')
         ).rejects.toThrow('A folder named “latin” already exists.');
@@ -118,7 +124,7 @@ describe('user filter folders', () => {
     });
 
     test('moves a filter into a folder and keeps its chat', async () => {
-        setup({ '/Filters/Caps.py': 'code' }, ['/Filters/Latin']);
+        await setup({ '/Filters/Caps.py': 'code' }, ['/Filters/Latin']);
         const rename = jest.spyOn(filterChatRegistry, 'rename');
 
         await expect(
@@ -133,9 +139,10 @@ describe('user filter folders', () => {
     });
 
     test('asks before replacing a filter with the same name at the destination', async () => {
-        setup({ '/Filters/Caps.py': 'new', '/Filters/Latin/caps.py': 'old' }, [
-            '/Filters/Latin'
-        ]);
+        await setup(
+            { '/Filters/Caps.py': 'new', '/Filters/Latin/caps.py': 'old' },
+            ['/Filters/Latin']
+        );
 
         showProceedDialog.mockResolvedValueOnce(false);
         await expect(
@@ -154,11 +161,10 @@ describe('user filter folders', () => {
     });
 
     test('deletes an empty folder at once and asks for one with contents', async () => {
-        setup({ '/Filters/Full/a.py': 'a', '/Filters/Full/Sub/b.py': 'b' }, [
-            '/Filters/Empty',
-            '/Filters/Full',
-            '/Filters/Full/Sub'
-        ]);
+        await setup(
+            { '/Filters/Full/a.py': 'a', '/Filters/Full/Sub/b.py': 'b' },
+            ['/Filters/Empty', '/Filters/Full', '/Filters/Full/Sub']
+        );
         const node = (path) => ({
             path,
             displayName: path.split('/').pop(),
@@ -185,7 +191,7 @@ describe('user filter folders', () => {
     });
 
     test('the sidebar shows folders, a folder button and draggable filters that drop into folders', async () => {
-        setup({ '/Filters/Caps.py': 'x' }, ['/Filters/Latin']);
+        await setup({ '/Filters/Caps.py': 'x' }, ['/Filters/Latin']);
         const move = jest
             .spyOn(manager, 'moveUserFilter')
             .mockResolvedValue(null);

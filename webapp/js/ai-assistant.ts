@@ -2240,9 +2240,12 @@ class AIAssistant {
     }> {
         const adapter = settingsFolder.getAdapter();
         await settingsFolder.initialize();
-        if (!settingsFolder.hasFolder()) {
+        if (
+            !settingsFolder.hasFolder() ||
+            (await adapter.checkPermission()) !== 'granted'
+        ) {
             throw new Error(
-                'Choose a Settings Folder before reading Python files.'
+                'Choose or restore access to the Settings Folder before reading Python files.'
             );
         }
         return adapter;

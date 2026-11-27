@@ -79,6 +79,16 @@ function markAutoPromptedThisSession(): void {
     }
 }
 
+function clearAutoPromptedThisSession(): void {
+    try {
+        window.sessionStorage.removeItem(
+            FOLDER_PERMISSIONS_AUTO_PROMPTED_SESSION_KEY
+        );
+    } catch {
+        // Ignore storage restrictions.
+    }
+}
+
 export const FOLDER_ACCESS_UNAVAILABLE_COPY = {
     title: 'Folder Access Unavailable',
     intro: 'This browser cannot link folders on disk. Use <strong>Chrome/Chromium, Safari, or Edge</strong>. Counterpunch needs the File System Access pickers. Brave turns that API off by default, and Firefox does not provide it, so fonts on disk and the Settings Folder are unavailable here. Browser storage still works.'
@@ -90,11 +100,17 @@ type FolderPermissionsHost = {
     autoPromptSettled: boolean;
     autoPromptAwaitingClose: boolean;
     opening: boolean;
+    cachedStatus: FolderSetupStatus | null;
+    statusRefreshSeq: number;
     dialogOverlay: HTMLElement | null;
     linkFolderButton: HTMLButtonElement | null;
     escapeBinding: ModalEscapeBinding | null;
 };
 
+/**
+ * Shared on `window`: bootstrap.js and glyph-overview.js are separate webpack
+ * entries, so module-level state here would exist once per bundle.
+ */
 function getHost(): FolderPermissionsHost {
     const holder = window as Window & {
         __folderPermissionsHost?: FolderPermissionsHost;
@@ -106,6 +122,8 @@ function getHost(): FolderPermissionsHost {
             autoPromptSettled: false,
             autoPromptAwaitingClose: false,
             opening: false,
+            cachedStatus: null,
+            statusRefreshSeq: 0,
             dialogOverlay: null,
             linkFolderButton: null,
             escapeBinding: null
@@ -114,7 +132,6 @@ function getHost(): FolderPermissionsHost {
     return holder.__folderPermissionsHost;
 }
 
-let cachedStatus: FolderSetupStatus | null = null;
 let infoTippyInstances: TippyInstance[] = [];
 
 export function classifyFolderAccess(
@@ -135,14 +152,13 @@ export function isFolderSetupComplete(status: FolderSetupStatus): boolean {
 }
 
 export function isFolderSetupCompleteSync(): boolean {
-    return !!cachedStatus && isFolderSetupComplete(cachedStatus);
+    const status = getHost().cachedStatus;
+    return !!status && isFolderSetupComplete(status);
 }
 
 export function isSettingsFolderReadySync(): boolean {
-    if (cachedStatus) {
-        return cachedStatus.settings.state === 'ready';
-    }
-    return settingsFolder.hasFolder();
+    const status = getHost().cachedStatus;
+    return !!status && status.settings.state === 'ready';
 }
 
 function isAutomatedSession(): boolean {
@@ -150,21 +166,28 @@ function isAutomatedSession(): boolean {
 }
 
 export async function refreshFolderSetupStatus(): Promise<FolderSetupStatus> {
+    const host = getHost();
+    const seq = ++host.statusRefreshSeq;
     await settingsFolder.initialize();
-    cachedStatus = {
+    const status: FolderSetupStatus = {
         settings: {
             state: await settingsFolder.getAccessState(),
             name: settingsFolder.getFolderName()
         }
     };
+    // A slower, older refresh must not overwrite a newer one.
+    if (seq !== host.statusRefreshSeq) {
+        return host.cachedStatus ?? status;
+    }
+    host.cachedStatus = status;
     updateLinkFolderButton();
     /**
      * Settings Folder access snapshot after a status refresh.
      */
     window.dispatchEvent(
-        new CustomEvent('folderSetupStatusChanged', { detail: cachedStatus })
+        new CustomEvent('folderSetupStatusChanged', { detail: status })
     );
-    return cachedStatus;
+    return status;
 }
 
 function destroyInfoTippys(): void {
@@ -210,7 +233,6 @@ function closeDialog(): void {
      */
     window.dispatchEvent(new CustomEvent('folderPermissionsDialogClosed'));
     if (shouldSettleAutoPrompt) {
-        markAutoPromptedThisSession();
         settleFolderPermissionsAutoPrompt();
     }
 }
@@ -368,7 +390,10 @@ async function handleFolderAction(action: 'select' | 'renew'): Promise<void> {
     let granted = false;
     const restoreOverlay = concealOverlayForNativePicker();
     try {
-        if (action === 'select') {
+        const shouldReselect =
+            action === 'select' ||
+            settingsFolder.getAdapter().isPermissionQueryTimedOut();
+        if (shouldReselect) {
             granted = await settingsFolder.selectFolder();
         } else {
             granted = await settingsFolder.renewPermission();
@@ -380,6 +405,7 @@ async function handleFolderAction(action: 'select' | 'renew'): Promise<void> {
     }
     const status = await refreshFolderSetupStatus();
     if (granted && isFolderSetupComplete(status)) {
+        clearAutoPromptedThisSession();
         closeDialog();
         return;
     }
@@ -504,7 +530,8 @@ function updateLinkFolderButton(): void {
     if (!button) {
         return;
     }
-    const show = !!cachedStatus && !isFolderSetupComplete(cachedStatus);
+    const status = getHost().cachedStatus;
+    const show = !!status && !isFolderSetupComplete(status);
     button.hidden = !show;
 }
 
@@ -561,15 +588,24 @@ export function getFolderSetupCalloutHtml(
     `;
 }
 
+function isLinkedWindowLaunch(): boolean {
+    try {
+        return new URLSearchParams(window.location.search).has('linked');
+    } catch {
+        return false;
+    }
+}
+
 export async function maybeShowFolderPermissionsDialog(): Promise<void> {
     const host = getHost();
-    // The tour link goes straight to the tour; the prompt waits for the
-    // next start.
+    // The tour link goes straight to the tour; linked windows inherit the
+    // main window's session without re-prompting.
     if (
         isAutomatedSession() ||
         host.autoPrompted ||
         wasAutoPromptedThisSession() ||
-        isTourLinkLaunch()
+        isTourLinkLaunch() ||
+        isLinkedWindowLaunch()
     ) {
         await refreshFolderSetupStatus();
         if (!host.autoPrompted) {
@@ -579,16 +615,17 @@ export async function maybeShowFolderPermissionsDialog(): Promise<void> {
         return;
     }
     host.autoPrompted = true;
-    await refreshFolderSetupStatus();
+    const status = await refreshFolderSetupStatus();
     if (
         !isFileSystemAccessSupported() ||
-        !cachedStatus ||
-        isFolderSetupComplete(cachedStatus)
+        !status ||
+        isFolderSetupComplete(status)
     ) {
         settleFolderPermissionsAutoPrompt();
         return;
     }
     host.autoPromptAwaitingClose = true;
+    markAutoPromptedThisSession();
     await openFolderPermissionsDialog();
 }
 
@@ -604,6 +641,9 @@ function bindStatusListeners(): void {
     window.addEventListener('settingsFolderAccessChanged', () => {
         void refreshFolderSetupStatus();
     });
+    // Know the folder state at startup, not only after the welcome modal:
+    // User Filters, scripts and plugins gate on it synchronously.
+    void refreshFolderSetupStatus().catch(() => undefined);
 }
 
 bindStatusListeners();

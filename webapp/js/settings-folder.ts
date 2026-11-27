@@ -377,6 +377,20 @@ class SettingsFolderService {
     }
 }
 
-export const settingsFolder = new SettingsFolderService();
+/**
+ * One instance per page: bootstrap.js and glyph-overview.js are separate
+ * webpack entries, and each would otherwise hold its own adapter state.
+ */
+function getOrCreateSettingsFolderService(): SettingsFolderService {
+    if (typeof window === 'undefined') {
+        return new SettingsFolderService();
+    }
+    if (!window.__settingsFolderService) {
+        window.__settingsFolderService = new SettingsFolderService();
+    }
+    return window.__settingsFolderService as SettingsFolderService;
+}
+
+export const settingsFolder = getOrCreateSettingsFolderService();
 
 export { SETTINGS_FOLDER_PATHS };

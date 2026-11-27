@@ -796,7 +796,7 @@ describe('Font Destination plugins', () => {
 
             const firstCheck = adapter.checkPermission();
             const concurrentCheck = adapter.checkPermission();
-            await jest.advanceTimersByTimeAsync(1600);
+            await jest.advanceTimersByTimeAsync(2100);
 
             await expect(firstCheck).resolves.toBe('prompt');
             await expect(concurrentCheck).resolves.toBe('prompt');
@@ -807,6 +807,43 @@ describe('Font Destination plugins', () => {
             expect(queryPermission).toHaveBeenCalledTimes(1);
         } finally {
             warnSpy.mockRestore();
+            jest.useRealTimers();
+        }
+    });
+
+    test('NativeAdapter.checkPermission waits for Pyodide load before arming its timeout', async () => {
+        jest.useFakeTimers();
+        const originalPyodide = window.pyodide;
+        const originalPyodideLoad = window.__pyodideLoadPromise;
+        let resolvePyodide;
+        let resolvePermission;
+        window.pyodide = undefined;
+        window.__pyodideLoadPromise = new Promise((resolve) => {
+            resolvePyodide = resolve;
+        });
+        try {
+            const { NativeAdapter } = require('../js/file-system-adapter.ts');
+            const adapter = new NativeAdapter('test-handle');
+            adapter.directoryHandle = {
+                queryPermission: jest.fn(
+                    () =>
+                        new Promise((resolve) => {
+                            resolvePermission = resolve;
+                        })
+                )
+            };
+
+            const checkPromise = adapter.checkPermission();
+            // Even after 10s while Pyodide is still loading, it must not time out.
+            await jest.advanceTimersByTimeAsync(10_000);
+            resolvePyodide({});
+            await Promise.resolve();
+            resolvePermission('granted');
+
+            await expect(checkPromise).resolves.toBe('granted');
+        } finally {
+            window.pyodide = originalPyodide;
+            window.__pyodideLoadPromise = originalPyodideLoad;
             jest.useRealTimers();
         }
     });

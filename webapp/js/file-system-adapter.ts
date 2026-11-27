@@ -267,6 +267,10 @@ export class NativeAdapter implements FileSystemAdapter {
         return this.directoryHandle?.name || '';
     }
 
+    isPermissionQueryTimedOut(): boolean {
+        return this.permissionQueryTimedOutAt !== null;
+    }
+
     async checkPermission(): Promise<PermissionState> {
         if (!this.directoryHandle) {
             return 'prompt';
@@ -283,6 +287,7 @@ export class NativeAdapter implements FileSystemAdapter {
         const handle = this.directoryHandle;
         const check = (async (): Promise<PermissionState> => {
             let timeoutId: ReturnType<typeof setTimeout> | null = null;
+            let settled = false;
             try {
                 const queryPromise = (
                     handle as FileSystemDirectoryHandle & {
@@ -291,14 +296,36 @@ export class NativeAdapter implements FileSystemAdapter {
                         }) => Promise<PermissionState>;
                     }
                 ).queryPermission({ mode: 'readwrite' });
+                // If queryPermission resolves after a timeout, clear the
+                // cooldown so subsequent checks see the real state.
+                void queryPromise.then(
+                    () => {
+                        this.permissionQueryTimedOutAt = null;
+                    },
+                    () => undefined
+                );
+                // Don't start the timeout clock while Pyodide WASM is still
+                // initializing on the main thread, so a busy boot never beats
+                // a real 'granted' response.
+                const timeoutPromise = new Promise<'timeout'>((resolve) => {
+                    const armTimeout = () => {
+                        if (settled) return;
+                        timeoutId = setTimeout(() => resolve('timeout'), 2000);
+                    };
+                    const pyodideLoad =
+                        typeof window !== 'undefined' &&
+                        !window.pyodide &&
+                        window.__pyodideLoadPromise;
+                    if (pyodideLoad) {
+                        void pyodideLoad.then(armTimeout, armTimeout);
+                    } else {
+                        armTimeout();
+                    }
+                });
                 const permission = await Promise.race<
                     PermissionState | 'timeout'
-                >([
-                    queryPromise,
-                    new Promise<'timeout'>((resolve) => {
-                        timeoutId = setTimeout(() => resolve('timeout'), 1500);
-                    })
-                ]);
+                >([queryPromise, timeoutPromise]);
+                settled = true;
                 if (permission === 'timeout') {
                     this.permissionQueryTimedOutAt = Date.now();
                     console.warn(
@@ -310,6 +337,7 @@ export class NativeAdapter implements FileSystemAdapter {
                 this.permissionQueryTimedOutAt = null;
                 return permission;
             } catch (error) {
+                settled = true;
                 console.error(
                     '[NativeAdapter]',
                     'Error checking permission:',

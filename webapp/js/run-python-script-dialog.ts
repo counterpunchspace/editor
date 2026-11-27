@@ -149,6 +149,9 @@ async function loadScriptsFromSettingsFolder(): Promise<RunnableScript[]> {
     }
 
     const adapter = settingsFolder.getAdapter();
+    if ((await adapter.checkPermission()) !== 'granted') {
+        return [];
+    }
     if (!(await adapter.fileExists(SCRIPTS_ROOT))) {
         return [];
     }

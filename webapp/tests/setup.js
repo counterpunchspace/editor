@@ -14,6 +14,9 @@ const hasWindow = typeof window !== 'undefined';
 beforeEach(() => {
     if (hasWindow) {
         delete window.__windowUiRuntime;
+        // settings-folder.ts shares one instance on window; a module
+        // re-evaluated after jest.resetModules() must get a fresh one.
+        delete window.__settingsFolderService;
     }
     // Product default is off. Tests that opt in must set this themselves;
     // do not leak `true` from an earlier describe in the same file.

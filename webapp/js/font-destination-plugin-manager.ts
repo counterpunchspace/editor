@@ -340,6 +340,12 @@ export class FontDestinationPluginManager {
             return 'settings-folder-not-connected';
         }
         const adapter = getSettingsFolderAdapter();
+        if (
+            adapter.checkPermission &&
+            (await adapter.checkPermission()) !== 'granted'
+        ) {
+            return 'settings-folder-not-connected';
+        }
         return (await adapter.fileExists(PLUGINS_DIRECTORY))
             ? 'ready'
             : 'plugins-folder-missing';

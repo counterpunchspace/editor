@@ -104,6 +104,47 @@ describe('folder permissions auto-prompt session persistence', () => {
         document.body.innerHTML = '';
     });
 
+    test('knows granted access at startup, before the welcome modal settles', async () => {
+        const { settingsFolder } = require('../js/settings-folder');
+        jest.spyOn(settingsFolder, 'initialize').mockResolvedValue(true);
+        jest.spyOn(settingsFolder, 'getAccessState').mockResolvedValue('ready');
+        jest.spyOn(settingsFolder, 'getFolderName').mockReturnValue(
+            'Counterpunch'
+        );
+
+        // Module load alone must compute status; no welcomeScreenSettled.
+        const folderPermissions = require('../js/folder-permissions-dialog');
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(folderPermissions.isSettingsFolderReadySync()).toBe(true);
+    });
+
+    test('an older, slower status refresh does not overwrite a newer one', async () => {
+        const { settingsFolder } = require('../js/settings-folder');
+        jest.spyOn(settingsFolder, 'initialize').mockResolvedValue(true);
+        jest.spyOn(settingsFolder, 'getFolderName').mockReturnValue(
+            'Counterpunch'
+        );
+        let releaseSlow;
+        jest.spyOn(settingsFolder, 'getAccessState')
+            .mockImplementationOnce(
+                () =>
+                    new Promise((resolve) => {
+                        releaseSlow = () => resolve('needsRenewal');
+                    })
+            )
+            .mockResolvedValue('ready');
+
+        const folderPermissions = require('../js/folder-permissions-dialog');
+        // The startup refresh is the slow one; a later refresh finishes first.
+        await folderPermissions.refreshFolderSetupStatus();
+        expect(folderPermissions.isSettingsFolderReadySync()).toBe(true);
+
+        releaseSlow();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(folderPermissions.isSettingsFolderReadySync()).toBe(true);
+    });
+
     test('does not re-open automatically on reload after dismissal in the same session', async () => {
         const originalPicker = window.showDirectoryPicker;
         const originalTestMode = window.isTestMode;
@@ -134,6 +175,61 @@ describe('folder permissions auto-prompt session persistence', () => {
 
             // Simulate a reload in the same browser session (in-memory host reset, sessionStorage kept)
             delete window.__folderPermissionsHost;
+            delete window.__settingsFolderService;
+            jest.resetModules();
+            const reloadedSettings = require('../js/settings-folder');
+            jest.spyOn(
+                reloadedSettings.settingsFolder,
+                'initialize'
+            ).mockResolvedValue(true);
+            jest.spyOn(
+                reloadedSettings.settingsFolder,
+                'getAccessState'
+            ).mockResolvedValue('needsRenewal');
+            jest.spyOn(
+                reloadedSettings.settingsFolder,
+                'getFolderName'
+            ).mockReturnValue('Counterpunch');
+
+            const reloadedDialog = require('../js/folder-permissions-dialog');
+            await reloadedDialog.maybeShowFolderPermissionsDialog();
+            expect(
+                document.querySelector('.folder-permissions-dialog')
+            ).toBeNull();
+        } finally {
+            window.showDirectoryPicker = originalPicker;
+            window.isTestMode = originalTestMode;
+            window.sessionStorage.clear();
+            delete window.__folderPermissionsHost;
+        }
+    });
+
+    test('does not re-open on reload even if the user reloads without clicking Skip', async () => {
+        const originalPicker = window.showDirectoryPicker;
+        const originalTestMode = window.isTestMode;
+        window.showDirectoryPicker = function () {};
+        window.isTestMode = () => false;
+
+        try {
+            const { settingsFolder } = require('../js/settings-folder');
+            jest.spyOn(settingsFolder, 'initialize').mockResolvedValue(true);
+            jest.spyOn(settingsFolder, 'getAccessState').mockResolvedValue(
+                'needsRenewal'
+            );
+            jest.spyOn(settingsFolder, 'getFolderName').mockReturnValue(
+                'Counterpunch'
+            );
+
+            const folderPermissions = require('../js/folder-permissions-dialog');
+            await folderPermissions.maybeShowFolderPermissionsDialog();
+            expect(
+                document.querySelector('.folder-permissions-dialog')
+            ).not.toBeNull();
+
+            // Reload directly without closing/skipping the dialog
+            document.body.innerHTML = '';
+            delete window.__folderPermissionsHost;
+            delete window.__settingsFolderService;
             jest.resetModules();
             const reloadedSettings = require('../js/settings-folder');
             jest.spyOn(

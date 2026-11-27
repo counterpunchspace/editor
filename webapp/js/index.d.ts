@@ -112,6 +112,7 @@ declare global {
         ensurePyodideReady?: () => Promise<Window['pyodide']>;
         initPyodideConsole?: () => Promise<void>;
         __fontcWorker?: Worker;
+        __settingsFolderService?: object;
         __fontcWorkerReadyPromise?: Promise<boolean>;
         __startFontcWorker?: () => void;
         createHarfBuzz: any; // HarfBuzz.js
