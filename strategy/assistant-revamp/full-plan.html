@@ -1,0 +1,857 @@
+<title>Assistant Revamp Plan</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column (~68ch) with the picker mockup allowed to break out wide and scroll sideways on phones. */
+:root{
+  --bg:#f6f7f9; --surface:#ffffff; --fg:#1b1f27; --muted:#5d6676; --line:#dde1e8;
+  --accent:#3b5bdb; --accent-soft:#e7ecfd; --zdr:#1f8a5a; --zdr-soft:#e2f4ea;
+  --warn:#b25e09; --warn-soft:#fcefdc; --bad:#b4232c; --bad-soft:#fbe5e6;
+  --ui:#20242c; --ui-2:#2a2f39; --ui-fg:#e8ebf1; --ui-muted:#9aa3b2; --ui-line:#3a404c;
+  --sans:"Instrument Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono:"JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#12151b; --surface:#1a1e26; --fg:#e6e9ef; --muted:#9aa3b2; --line:#2c323d;
+  --accent:#8ea4ff; --accent-soft:#232c4a; --zdr:#5fd39b; --zdr-soft:#173327;
+  --warn:#f0a95a; --warn-soft:#3a2a16; --bad:#ff8a90; --bad-soft:#3d1c20;
+  --ui:#0d1015; --ui-2:#181c23; --ui-fg:#e8ebf1; --ui-muted:#8e97a6; --ui-line:#2e343f; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#12151b; --surface:#1a1e26; --fg:#e6e9ef; --muted:#9aa3b2; --line:#2c323d;
+  --accent:#8ea4ff; --accent-soft:#232c4a; --zdr:#5fd39b; --zdr-soft:#173327;
+  --warn:#f0a95a; --warn-soft:#3a2a16; --bad:#ff8a90; --bad-soft:#3d1c20;
+  --ui:#0d1015; --ui-2:#181c23; --ui-fg:#e8ebf1; --ui-muted:#8e97a6; --ui-line:#2e343f; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:16px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:28px 64px}
+main{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:40px}
+h1,h2,h3{text-wrap:balance;line-height:1.2;margin:0}
+h1{font-size:2rem;font-weight:700;letter-spacing:-.01em}
+h2{font-size:1.35rem;font-weight:650;padding-top:8px;border-top:1px solid var(--line);padding-top:24px}
+h3{font-size:1.02rem;font-weight:650;margin-top:6px}
+p,ul,ol{margin:0}
+section{display:flex;flex-direction:column;gap:14px}
+ul,ol{padding-left:1.25em;display:flex;flex-direction:column;gap:6px}
+code{font-family:var(--mono);font-size:.84em;background:var(--accent-soft);padding:.08em .35em;border-radius:4px;overflow-wrap:anywhere}
+.lede{color:var(--muted);font-size:1.05rem}
+.eyebrow{font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:600}
+.callout{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:8px}
+.callout.warn{border-color:var(--warn);background:var(--warn-soft)}
+.callout.bad{border-color:var(--bad);background:var(--bad-soft)}
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:.88rem;min-width:560px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+tr:last-child td{border-bottom:0}
+td.num{font-variant-numeric:tabular-nums;font-family:var(--mono);font-size:.8rem;white-space:nowrap}
+.pill{display:inline-block;font-size:.7rem;font-weight:600;padding:1px 7px;border-radius:99px;white-space:nowrap}
+.p-ok{background:var(--zdr-soft);color:var(--zdr)} .p-warn{background:var(--warn-soft);color:var(--warn)} .p-bad{background:var(--bad-soft);color:var(--bad)}
+.phase{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;align-items:baseline}
+.phase .n{font-family:var(--mono);font-size:.8rem;color:var(--accent);font-weight:500}
+.phase > div{min-width:0}
+.decisions li{padding-left:2px}
+
+/* ---------- Mockup ---------- */
+.mock-wrap{margin:0 calc(-1 * max(16px,env(safe-area-inset-left,0px)));}
+@media (min-width:900px){.mock-wrap{margin:0 -110px}}
+.mock-scroll{overflow-x:auto;padding:4px max(16px,env(safe-area-inset-left,0px)) 12px;-webkit-overflow-scrolling:touch;scroll-snap-type:x proximity}
+.picker{background:var(--ui);color:var(--ui-fg);border:1px solid var(--ui-line);border-radius:14px;min-width:940px;box-shadow:0 18px 40px -20px rgba(0,0,0,.45);font-size:13px;line-height:1.35}
+.picker-head{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--ui-line);flex-wrap:wrap}
+.picker-head strong{font-size:14px}
+.zdr{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:700;letter-spacing:.04em;color:#5fd39b;background:#173327;border:1px solid #2a5a43;padding:1px 6px;border-radius:5px}
+.zdr svg{width:10px;height:10px}
+.head-note{color:var(--ui-muted);margin-left:auto;font-size:12px}
+.cols{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));}
+.col{border-right:1px solid var(--ui-line);padding:10px 8px 12px;display:flex;flex-direction:column;gap:6px;scroll-snap-align:start;min-width:0}
+.col:last-child{border-right:0}
+.col h4{margin:0 6px 4px;font-size:10.5px;text-transform:uppercase;letter-spacing:.09em;color:var(--ui-muted);font-weight:600}
+.m{all:unset;box-sizing:border-box;display:flex;flex-direction:column;gap:4px;padding:9px 10px;border-radius:9px;border:1px solid transparent;cursor:pointer;background:var(--ui-2)}
+.m:hover{border-color:var(--ui-line)}
+.m:focus-visible{outline:2px solid #8ea4ff;outline-offset:1px}
+.m[aria-checked="true"]{border-color:#8ea4ff;background:#1f2a4a}
+.m[disabled]{cursor:not-allowed;opacity:.5}
+.m-top{display:flex;align-items:center;gap:6px}
+.m-name{font-weight:600;font-size:13px}
+.m-def{font-size:10px;color:var(--ui-muted);border:1px solid var(--ui-line);border-radius:4px;padding:0 4px}
+.m-top .zdr{margin-left:auto}
+.m-sub{color:var(--ui-muted);font-size:11.5px}
+.m-price{display:flex;align-items:baseline;gap:6px;font-variant-numeric:tabular-nums}
+.m-price b{font-family:var(--mono);font-weight:500;font-size:12.5px;color:var(--ui-fg)}
+.m-price span{color:var(--ui-muted);font-size:11px}
+.m-price.collect b{color:var(--ui-muted);font-family:var(--sans);font-weight:500;font-size:11.5px}
+.m-badge{font-size:10px;font-weight:700;color:#ffd98a;background:#3a2f12;border:1px solid #6b5520;border-radius:4px;padding:0 5px}
+.m-maker{font-size:10.5px;font-weight:600;letter-spacing:.04em;color:#c3cad6;text-transform:uppercase}
+/* One stats block, shared by the model card and the version rows so both line up the same way */
+.st{display:grid;grid-template-columns:62px auto 1fr;gap:3px 8px;align-items:center;font-size:11px}
+.st .sl{color:var(--ui-muted)}
+.st .sv{justify-self:start;font-family:var(--mono);font-size:11.5px;color:var(--ui-fg);white-space:nowrap}
+.dt{display:inline-flex;gap:3px;align-items:center}
+.dt i{width:7px;height:7px;border-radius:50%;background:#3a404c;border:1.5px solid #3a404c;display:block;box-sizing:border-box}
+.dt i.on{background:var(--c);border-color:var(--c)}
+.dt.est i.on{background:transparent}
+.picker.over .st .sv{color:#f0a95a}
+.pbanner{display:none;gap:8px;align-items:flex-start;padding:9px 14px;border-bottom:1px solid var(--ui-line);font-size:12px}
+.pbanner b{font-weight:650}
+.pbanner a{color:#8ea4ff}
+.picker.low .pbanner.low,.picker.over .pbanner.over{display:flex}
+.pbanner.low{background:#3a2a16;color:#f6d3a6}
+.pbanner.over{background:#3d1c20;color:#ffc9cc}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--surface);margin:0 max(16px,env(safe-area-inset-left,0px)) 10px}
+.seg button{all:unset;cursor:pointer;padding:6px 12px;font-size:.82rem;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.seg button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.meter{display:inline-flex;align-items:center;gap:5px;border-radius:99px;padding:2px 8px;font-size:11px;font-weight:600;white-space:nowrap}
+.meter.low{background:#3a2a16;color:#f0a95a;border:1px solid #6b4a20}
+.meter.over{background:#3d1c20;color:#ff8a90;border:1px solid #6d2f35}
+.pop{margin:0 10px 10px;background:var(--ui-2);border:1px solid var(--ui-line);border-radius:9px;padding:9px 10px;display:flex;flex-direction:column;gap:5px;font-size:11.5px}
+.pop .mut{color:var(--ui-muted)}
+.pop a{color:#8ea4ff}
+.notice{margin:0 10px;padding:6px 9px;border-radius:7px;background:#3d1c20;color:#ffc9cc;font-size:11.5px}
+.ta.off{opacity:.55}
+.four{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px;align-items:start}
+.four .lab{font-size:.78rem;font-weight:600;color:var(--muted);margin-bottom:6px}
+.hint{display:inline-block;font-size:.68rem;font-weight:700;padding:1px 7px;border-radius:5px;white-space:nowrap}
+.h-ro{background:var(--zdr-soft);color:var(--zdr)} .h-co{background:var(--accent-soft);color:var(--accent)} .h-un{background:var(--bad-soft);color:var(--bad)}
+details.doc{border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:12px 16px}
+details.doc summary{cursor:pointer;font-weight:600}
+details.doc[open] summary{margin-bottom:10px}
+details.doc .md{display:flex;flex-direction:column;gap:10px;font-size:.93rem}
+details.doc .md h4{margin:8px 0 0;font-size:1rem}
+details.doc .md h5{margin:4px 0 0;font-size:.92rem}
+.ver{display:flex;align-items:center;gap:4px;color:var(--ui-muted);font-size:11px}
+.ver .chev{margin-left:auto;border:1px solid var(--ui-line);border-radius:5px;padding:0 5px;font-size:10px}
+.vmenu{background:var(--ui);border:1px solid var(--ui-line);border-radius:8px;padding:4px;display:flex;flex-direction:column;gap:2px;margin-top:2px}
+.vrow{display:flex;flex-direction:column;gap:3px;padding:6px 6px 7px;border-radius:6px;font-size:11.5px}
+.vrow.sel{background:#1f2a4a}
+.vrow .vn{font-weight:600}
+.vrow .vd{color:var(--ui-muted);font-size:10.5px}
+.qd{margin-left:auto;display:inline-flex;gap:2px;align-items:center}
+.qd i{width:6px;height:6px;border-radius:50%;background:#3a404c;display:block}
+.qd i.on{background:#8ea4ff}
+.fb{display:flex;gap:6px;align-items:center;padding:0 10px 8px;color:var(--ui-muted);font-size:11px}
+.fb .tb{width:24px;height:22px;border-radius:6px;border:1px solid var(--ui-line);display:grid;place-items:center}
+.fb .tb svg{width:12px;height:12px}
+.fb .tb.on{border-color:#8ea4ff;color:#8ea4ff}
+.reply{padding:10px;border-bottom:1px solid var(--ui-line);display:flex;flex-direction:column;gap:6px}
+.reply .who{font-size:11px;color:var(--ui-muted);display:flex;gap:6px}
+.picker-foot{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:10px 14px;border-top:1px solid var(--ui-line);color:var(--ui-muted);font-size:11.5px}
+.picker-foot .route{margin-left:auto}
+.mock-cap{font-size:.82rem;color:var(--muted);padding:0 max(16px,env(safe-area-inset-left,0px))}
+
+/* composer chip + history mock */
+.panel{background:var(--ui);color:var(--ui-fg);border:1px solid var(--ui-line);border-radius:14px;overflow:hidden;font-size:13px;max-width:420px}
+.panel-head{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid var(--ui-line)}
+.panel-head .t{font-weight:600;margin-right:auto}
+.ib{width:28px;height:28px;border-radius:7px;display:grid;place-items:center;color:var(--ui-muted);border:1px solid transparent}
+.ib.on{background:var(--ui-2);border-color:var(--ui-line);color:var(--ui-fg)}
+.ib svg{width:15px;height:15px}
+.hist{border-bottom:1px solid var(--ui-line);background:var(--ui-2);padding:6px}
+.hist .g{font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:var(--ui-muted);padding:6px 8px 2px}
+.hrow{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:7px 8px;border-radius:7px}
+.hrow.cur{background:#1f2a4a}
+.hrow .ti{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.hrow .me{color:var(--ui-muted);font-size:11px;grid-column:1}
+.hrow .ct{color:var(--ui-muted);font-size:11px;font-family:var(--mono);grid-row:1/3;grid-column:2;align-self:center}
+.composer{padding:10px;display:flex;flex-direction:column;gap:8px}
+.ta{background:var(--ui-2);border:1px solid var(--ui-line);border-radius:9px;padding:10px;color:var(--ui-muted);min-height:54px}
+.crow{display:flex;align-items:center;gap:8px}
+.chip{display:inline-flex;align-items:center;gap:6px;background:var(--ui-2);border:1px solid var(--ui-line);border-radius:99px;padding:3px 9px 3px 8px;font-size:12px}
+.chip b{font-weight:600}
+.chip .pr{font-family:var(--mono);color:var(--ui-muted);font-size:11px}
+.send{margin-left:auto;background:#3b5bdb;color:#fff;border-radius:8px;padding:5px 12px;font-weight:600;font-size:12px}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px;align-items:start}
+.two > div{min-width:0;display:flex;flex-direction:column;gap:10px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<main>
+<header style="display:flex;flex-direction:column;gap:10px">
+  <span class="eyebrow">Counterpunch editor · plan · 22 Nov 2026</span>
+  <h1>Assistant revamp</h1>
+  <p class="lede">Chat history per font, a model picker with live per-prompt prices, strict ZDR for every model, image input, and a set of new reference and vision tools. This plan is based on a read of the current code in <code>editor/</code> and <code>website/</code> and on live OpenRouter data from today.</p>
+</header>
+
+<section>
+  <h2>What I found first</h2>
+  <div class="callout bad">
+    <strong>Today’s traffic is not strict ZDR.</strong>
+    <p>Provider routing in <code>website/plugins-worker/review/ai-route.mjs</code> sends only <code>data_collection: "deny"</code>, and that is not a ZDR guarantee. The Luna fallback in <code>website/utils/ai-settings.js</code> isn’t pinned to a provider either, so it can reach OpenAI directly. Every request needs <code>provider.zdr: true</code>, with closed models pinned to their ZDR hosts. This fix stands on its own and should ship first.</p>
+  </div>
+  <ul>
+    <li>Chats exist only in memory (<code>AssistantChatSession.transcript</code> and <code>conversationMessages</code>). <code>fork()</code> already serializes them to JSON, which is a good start for a storage format.</li>
+    <li>Today the server picks the model. The client sends no model, and <code>GET /api/ai/settings</code> already returns a model list that nothing reads.</li>
+    <li>No images are sent anywhere, and the canvas has no image export. Preview mode, the filled text view, already exists in <code>renderer.ts</code>.</li>
+    <li>Per-prompt cost is recorded exactly, in D1 <code>assistant_billing_runs</code>. Nothing records which chat a prompt belongs to, or where it falls in that chat.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Model lineup</h2>
+  <p>The rule: every selectable model supports strict ZDR, image input and tool calling, with no exceptions. Models that fail it are left out. Two of the requested names don’t exist under that name:</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Asked for</th><th>Resolves to</th><th>Vision</th><th>Strict ZDR</th><th>Price in / out per 1M</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>DeepSeek Flash latest</td><td><code>~deepseek/deepseek-flash-latest</code> → v4.1-flash-1017</td><td>yes</td><td>43 endpoints</td><td class="num">0.04–0.30 / 0.10–1.20</td><td><span class="pill p-ok">Default</span></td></tr>
+      <tr><td>DeepSeek Pro</td><td>v4-pro-0813</td><td>no</td><td>yes</td><td class="num">1.30 / 2.60</td><td><span class="pill p-bad">Left out</span></td></tr>
+      <tr><td>GLM Flash Next</td><td>Doesn’t exist. Closest: <code>~z-ai/glm-flash-latest</code> → GLM 5.3 Flash</td><td>yes</td><td>31 endpoints</td><td class="num">0.04–0.15 / 0.08–0.50</td><td><span class="pill p-ok">Include</span></td></tr>
+      <tr><td>GLM</td><td>GLM 5.3 / 5.3 Prime. Vision variants (5V Turbo, 4.6V) have no ZDR host</td><td>no</td><td>yes</td><td class="num">1.68 / 5.28</td><td><span class="pill p-bad">Left out</span></td></tr>
+      <tr><td>Inkling 2</td><td>Thinking Machines: Inkling 2 Small (7 Nov), Inkling 2 Mini (20 Nov)</td><td>yes</td><td>yes</td><td class="num">Small 0.15–0.30 / 0.50–1.00<br>Mini 0.075 / 0.30</td><td><span class="pill p-ok">Both</span></td></tr>
+      <tr><td>GPT Sol</td><td><code>gpt-6.2-sol</code></td><td>yes</td><td>Azure only</td><td class="num">2.00 / 10.00</td><td><span class="pill p-ok">Include</span></td></tr>
+      <tr><td>GPT Terra</td><td><code>gpt-6.1-terra</code></td><td>yes</td><td>Azure only</td><td class="num">1.00 / 5.00</td><td><span class="pill p-ok">Include</span></td></tr>
+      <tr><td>GPT Luna</td><td><code>gpt-6-luna</code></td><td>yes</td><td>Azure only</td><td class="num">0.10 / 0.50</td><td><span class="pill p-ok">Include</span></td></tr>
+      <tr><td>Claude Haiku</td><td><code>claude-haiku-5-5</code></td><td>yes</td><td>Bedrock, Vertex</td><td class="num">0.10 / 0.50</td><td><span class="pill p-ok">Include</span></td></tr>
+      <tr><td>Claude Sonnet</td><td><code>claude-sonnet-5-5</code></td><td>yes</td><td>Bedrock, Vertex</td><td class="num">2.00 / 10.00</td><td><span class="pill p-ok">Include</span></td></tr>
+      <tr><td>Claude Opus</td><td><code>claude-opus-5-5</code></td><td>yes</td><td>Bedrock, Vertex</td><td class="num">4.00 / 20.00</td><td><span class="pill p-ok">Include</span></td></tr>
+    </tbody>
+  </table></div>
+  <p>Prices come from OpenRouter’s list today. The ranges for open-weight models span the cheapest to the most common ZDR host. Throughput figures weren’t available from the API.</p>
+
+  <h3>Google</h3>
+  <p><strong>Gemma 4 31B</strong> (open weight, image input, tools, <span class="num">0.10–0.20 / 0.34–0.40</span> per 1M) has strict ZDR hosts at CoreWeave, NextBit, Parasail and DeepInfra, and goes in the open-weight column with the maker line “Google”. The closed Gemini models (4 Hydrogen, 4 Carbon, 3.5 Flash-Lite) can’t meet strict ZDR through OpenRouter, because Vertex keeps flagged prompts for up to 90 days. They are left out entirely: no Google column, nothing greyed out. If a strict ZDR route ever appears, the catalog gate admits them like any other model and they get their own column.</p>
+
+  <h3>Routing</h3>
+  <ul>
+    <li><strong>Open-weight models use the internal provider picker.</strong> Extend <code>ai-route.mjs</code> with one routing profile per model. It probes only endpoints on OpenRouter’s ZDR list (<code>/api/v1/endpoints/zdr</code>) that also pass the tool-calling probe plus a new image probe, then ranks them by price and speed as it does today. Each request carries <code>zdr: true</code> and the stored <code>order</code>/<code>only</code> lists.</li>
+    <li><strong>Closed models get hard defaults, with no probing.</strong> GPT goes to <code>only: ["azure"]</code>. Claude goes to <code>order: ["amazon-bedrock","google-vertex"]</code> with <code>allow_fallbacks: false</code>. Both send <code>zdr: true</code>. Claude also needs <code>cache_control</code> breakpoints on the system prompt and tools, or long chats will cost several times more.</li>
+    <li><strong>Caching comes first</strong> (details in “Caching rules” below). A chat stays on the provider that answered its first prompt.</li>
+    <li><strong>Fallback.</strong> Requests with no model choice keep today’s Flash → Luna fallback, now Azure-only. A model the user picked explicitly never switches. Inside that model, the router can still try its next ranked ZDR provider. If every provider fails, the chat shows an error such as “Claude Opus is unavailable right now. Try again, or pick another model.” with a Retry button.</li>
+    <li><strong>Auto Exacto.</strong> OpenRouter reorders providers by tool-call quality by default (<a href="https://openrouter.ai/docs/guides/routing/auto-exacto">docs</a>), on every request, which breaks cache stickiness. We opt out. Our explicit <code>order</code>/<code>only</code> list with fallbacks off decides, and our own quality signal replaces theirs.</li>
+  </ul>
+
+  <h3>Caching rules</h3>
+  <p>In an agent chat, nearly all input tokens are the resent history. A cache hit costs 5–10% of the normal input price, so a warm cache saves more than the price difference between any two providers. The routing decider therefore puts caching above price and speed.</p>
+  <ol>
+    <li><strong>Sticky provider per chat.</strong> The first prompt of a chat picks the provider. Every later prompt and tool round in that chat sends that provider alone as <code>only</code>, with <code>allow_fallbacks: false</code>. That holds even after the hourly route refresh ranks a different provider first, and even when the quality score drops a little. The route refresh applies to new chats only.</li>
+    <li><strong>Switch only on failure.</strong> The chat moves to the next provider only if the pinned one errors, fails the reply guard, or drops out of the ZDR list. The new provider then becomes the pin. A chat idle for over 30 minutes may move to the current best provider, because caches expire by then anyway.</li>
+    <li><strong>Rank by cached cost.</strong> <code>workloadPrice()</code> currently weighs listed prompt and output prices. It changes to an agent-chat mix: about 80% of prompt tokens billed at the cache-read price. Endpoints without implicit caching get a large penalty, and cache-read prices vary up to 10× between ZDR hosts. The probe records whether the second step actually reported <code>cached_tokens</code>, and endpoints that claim caching but don’t deliver are ranked as having none.</li>
+    <li><strong>Keep the prompt prefix stable.</strong> Today <code>buildSystemPrompt</code> puts the live <code>get_editor_state</code> output and the edit permission into the system prompt on every round. That changes the start of the prompt, so nothing after it can be cached. The fixed parts (system prompt, then tool definitions) come first and stay byte-identical. Editor state and permission move into a short message at the end of each turn. Tool order is fixed and sorted.</li>
+    <li><strong>Closed models.</strong> Claude gets <code>cache_control</code> breakpoints on the tools, the system prompt and the newest message, using the 5-minute cache. GPT on Azure caches automatically; send <code>prompt_cache_key</code> = chat id where OpenRouter passes it through.</li>
+    <li><strong>Measure it.</strong> <code>ai_prompt_metrics</code> records cached and uncached input tokens per prompt. The internal view shows the cache-hit rate per model and provider, and a provider with a poor hit rate loses rank like one with poor quality.</li>
+  </ol>
+</section>
+
+<section>
+  <h2>Model picker mockup</h2>
+  <p>It opens from a chip above the chat input, and from the same chip in both modes of the glyph filter editor. There is one column per family: open weight, OpenAI and Anthropic. On a phone, scroll the mockup sideways. Tap a model to select it, and use the switch above it to see the low-credit and overage states.</p>
+</section>
+</main>
+
+<div class="mock-wrap" style="max-width:1000px;margin-inline:auto;margin-top:16px">
+  <div class="seg" role="group" aria-label="Credit state in the mockup">
+    <button type="button" data-state="normal" aria-pressed="true">Normal</button>
+    <button type="button" data-state="low" aria-pressed="false">Low credit</button>
+    <button type="button" data-state="over" aria-pressed="false">Overage</button>
+  </div>
+  <div class="mock-scroll">
+  <div class="picker" role="radiogroup" aria-label="Model">
+    <div class="picker-head">
+      <strong>Model</strong>
+      <span class="zdr"><svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 5.3l2 2 4-4.6"/></svg>ZDR</span>
+      <span style="color:var(--ui-muted);font-size:12px">Every model runs with zero data retention. Your font is never stored or used for training.</span>
+    </div>
+    <div class="pbanner low"><span>⚠</span><span><b>€0.38 of your €5.00 credit left</b>, about 12 prompts on DeepSeek Flash. It renews on 1 Dec. A higher plan includes more credit at standard prices before overage starts. <a href="#credit">Compare plans</a></span></div>
+    <div class="pbanner over"><span>●</span><span><b>You’re in overage.</b> Your included credit for November is used up, so prompts now cost double. The prices below already include that. Your credit renews on 1 Dec. A higher plan includes more credit at standard prices. <a href="#credit">Compare plans</a></span></div>
+    <div class="cols" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+      <div class="col"><h4>Open weight</h4>
+        <button class="m" role="radio" aria-checked="true" data-name="DeepSeek Flash">
+          <span class="m-top"><span class="m-name">DeepSeek Flash</span><span class="m-def">default</span><span class="zdr">ZDR</span></span>
+          <span class="m-maker">DeepSeek</span>
+          <span class="st" data-q="3" data-lo="1" data-hi="3"></span>
+          <span class="ver">Latest · v4.1 (17 Oct)<span class="chev">▾</span></span>
+          <span class="vmenu" aria-label="Versions of DeepSeek Flash">
+            <span class="vrow sel"><span class="vn">Latest ✓</span><span class="vd">Always the newest tested version, now v4.1</span><span class="st" data-q="3" data-lo="1" data-hi="3"></span></span>
+            <span class="vrow"><span class="vn">v4.1</span><span class="vd">17 Oct 2026</span><span class="st" data-q="3" data-lo="1" data-hi="3"></span></span>
+            <span class="vrow"><span class="vn">v4</span><span class="vd">13 Aug 2026</span><span class="st" data-q="3" data-lo="1" data-hi="2"></span></span>
+          </span>
+        </button>
+        <button class="m" role="radio" aria-checked="false" data-name="GLM Flash">
+          <span class="m-top"><span class="m-name">GLM Flash</span><span class="m-badge">Cheapest</span><span class="zdr">ZDR</span></span>
+          <span class="m-maker">Z.ai</span>
+          <span class="st" data-q="3" data-lo="1" data-hi="2"></span>
+          <span class="ver">Latest · 5.3 (2 Oct)<span class="chev">▾</span></span>
+        </button>
+        <button class="m" role="radio" aria-checked="false" data-name="Inkling 2 Small">
+          <span class="m-top"><span class="m-name">Inkling 2 Small</span><span class="zdr">ZDR</span></span>
+          <span class="m-maker">Thinking Machines</span>
+          <span class="st" data-q="4" data-lo="1" data-hi="4"></span>
+          <span class="ver">Latest · 7 Nov<span class="chev">▾</span></span>
+        </button>
+        <button class="m" role="radio" aria-checked="false" data-name="Inkling 2 Mini">
+          <span class="m-top"><span class="m-name">Inkling 2 Mini</span><span class="m-def">new</span><span class="zdr">ZDR</span></span>
+          <span class="m-maker">Thinking Machines</span>
+          <span class="st" data-q="3" data-lo="1" data-hi="2" data-est="1"></span>
+          <span class="ver">Latest · 20 Nov<span class="chev">▾</span></span>
+        </button>
+        <button class="m" role="radio" aria-checked="false" data-name="Gemma 4 31B">
+          <span class="m-top"><span class="m-name">Gemma 4 31B</span><span class="zdr">ZDR</span></span>
+          <span class="m-maker">Google</span>
+          <span class="st" data-q="3" data-lo="1" data-hi="2"></span>
+          <span class="ver">Latest · 4 31B<span class="chev">▾</span></span>
+        </button>
+      </div>
+      <div class="col"><h4>OpenAI</h4>
+        <button class="m" role="radio" aria-checked="false" data-name="GPT Luna">
+          <span class="m-top"><span class="m-name">GPT Luna</span><span class="zdr">ZDR</span></span>
+          <span class="st" data-q="3" data-lo="1" data-hi="3"></span>
+          <span class="ver">Latest · 6<span class="chev">▾</span></span>
+        </button>
+        <button class="m" role="radio" aria-checked="false" data-name="GPT Terra">
+          <span class="m-top"><span class="m-name">GPT Terra</span><span class="zdr">ZDR</span></span>
+          <span class="st" data-q="4" data-lo="4" data-hi="22"></span>
+          <span class="ver">Latest · 6.1<span class="chev">▾</span></span>
+        </button>
+        <button class="m" role="radio" aria-checked="false" data-name="GPT Sol">
+          <span class="m-top"><span class="m-name">GPT Sol</span><span class="zdr">ZDR</span></span>
+          <span class="st" data-q="5" data-lo="8" data-hi="45"></span>
+          <span class="ver">Latest · 6.2<span class="chev">▾</span></span>
+        </button>
+      </div>
+      <div class="col"><h4>Anthropic</h4>
+        <button class="m" role="radio" aria-checked="false" data-name="Claude Haiku">
+          <span class="m-top"><span class="m-name">Claude Haiku</span><span class="m-badge">Fastest</span><span class="zdr">ZDR</span></span>
+          <span class="st" data-q="4" data-lo="1" data-hi="3"></span>
+          <span class="ver">Latest · 5.5<span class="chev">▾</span></span>
+        </button>
+        <button class="m" role="radio" aria-checked="false" data-name="Claude Sonnet">
+          <span class="m-top"><span class="m-name">Claude Sonnet</span><span class="zdr">ZDR</span></span>
+          <span class="st" data-q="5" data-lo="6" data-hi="38"></span>
+          <span class="ver">Latest · 5.5<span class="chev">▾</span></span>
+        </button>
+        <button class="m" role="radio" aria-checked="false" data-name="Claude Opus">
+          <span class="m-top"><span class="m-name">Claude Opus</span><span class="m-badge">Best quality</span><span class="zdr">ZDR</span></span>
+          <span class="st" data-q="5" data-lo="12" data-hi="80"></span>
+          <span class="ver">Latest · 5.5<span class="chev">▾</span></span>
+        </button>
+      </div>
+    </div>
+    <div class="picker-foot">
+      <span>Per prompt runs from an average first prompt to an average costliest prompt in recent chats; each dot is a price band: up to 3 ct, 10 ct, 25 ct, 50 ct, and more. Rings with “≈” mark an estimate for a new model. <u>How these numbers work</u></span>
+      <span class="route">Provider picked automatically</span>
+    </div>
+  </div>
+  </div>
+  <p class="mock-cap">Cards carry no written descriptions. Every card and every version row shows the same two measured lines: Quality and Per prompt. The three badges (Cheapest, Fastest, Best quality) go automatically to the single model that leads each measure, so most cards have none. DeepSeek Flash has its version menu open. Inkling 2 Mini is new, so its price is an estimate, shown with rings and “≈”. In Overage, every price is doubled and the price bands move with it. The prices and dots in this mockup are made-up examples.</p>
+</div>
+
+<main style="margin-top:40px">
+<section>
+  <h2>Facts instead of descriptions</h2>
+  <p>Hand-written descriptions like “strong at feature code” are either generic or misleading: what a model can do depends mostly on the tools we give it, and it changes with every version. So the cards carry none. Everything on a card is a fact or a measurement, and nothing needs editing when a version changes.</p>
+  <ul>
+    <li><strong>Speed</strong> has no line of its own; it only decides the Fastest badge. It is the median time from Send to a finished prompt over the same 200-chat window as prices, measured per version. <code>ai_prompt_metrics</code> gains <code>duration_ms</code> next to the time to first token it already records.</li>
+    <li><strong>Badges.</strong> The cron gives out exactly three: <strong>Cheapest</strong> (lowest average prompt cost), <strong>Fastest</strong> (lowest median duration) and <strong>Best quality</strong> (highest quality score). Each goes to the single model leading that measure across the picker, comparing the “Latest” versions. Models with estimated prices can’t hold Cheapest. A tie is broken by the underlying unrounded value. A model leading two measures shows both. Badges move with the data, with a margin of 5% before a badge changes hands, so it doesn’t flicker between two close models.</li>
+    <li><strong>What stays:</strong> the model name, the maker line for open-weight models (a fact that helps recognition), the version and its release date, ZDR, and the “default” and “new” tags. “New” shows for 14 days after a model family is added.</li>
+    <li>The handbook page Models and prices explains the badges along with the other numbers.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Model versions</h2>
+  <p>Each model in the picker has a version menu. “Latest” is preselected and enough for most people. The menu also lists a short, automatically curated set of specific versions, for anyone who wants a version that worked well for them to stay put.</p>
+  <h3>Fully automatic</h3>
+  <ol>
+    <li><strong>Catalog sync.</strong> The hourly cron job that already refreshes routes also reads OpenRouter’s model list (<code>/api/v1/models</code>). It matches new versions to our models by family, using one pattern per model in the registry, such as <code>deepseek/deepseek-v*-flash*</code>. Adding a model family is the only manual step: one config line.</li>
+    <li><strong>Gate.</strong> A new version is listed only if it takes image input, supports tool calling, has at least one strict ZDR endpoint, and has no expiry date within 30 days.</li>
+    <li><strong>Benchmark.</strong> A version that passes the gate gets a benchmark run straight away. That gives it its first quality score, and only then does it appear in the menu.</li>
+    <li><strong>We decide what “Latest” means.</strong> “Latest” is the newest version that passed our gate and benchmark. We send OpenRouter the exact version id, never their <code>~…-latest</code> alias. So “Latest” only moves after our own checks, every stat belongs to exactly one version, and caching isn’t broken by a change happening on OpenRouter’s side mid-chat.</li>
+    <li><strong>Curation.</strong> The menu shows “Latest” plus the newest 3 versions that pass the gate. Older ones drop out of the menu, and their stats age out with the 180-day limit.</li>
+    <li><strong>Retirement.</strong> If a pinned version loses its ZDR endpoint, fails the gate, or is withdrawn, the next prompt uses “Latest” instead. The chat shows a one-line notice: “DeepSeek Flash v4 is no longer available, so this prompt used v4.1.” The saved choice switches to “Latest”. A restored chat whose version is gone continues the same way.</li>
+  </ol>
+  <h3>Stats per version</h3>
+  <ul>
+    <li>Prices and quality are stored per exact version. A specific version’s row shows its own figures.</li>
+    <li><strong>A new version inherits prices as seed rows.</strong> When a version is promoted, the cron copies the previous version’s newest 10 chats (each chat’s first-prompt cost and costliest-prompt cost) into the new version’s window, flagged <code>seed</code>. The normal averaging then runs over seeds and real chats together: the first finished real prompt already moves the range, after 10 real chats they weigh half, and the seeds are the oldest rows, so the 200-chat window drops them first. There is no switch-over threshold. Quality starts from the version’s own benchmark score.</li>
+    <li>The model card shows the figures of whichever version is selected, so the card and the menu always agree.</li>
+  </ul>
+  <h3>Simple for the user</h3>
+  <ul>
+    <li>The card shows the maker (open weight only), at most an automatic badge, the two stat lines (Quality, Per prompt) and the selected version as small text (“Latest · v4.1 (17 Oct)”). The version menu appears only when it’s tapped.</li>
+    <li>Version rows use exactly the same two stat lines as the card, under the version name and release date. There are no provider names, ids or token prices.</li>
+    <li>A “How these numbers work” link in the picker footer opens the new handbook page Models and prices (see “Assistant documentation”), which explains the dots, the price ranges, versions and routing in plain words, and that everything is measured automatically and never includes your chats or fonts.</li>
+    <li>Each reply’s model label in the chat shows the exact version used, such as “DeepSeek Flash v4.1”. That is saved in the chat history too.</li>
+  </ul>
+</section>
+
+<section>
+  <h3>Chat panel: chip and history</h3>
+  <div class="two">
+    <div>
+      <div class="panel" aria-label="Assistant panel mockup">
+        <div class="panel-head">
+          <span class="t">Assistant</span>
+          <span class="ib on" title="Chat history"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.5v2.5H5"/><path d="M8 5v3l2 1.5"/></svg></span>
+          <span class="ib" title="New chat"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 3v10M3 8h10"/></svg></span>
+        </div>
+        <div class="hist">
+          <div class="g">MyGrotesk.glyphs · Today</div>
+          <div class="hrow cur"><span class="ti">Fix the ogonek anchors on all stations</span><span class="me">14:02 · DeepSeek Flash · 6 prompts</span><span class="ct">4 ct</span></div>
+          <div class="hrow"><span class="ti">Why does the kern feature fail to compile?</span><span class="me">10:47 · Claude Sonnet · 3 prompts</span><span class="ct">41 ct</span></div>
+          <div class="g">Earlier</div>
+          <div class="hrow"><span class="ti">Build small caps from the uppercase</span><span class="me">18 Nov · GPT Terra · 9 prompts</span><span class="ct">63 ct</span></div>
+        </div>
+        <div class="composer">
+          <div class="ta">Ask about this font…</div>
+          <div class="crow"><span class="chip"><b>DeepSeek Flash</b><span class="pr">1–3 ct</span><span class="zdr">ZDR</span></span><span class="meter" hidden></span><span class="send">Send</span></div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <p>The history button sits to the left of +. It lists only chats for the open font, newest first, with the model, prompt count and what the chat cost. Swipe or hover to delete one; “Clear history for this font” is at the bottom.</p>
+      <p>The chip under the input shows the model for the next prompt and its price range. Each assistant reply also gets a small model label, because a chat can switch models partway through. When credit runs low or you’re in overage, a small meter appears next to the chip (see “Credit and overage”). The switch above the picker mockup drives this panel too.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>1 · Chat history per font</h2>
+  <h3>Storage key</h3>
+  <p>Use the document key from <code>documentKeyFromUrl</code> (<code>disk:///id/name</code>, <code>cloud:///assetId</code>, <code>github://…</code>), normalized so that <code>cloud://</code> and <code>cloud:///</code> match. When a font gets a new identity (save-as, or a new font saved for the first time), <code>noteDocumentIdentity()</code> moves its chats to the new key. <code>new:///</code> drafts stay in memory until they are saved. <code>memory:</code> example fonts aren’t persisted.</p>
+  <ul>
+    <li><code>cp.assistant.chats.v1:&lt;docKey&gt;</code> holds the index: id, title, createdAt, updatedAt, model, prompt count and cost.</li>
+    <li><code>cp.assistant.chat.v1:&lt;chatId&gt;</code> holds one chat record.</li>
+    <li>Records are compressed with <code>CompressionStream("deflate")</code> and base64-encoded. Keep at most 50 chats per font, with LRU eviction across fonts when <code>setItem</code> hits the quota.</li>
+  </ul>
+  <h3>What a record stores, hidden details included</h3>
+  <ul>
+    <li>The full <code>transcript</code>: every entry kind, <code>automatic</code>, each item’s <code>round</code> and <code>usage</code>, and for each tool call its <code>args</code>, <code>result</code>, <code>failed</code> and <code>previousContent</code>. <code>timeLabel</code> is stored as the original string and never recomputed, so times look the same in another locale or time zone.</li>
+    <li><code>conversationMessages</code> and <code>sessionTotals</code>, so you can carry on a restored chat.</li>
+    <li>New per-reply metadata that is also displayed: the model key, plus the served model and provider from the <code>done</code> event, which the client ignores today.</li>
+    <li>The Python document target identity and revision for each edit tool call. Reveal and Revert then work through the same revision check as today: when the file has changed since, they look the same as they do now for a stale edit.</li>
+    <li>Image references for snapshots, stored as content hashes. The images themselves go in IndexedDB (see decisions).</li>
+    <li><code>schemaVersion</code> and <code>rendererVersion</code>.</li>
+  </ul>
+  <p><strong>Identical rendering:</strong> restoring calls the same <code>AssistantChatView.render()</code> on a rebuilt session. A Jest test runs a scripted chat, takes the panel’s DOM, saves and restores the chat, and requires the DOM to match exactly. Any change to the renderer must keep old records rendering the same way, which is why records carry <code>rendererVersion</code>.</p>
+  <h3>Glyph filter chats</h3>
+  <p><code>FilterChatRegistry</code> keeps its per-path chats in <code>sessionStorage</code> under <code>cp.filterchat.v1:&lt;docKey&gt;:&lt;path&gt;</code>, so a reload no longer loses them, but closing the tab does. There is no history and no picker. Expert mode gets a “Clear chat” item that empties the chat for this filter. There’s no undo, so it asks for confirmation inside the panel.</p>
+</section>
+
+<section>
+  <h2>2 · Price ranges per model</h2>
+  <ol>
+    <li>The client creates a <code>chatId</code> (a UUID) for each chat, and sends it with <code>promptIndex</code> and <code>model</code> on every request. Filter chats send it too.</li>
+    <li>A new D1 table, <code>ai_prompt_metrics</code>, gets one row per prompt with only these columns: <code>chat_id</code> (random, not linked to the user), <code>prompt_index</code>, <code>model_key</code>, <code>provider</code>, <code>surface</code>, <code>cost</code>, <code>created_at</code>, token counts (uncached input, cached input, output, reasoning, image), a <code>seed</code> flag, plus the counters from the quality section. <strong>It has no user id and no prompt text, reply text, tool arguments, tool results or font data.</strong> One prompt is one billing run: the user message plus every tool round it triggers. Cost is the amount charged to the user, including fee and VAT, so the range matches the bill. A Jest test checks the insert against a fixed column list, so text fields can’t be added later by accident.</li>
+    <li><strong>Window by count, not by days.</strong> The window is a fixed number of recent chats per model, so a rarely chosen model like Opus keeps as much data as Flash.
+      <ul>
+        <li><strong>Prices:</strong> the newest 200 chats per model.</li>
+        <li><strong>Quality:</strong> the newest 500 prompts per model and provider.</li>
+        <li><strong>Age limit:</strong> 180 days, so very old data still goes even for a model nobody picks.</li>
+        <li><strong>New version:</strong> quality starts from the new version’s benchmark score. Prices start from 10 seed rows copied from the previous version and are averaged with real chats from the first finished prompt on (see “Model versions”).</li>
+        <li><strong>Price changes</strong> don’t throw data away. Stored costs are rescaled by the ratio of new to old listed price.</li>
+      </ul>
+    </li>
+    <li>The cron deletes rows outside the window (a <code>ROW_NUMBER()</code> query per model in D1) and older than 180 days. Then it recomputes <code>ai_model_price_stats</code> per model from all chats in the window, across every user:
+      <ul>
+        <li><strong>Low</strong> = max(1, round(mean cost of prompt 0 across chats))</li>
+        <li><strong>High</strong> = max(low, round(mean, across chats, of the costliest prompt in that chat))</li>
+      </ul>
+      Only chats with at least two prompts count toward High.</li>
+    <li><strong>A price is always shown.</strong> There is no “collecting” state in the UI. A new version of a known model starts from seed rows copied from the version before it. A completely new model family has no predecessor, so it gets an estimate (below).</li>
+    <li>The cron also stores <code>avg</code>, the mean cost of all prompts in the window, which the credit meter uses to turn a balance into “prompts left”.</li>
+    <li><code>GET /api/ai/settings</code> returns the models with their ranges, the estimate flag and the ZDR flag, and the picker reads it. Display rules: “1–3 ct”, “2 ct” when both ends match, “≈” only for estimates, and euros from €1 up (“80 ct–€1.40”). In overage, the client doubles every figure before formatting, matching what <code>deductAiCredit</code> actually charges (<code>OVERAGE_MARKUP: 1.0</code>).</li>
+    <li><strong>Price dots:</strong> five bands per prompt, up to 3 ct, 10 ct, 25 ct, 50 ct, and above. The dots from the low end’s band to the high end’s band are lit, coloured from green to red by band, so a narrow cheap range is one green dot and Opus lights three to five. The bands are fixed, so dots stay comparable across models and over time.</li>
+  </ol>
+  <h3>Estimating a new model family: token profile transfer</h3>
+  <p>Listed token prices alone are a poor guide. Two models with the same price per token can cost very different amounts per prompt, because one thinks out loud for 4,000 reasoning tokens and the other answers in 300, and one caches well while another doesn’t. So the estimate multiplies the new model’s listed prices by a token count that reflects how this model behaves, scaled to real-world chats:</p>
+  <ol>
+    <li><strong>The new model’s own token profile.</strong> The gate runs the benchmark before a model is listed anyway. The benchmark records, per task, the uncached input, cached input, output and reasoning tokens, and image tokens. Two task groups stand in for the two ends of the range: short single-step tasks for the first prompt, and the long multi-round tasks for the costliest prompt.</li>
+    <li><strong>The real-world factor.</strong> For every model that has real chats, we know both its benchmark token counts and its real-world token counts (from <code>ai_prompt_metrics</code>, which records token counts per prompt along with cost). Their ratio, per token type and per end of the range, says how much bigger real chats are than our tests. We take the median ratio across all models.</li>
+    <li><strong>The estimate.</strong> New model’s benchmark tokens × real-world factor × the listed prices of the provider the router would pick (cache-read price for cached tokens) × fee and VAT. That gives an estimated first-prompt cost and costliest-prompt cost.</li>
+    <li><strong>Seeded, then replaced naturally.</strong> The estimate is written as 10 seed rows, exactly like a version’s inherited prices. The first finished real prompt joins the average straight away, and real chats push the seeds out over time. One mechanism covers both cases.</li>
+    <li><strong>How it looks.</strong> While seed rows from an estimate outnumber real chats, the price dots are drawn as rings and the range carries “≈”, with the tooltip “Estimated from listed prices and how many tokens this model used in our tests. Real prices replace this as people use it.” After 10 real chats the dots fill in. A seeded new version of a known model is not marked, because its seeds are real chats.</li>
+  </ol>
+  <p>Images raise cost. A 1024 px snapshot is about 1,200–1,350 input tokens on GPT and Claude, and it is resent with every later round of the chat. Snapshots count toward the stats like everything else. Default sizes come from the experiment below.</p>
+</section>
+
+<section>
+  <h2>Quality indicator</h2>
+  <p>Two levels, because users and the router need different things:</p>
+  <ul>
+    <li><strong>Per model and provider, internal only.</strong> This feeds the open-weight provider picker. Providers can serve the same weights very differently because of quantization, chat templates and tool-call parsers.</li>
+    <li><strong>Per model, shown to users.</strong> The dots in the picker are the model as it actually runs for them, measured on whatever providers the router used. Users never see provider names, and there is nothing extra to choose.</li>
+  </ul>
+  <h3>Signals (counts only, no content, so compatible with ZDR)</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>Signal</th><th>Where it comes from</th><th>What it says</th></tr></thead>
+    <tbody>
+      <tr><td>Tool-call errors: invalid JSON, unknown tool, schema mismatch</td><td>Server, extending <code>ai-reply-guard.js</code></td><td>The provider’s parser or template is broken. This is the biggest difference between open-weight hosts.</td></tr>
+      <tr><td>Leaked tool markup, empty reply, truncated reply, mid-stream error</td><td>Server</td><td>Broken endpoint</td></tr>
+      <tr><td>Unrecovered tool failure: the prompt ends while its last Python run or validation failed</td><td>Client: the <code>failed</code> flag of the last tool call, sent as a yes/no on the next request, plus the number of failed runs in the prompt for the internal view</td><td>The model couldn’t get working code. Failures it fixes before the prompt ends don’t count: their cost already shows in price and speed, and many come from gaps in our API docs that hit every model alike.</td></tr>
+      <tr><td>Rounds per prompt, prompts hitting the round limit, the same tool call repeated</td><td>Server</td><td>The model is looping or flailing</td></tr>
+      <tr><td>Stop pressed, Retry used, Revert clicked on a Python edit, assistant’s font edit undone within 2 minutes</td><td>Client events, sent as counts</td><td>The user rejected the result</td></tr>
+      <tr><td>Chat abandoned right after an error</td><td>Server, from the next prompt in the same <code>chat_id</code></td><td>Bad experience</td></tr>
+      <tr><td>Thumbs up and down</td><td>Client (see Feedback)</td><td>Direct satisfaction</td></tr>
+      <tr><td>Time to first token, tokens per second</td><td>Server</td><td>Speed. The picker already uses it; it isn’t part of the quality score.</td></tr>
+      <tr><td>Nightly benchmark of font tasks, including an image check</td><td>Cron, run on a synthetic test font with no user data</td><td>Capability on fixed, auto-graded tasks, comparable between providers</td></tr>
+    </tbody>
+  </table></div>
+  <h3>The nightly benchmark</h3>
+  <p>Today’s probe only checks that tool calls work, in a four-step file-reading conversation. I’d add about 12 font tasks with automatic grading, run against every candidate endpoint. Examples: add an anchor to these glyphs at every station; write a <code>kern</code> feature that compiles; write a glyph filter that matches these 14 glyphs; read the text in this snapshot back exactly. The snapshot task proves image input actually works on that provider and isn’t silently dropped. It costs a few cents per endpoint per night.</p>
+  <h3>Scores and routing</h3>
+  <ul>
+    <li><strong>Prompt success.</strong> A prompt succeeds when it had no server error, no tool-call error, didn’t end on a failed Python run, didn’t hit the round limit, and got no Stop, Retry, Revert, quick undo or thumbs down. A thumbs up cancels the soft signals on that prompt (Stop, Retry, undo within 2 minutes), which often mean “not quite yet” rather than “bad answer”. It never cancels a hard failure: a server error, a tool-call error, a failed tool run or the round limit. Thumbs down always makes the prompt a failure.</li>
+    <li><strong>A score from the first prompt on.</strong> Every model and provider starts with a score from the benchmark before any user prompt exists. Live prompts then update it one at a time. The math is a Bayesian average: the benchmark result counts as 30 imagined prompts at its success rate, and each real prompt is added on top.
+      <ul>
+        <li>On launch day there are 0 real prompts, so the score is the benchmark score.</li>
+        <li>After 30 real prompts the two weigh the same.</li>
+        <li>After a few hundred, real use dominates and the benchmark only steadies it. A provider with 12 prompts isn’t ranked first or last by luck.</li>
+      </ul>
+    </li>
+    <li><strong>Seed before launch.</strong> The benchmark runs once for every model and provider before the picker ships: by hand from the dev script, then nightly from the cron job. A newly added model or provider gets a run when it is added, so it never appears without a score.</li>
+    <li><strong>Live, not hourly.</strong> Each prompt’s outcome is added to running totals in <code>ai_quality_stats</code> (successes and attempts per model and provider) as the prompt finishes, so the dots move right away. The nightly job rebuilds the totals from the newest 500 prompts per model and provider, at most 180 days old, and swaps in the new benchmark result.</li>
+    <li><strong>Routing for open-weight models:</strong> when a new chat starts, drop endpoints more than 5 points below the best, then rank the rest by cached cost and speed. The ranking only chooses a provider for new chats. Running chats stay on their pinned provider (see Caching rules). Today’s instant demotion on a guard failure stays, and it is also the one thing that moves a running chat.</li>
+    <li><strong>User display:</strong> 1 to 5 dots per model, visible from day one. The model score combines its providers’ scores, weighted by how many prompts each provider served, or by the benchmark alone before any use. While a model has fewer than 30 real prompts, the tooltip says “Based on our tests so far.” After that it says “Based on our tests and how often prompts finish without errors and how people rate the replies in recent chats.” The dots look the same either way: no numbers, no providers.</li>
+    <li><strong>Internal view:</strong> an admin page in the website, or to begin with a script over D1, listing each model and provider with success rate, error mix, benchmark score, speed and price.</li>
+    <li><strong>Stumbles, internal only.</strong> The internal view also shows failed Python runs per prompt for each model, including the ones it recovered from. They never move the dots. If one model stumbles clearly more than the others on the same docs, that’s the model; if all models stumble alike, it’s our docs.</li>
+    <li><strong>Docs first, enforced.</strong> The system prompt’s “Call python_api_docs before using unfamiliar model APIs” becomes “Before your first Python code in a chat, call <code>python_api_docs</code>.” The editor enforces it: <code>execute_python_code</code>, <code>create_python_draft_in_editor</code>, <code>replace_python_document_in_editor</code> and <code>replace_python_text_in_editor</code> are refused with “Read python_api_docs first” while no <code>python_api_docs</code> call exists earlier in the chat (by any model; a restored chat counts its earlier calls). The filter chat gets the same rule. A refused call doesn’t affect quality: the user never sees the wrong order, and the wasted round already shows in price and speed. Each refusal is counted per model in the internal view, next to the other stumbles. A test covers the block in both chats.</li>
+    <li><strong>Docs report, later.</strong> An optional addition to the internal view: for failed Python runs, the exception class and the API member it failed on, checked against a list of our own API identifiers so no glyph names or font content get through. Ranked by frequency across models, it shows which doc pages to fix first. It never affects any score.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Thumbs up and down</h2>
+  <div class="two">
+    <div>
+      <div class="panel" aria-label="Feedback mockup">
+        <div class="reply">
+          <span class="who"><b style="color:var(--ui-fg)">Assistant</b><span>Claude Sonnet</span></span>
+          <span>I added <code style="background:#2a2f39;color:#e8ebf1">ogonek</code> anchors to a, e, i, o, u at both stations and checked the result in a snapshot.</span>
+        </div>
+        <div class="fb" style="padding-top:8px">
+          <span class="tb"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 7v6H3V7h2zm0 0l3-5c1 0 2 .7 1.7 2L9.3 6H13c.8 0 1.3.7 1.1 1.5l-1.2 4.5c-.2.6-.7 1-1.3 1H5"/></svg></span>
+          <span class="tb on"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" style="transform:scaleY(-1)"><path d="M5 7v6H3V7h2zm0 0l3-5c1 0 2 .7 1.7 2L9.3 6H13c.8 0 1.3.7 1.1 1.5l-1.2 4.5c-.2.6-.7 1-1.3 1H5"/></svg></span>
+          <span>Thanks for rating this reply.</span>
+        </div>
+        <div class="composer" style="border-top:1px solid var(--ui-line)">
+          <div class="ta">Ask about this font…</div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <p>Thumbs up and down sit in the chat, under the last assistant reply of each prompt, and nowhere else. A tap records the rating and shows “Thanks for rating this reply.” Tapping the other thumb changes it, tapping the same one again removes it. There is no text box and no contact option: without the font and the chat, a written comment can’t be followed up, and we don’t want to store either. Ratings are also saved on the chat in localStorage, so the history shows them as they were. Filter chats get the same buttons in Expert mode.</p>
+      <p><strong>Fits with ZDR and our own promise.</strong> A rating is a counter on <code>ai_prompt_metrics</code>: model, provider, prompt index, up or down. It has no user id and no content. In the quality score, a thumbs down makes the prompt a failure, the same weight as an error. A thumbs up cancels the soft signals on that prompt (Stop, Retry, undo within 2 minutes) but never a hard failure such as a server or tool error. A prompt counts exactly once either way, so ratings matter only as much as people use them.</p>
+    </div>
+  </div>
+</section>
+
+<section id="credit">
+  <h2>Credit and overage</h2>
+  <p>Today the Assistant view can warn when the balance is low or empty, but it says nothing in the chat itself, and overage is invisible until the invoice. The proposal is a <strong>credit meter</strong> next to the model chip that counts in prompts, not euros. It stays hidden while there’s plenty of credit.</p>
+  <div class="four">
+    <div>
+      <div class="lab">Low credit</div>
+      <div class="panel" aria-label="Low credit mockup">
+        <div class="pop">
+          <b>€0.38 of €5.00 credit left this month</b>
+          <span class="mut">Renews on 1 Dec.</span>
+          <span>About 12 prompts on DeepSeek Flash, or 3 on Claude Sonnet.</span>
+          <span class="mut">A higher plan includes more credit at standard prices before overage starts. <a href="#credit">Compare plans</a></span>
+        </div>
+        <div class="composer" style="border-top:1px solid var(--ui-line)">
+          <div class="ta">Ask about this font…</div>
+          <div class="crow"><span class="chip"><b>DeepSeek Flash</b><span class="pr">1–3 ct</span></span><span class="meter low">≈ 12 prompts left</span><span class="send">Send</span></div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="lab">Crossing into overage, inside the chat</div>
+      <div class="panel" aria-label="Overage notice mockup">
+        <div class="reply"><span class="who"><b style="color:var(--ui-fg)">Assistant</b><span>DeepSeek Flash v4.1</span></span><span>Done. All 26 lowercase glyphs now have a top anchor at both stations.</span></div>
+        <div class="notice" style="margin-top:10px">Your included credit ran out during this prompt. From now on, prompts cost double until your credit renews on 1 Dec.</div>
+        <div class="composer">
+          <div class="ta">Ask about this font…</div>
+          <div class="crow"><span class="chip"><b>DeepSeek Flash</b><span class="pr" style="color:#f0a95a">2–6 ct</span></span><span class="meter over">Overage · ×2</span><span class="send">Send</span></div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="lab">In overage, meter tapped</div>
+      <div class="panel" aria-label="Overage popover mockup">
+        <div class="pop">
+          <b>You’re in overage</b>
+          <span>Your included credit for November is used up. Prompts now cost twice the standard price and are added to your next invoice. So far: €1.84.</span>
+          <span class="mut">Renews on 1 Dec. A higher plan includes more credit at standard prices before overage starts. <a href="#credit">Compare plans</a> · <a href="#credit">Overage settings</a></span>
+        </div>
+        <div class="composer" style="border-top:1px solid var(--ui-line)">
+          <div class="crow"><span class="chip"><b>Claude Sonnet</b><span class="pr" style="color:#f0a95a">12–76 ct</span></span><span class="meter over">Overage · ×2</span></div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="lab">Used up, overage off</div>
+      <div class="panel" aria-label="Empty credit mockup">
+        <div class="pop">
+          <b>Your credit for November is used up</b>
+          <span class="mut">It renews on 1 Dec. To keep going now, turn on overage at double price, or pick a higher plan with more credit at standard prices.</span>
+          <span><a href="#credit">Compare plans</a> · <a href="#credit">Turn on overage</a></span>
+        </div>
+        <div class="composer" style="border-top:1px solid var(--ui-line)">
+          <div class="ta off">Assistant paused until 1 Dec</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <h3>Rules</h3>
+  <ul>
+    <li><strong>Prompts left</strong> = remaining credit ÷ the selected model’s <code>avg</code> prompt cost, rounded down. Switching to a cheaper model visibly raises the number, which nudges people toward the right model without any lecture. The popover always names the default model’s count too.</li>
+    <li><strong>When the meter appears:</strong> below 20% of the month’s included credit, or fewer than 20 prompts left on the selected model, whichever comes first. Amber, “≈ 12 prompts left”. The picker shows the same as a banner at the top.</li>
+    <li><strong>Overage:</strong> only for active paid subscriptions with overage turned on, as today. The meter turns red and reads “Overage · ×2”. The chip, the picker and the version menu show every price doubled, in amber, and the picker banner says the prices already include the doubling. The popover shows the overage total so far this month (<code>unreported_overage_cents</code>).</li>
+    <li><strong>The moment it starts:</strong> the prompt during which the credit runs out gets a one-line notice in the chat. Such a prompt is billed partly from credit and partly at double price, exactly as <code>deductAiCredit</code> splits it today.</li>
+    <li><strong>Used up with overage off, or on the free plan:</strong> the input is disabled with the renewal date and the two ways forward. Free users see “Subscribe to Basic” instead of the overage option, as the server’s 402 message says today.</li>
+    <li><strong>Higher plans:</strong> the low banner, the overage popover and the used-up state all say that a higher plan includes more credit at standard prices before overage starts, and link to plan comparison. Enterprise users, at the top of the plan order in <code>plan-change.js</code>, don’t see the line.</li>
+    <li><strong>Data:</strong> the <code>done</code> event already returns <code>balance</code> and <code>overageAllowed</code>, so the meter updates after every prompt with no extra request. <code>/api/ai/settings</code> adds the month’s included credit, the renewal date and the overage total.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Image size experiment</h2>
+  <p>This is planned, not started. The goal is to find the smallest snapshot size per model that still answers visual questions well.</p>
+  <ol>
+    <li><strong>Test set:</strong> about 30 renders from fonts in <code>gfsources/</code>, each with a planted fault and a question with a known answer. Examples: a misspaced pair, a missing diacritic, a wrong contour direction showing as a hole, an uneven stem weight, a broken interpolation at a location, or reading back a line of text.</li>
+    <li><strong>Variables:</strong> longest side 256, 384, 512, 768 and 1024 px; PNG versus WebP; black on white versus grey; one full line versus crops of the line.</li>
+    <li><strong>Measured:</strong> the image tokens actually billed (the <code>usage.prompt_tokens</code> difference with and without the image), cost from <code>usage.cost</code>, and answer accuracy, graded automatically.</li>
+    <li><strong>Result:</strong> a default size per model at the knee of the accuracy curve, written into the model registry. <code>snapshot_canvas</code> then gets a <code>region</code> parameter, so the model starts with a small overview and asks for a sharper crop only where it needs one. That is cheaper than one large image, because every image is resent in each later round.</li>
+    <li><strong>Where it lives:</strong> a script next to <code>ai-filter-cost.spec.ts</code>, behind <code>AI_IMAGE_E2E=1</code>, so it never runs in CI by accident.</li>
+  </ol>
+  <h3>What I need from you for development</h3>
+  <ul>
+    <li><strong>A separate OpenRouter API key for development</strong>, not the production one, with a spend limit. About $50 covers the image experiment (12 models × 5 sizes × 30 cases × 2 runs, mostly cheap models) plus a few weeks of benchmark runs. Turn on account-wide <strong>ZDR-only routing</strong> in its privacy settings with Safety Retention endpoints off, so a mistake in our code can’t reach a non-ZDR provider. I’ll keep it in <code>website/.dev.vars</code> as <code>OPENROUTER_API_KEY</code>, which is git-ignored, and pass it to the experiment as an environment variable.</li>
+    <li>Confirmation that Azure (GPT) and Bedrock/Vertex (Claude) work on that account through OpenRouter without your own keys (BYOK). If they need BYOK, I’ll need those provider credentials or you set them up in OpenRouter.</li>
+    <li>OK to use the <code>gfsources/</code> fonts for the test renders. They are openly licensed and never leave the ZDR path.</li>
+    <li>Nightly benchmark in production: approved at about €5–15 a month. It uses the production key, with a hard cap in the cron job.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>3 · Model choice in requests</h2>
+  <ul>
+    <li><strong>Request body:</strong> add an optional <code>model</code> key, checked against an allow-list in <code>ai-settings.js</code>. A request with no key gets <code>deepseek-flash</code> with today’s fallback, so older editor builds keep working.</li>
+    <li><strong>Saved choice, two levels:</strong>
+      <ul>
+        <li><strong>Per chat.</strong> Every chat, assistant or glyph filter, keeps the model and version it last used, taken from the per-reply model record it already stores. Reopening a chat from the history, or switching back to a filter, puts that model back in the chip. Staying on it also keeps the provider’s cache warm.</li>
+        <li><strong>Per surface, for new chats.</strong> <code>localStorage</code> keeps one default for the assistant chat and one for the glyph filter editor, shared by Simple and Expert mode. A new chat starts with it. Changing the model inside any chat also updates its surface’s default.</li>
+        <li>No per-font memory: two levels keep it predictable which model a new chat starts with. A chat whose version was withdrawn continues on “Latest” with the usual notice.</li>
+      </ul></li>
+    <li><strong>Rate limits:</strong> keep the per-hour and per-day prompt counts. Add a cost guard: before a prompt on Opus or Sol, if the balance is below its High value, warn inline.</li>
+    <li><strong>Messages:</strong> message <code>content</code> becomes a string or an array of parts, so it can carry images. The server checks image count, size and type.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>4 · New internal tools</h2>
+  <p>Several of these exist already: <code>compile_binary_font</code>, <code>shape_binary_font</code>, <code>inspect_binary_font</code> and <code>execute_python_code</code>. The new ones fill gaps in vision, reference, QA and context.</p>
+  <h3>Vision</h3>
+  <ul>
+    <li><strong><code>snapshot_canvas({maxSize?, location?})</code></strong> re-renders the current text view in preview mode to an <code>OffscreenCanvas</code> on a solid background, with no handles or selection. It returns a PNG or WebP, plus the visible string and current location as text. Most providers don’t accept images in tool messages, so the image is attached as a follow-up user message part. The chat shows it as a thumbnail inside the tool card.</li>
+    <li><strong><code>glyph_grid({glyphs|filter, location?})</code></strong> renders a contact sheet with <code>glyph-tile-renderer-fast.ts</code> and returns an index-to-name map.</li>
+    <li><strong><code>render_proof({text, sizes[], locations[], features})</code></strong> renders a waterfall or interpolation strip from the compiled font.</li>
+  </ul>
+  <h3>Reference</h3>
+  <ul>
+    <li><strong><code>fea_syntax({topic})</code> and <code>spec_search({query, corpus})</code> / <code>spec_section({id})</code></strong>. Bundle the AFDKO feature file spec (v1.27, October 2024, Apache-2.0, Markdown source in the afdko repo), split by heading, behind a small BM25 index. Each result includes its version and URL so answers can cite it.</li>
+    <li><strong><code>opentype_table({tag})</code></strong>. On the spec question: Microsoft OpenType 1.9.1 (May 2024) is still the newest Microsoft release. ISO/IEC 14496-22:2026, the Open Font Format 5th edition, appears to have been published in July 2026, but I couldn’t confirm its contents or whether it is free. The name hasn’t changed; OFF has always been the ISO twin of OpenType. The licence for Microsoft’s text is unclear, so fetch pages live through a website proxy with a fixed list of table tags and a cache, instead of bundling them. Add avar2, beyond-64k and VARC from the boring-expansion repo once its licence is confirmed.</li>
+    <li><strong><code>feature_tag_info</code>, <code>script_lang_tags</code>, <code>unicode_info</code> and <code>glyph_name_info</code></strong> use small bundled registries: OpenType tags, HarfBuzz’s tag table, a UCD subset and AGLFN.</li>
+  </ul>
+  <h3>Engineering and debugging</h3>
+  <ul>
+    <li><strong><code>fea_check({snippet})</code></strong> compiles a feature code fragment against the current glyph set with fontc and maps errors back to the line.</li>
+    <li><strong><code>interpolation_check({glyphs?})</code></strong> finds mismatched points, contours, components, anchors, start points and contour direction across drawings, written in TypeScript on Babelfont.</li>
+    <li><strong><code>qa_checks({profile})</code></strong> runs fontspector, the Rust port of fontbakery. It is alpha and covers about 81% of the universal profile.</li>
+    <li><strong><code>ttx_dump({tables, glyphs?})</code></strong> uses fontTools in Pyodide, for reading compiled GSUB and GPOS.</li>
+    <li><strong><code>shape_compare({text, before, after})</code></strong> diffs glyph runs between two builds.</li>
+    <li><strong><code>kerning_query</code> and <code>find_glyphs</code></strong> answer structured questions without writing Python.</li>
+    <li><strong><code>language_support({languages})</code></strong> starts with a check against CLDR exemplar characters, with shaperglot WASM later.</li>
+    <li><strong><code>recent_changes({since})</code> and <code>project_notes</code></strong>: “what did I just break”, plus per-font conventions the assistant remembers.</li>
+  </ul>
+  <p>I’d leave out OTS (it has no maintained WASM build) and diffenator2 (it needs native dependencies) for now.</p>
+
+  <h3>Tool hints: read-only, consequential, unsafe</h3>
+  <p>Every tool, old and new, gets exactly one hint in its registry entry. The same hint is shown in three places: the tool explanation dialog, the model’s toolbox, and later the WebMCP registration.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Hint</th><th>Meaning</th><th>Tools</th></tr></thead>
+    <tbody>
+      <tr><td><span class="hint h-ro">Read-only</span></td><td>Changes nothing: not the font, not files, not what the editor shows. Safe to call at any time, also with Assistant editing off.</td><td>
+        <code>handbook_toc</code>, <code>handbook_topic</code>, <code>python_api_docs</code>, <code>python_authoring_guide</code>, <code>binary_font_api_docs</code>, <code>glyph_filter_event_types</code>, <code>list_available_fonts</code>, <code>current_font</code>, <code>get_editor_state</code>, <code>get_font_opentype_info</code>, <code>search_font_opentype_classes_and_features</code>, <code>compile_binary_font</code>, <code>shape_binary_font</code>, <code>describe_binary_font</code>, <code>list_binary_font_children</code>, <code>search_binary_font_surface</code>, <code>search_binary_font_children</code>, <code>snapshot_binary_font</code>, <code>inspect_binary_font</code>, <code>get_active_python_document</code>, <code>list_python_files</code>, <code>search_python_files</code>, <code>read_python_file</code>, <code>validate_python_document</code>.<br>New: <code>snapshot_canvas</code>, <code>glyph_grid</code>, <code>render_proof</code>, <code>fea_syntax</code>, <code>spec_search</code>, <code>spec_section</code>, <code>opentype_table</code>, <code>feature_tag_info</code>, <code>script_lang_tags</code>, <code>unicode_info</code>, <code>glyph_name_info</code>, <code>fea_check</code>, <code>interpolation_check</code>, <code>qa_checks</code>, <code>ttx_dump</code>, <code>shape_compare</code>, <code>kerning_query</code>, <code>find_glyphs</code>, <code>language_support</code>, <code>recent_changes</code>.</td></tr>
+      <tr><td><span class="hint h-co">Consequential</span></td><td>Changes something you can see and undo with a known, fixed effect: the text in the editor, OpenType feature toggles, which font is open, a Script Editor draft or a filter document, or saved notes. Font edits from a dedicated tool also need Assistant editing on.</td><td><code>open_font</code>, <code>set_editor_text_buffer</code>, <code>set_editor_opentype_features</code>, <code>open_python_document_in_editor</code>, <code>create_python_draft_in_editor</code>, <code>replace_python_text_in_editor</code>, <code>replace_python_document_in_editor</code>.<br>New: <code>project_notes</code> (writing).</td></tr>
+      <tr><td><span class="hint h-un">Unsafe</span></td><td>Runs code whose effect the editor can’t know in advance. It may change any part of the font, and the result is only as good as the code. Changes to font data are still blocked with Assistant editing off, and remain undoable.</td><td><code>execute_python_code</code></td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li><strong><code>set_prompt_history_summary</code></strong> is internal bookkeeping for the chat. It gets no hint, isn’t shown in the dialog and won’t be offered over WebMCP.</li>
+    <li><strong>Tool explanation dialog:</strong> each tool shows its hint as a coloured badge next to its name, with the one-sentence meaning in a tooltip. The legend sits at the top of the dialog. The badges also appear on tool cards in the chat, so you can tell at a glance what a step was allowed to do.</li>
+    <li><strong>The model’s toolbox:</strong> each tool’s <code>description</code> starts with a fixed tag, <code>[read-only]</code>, <code>[consequential]</code> or <code>[unsafe]</code>. The system prompt gets one short paragraph of rules: prefer read-only tools to answer questions; before a consequential call, say in one line what will change; before an unsafe call, say in one line what the code will do and to which glyphs, and use a dedicated tool instead whenever one exists. Tags and rules are fixed text, so they don’t disturb caching.</li>
+    <li><strong>WebMCP mapping:</strong> read-only becomes <code>readOnlyHint: true</code>. Consequential becomes <code>readOnlyHint: false</code>. Unsafe becomes <code>readOnlyHint: false</code> and the tool asks the user to confirm through WebMCP’s user-interaction request before it runs on behalf of an outside agent. These names follow the WebMCP draft as I know it and the MCP tool annotations (<code>readOnlyHint</code>, <code>destructiveHint</code>); check them against the current draft when the integration starts.</li>
+    <li><strong>A test</strong> requires every tool in <code>ASSISTANT_TOOLS</code> and the filter tool list to carry a hint, so a new tool can’t ship without one.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Assistant documentation</h2>
+  <p>The handbook’s AI section (<code>editor/documentation/ai/</code>) has three short pages. Reviewed against this plan, they need these changes:</p>
+  <ul>
+    <li><strong>AI assistant</strong> says “Conversations are currently not yet saved” and doesn’t mention models, history, feedback or images. Rewrite those parts.</li>
+    <li><strong>Safety and review</strong> says only that a “compact editor-state summary” goes to “the AI service”. It needs ZDR stated plainly, what snapshots send, and what the tool hints mean.</li>
+    <li><strong>Subscription and usage</strong> says the view “can warn when the balance is low”, with nothing on prompts left, overage or higher plans.</li>
+    <li><strong>New page, Models and prices</strong> (<code>ai/04-models-and-prices.md</code>, id <code>ai/models-and-prices</code>), the detailed description of how model choice works. The picker’s “How these numbers work” link opens it with <code>docs://ai/models-and-prices</code>, and the assistant can cite it through <code>handbook_topic</code>.</li>
+  </ul>
+  <p>The drafts below are written for the handbook. They ship with the phase that builds what they describe, not before, so the handbook never describes features that don’t exist yet. The manifest regenerates from the folder tree; the website copy follows on the next release.</p>
+
+  <details class="doc"><summary>New: Models and prices (ai/04-models-and-prices.md)</summary><div class="md">
+    <h4># Models and prices</h4>
+    <p>The assistant can work with several AI models. They differ in what they’re good at, how fast they answer and what a prompt costs. This page explains how the model picker gets its numbers and how Counterpunch decides where your prompt is sent. Everything here is measured and calculated automatically. You never have to set anything up.</p>
+    <h5>## Picking a model</h5>
+    <p>The chip under the prompt field shows the model for your next prompt and its price per prompt. Tap it to open the model picker. The glyph filter editor has the same chip, in both Simple and Expert mode, with its own saved choice, because filters are often simple enough for a cheaper model.</p>
+    <p>The picker has one column per model family. <strong>Open weight</strong> models are published openly by their makers (the small capitals under the name name the maker) and are run for us by several hosting companies. The other columns hold closed models, named after the company that makes them. DeepSeek Flash is the default. You can switch models at any point in a chat, and each reply is labelled with the model and version that wrote it.</p>
+    <h5>## Zero data retention</h5>
+    <p>Every model in the picker runs with zero data retention (ZDR): the company running the model may not store your prompts, your font data or the replies, and may not train on them. A model that can’t guarantee this isn’t offered at all. Counterpunch enforces it on every request, including retries.</p>
+    <h5>## Quality</h5>
+    <p>Each model shows a Quality line of one to five dots. It comes from two sources:</p>
+    <ul>
+      <li><strong>Our tests.</strong> Every night, each model runs a fixed set of font tasks on a test font, such as adding anchors at every station, writing a <code>kern</code> feature that compiles, writing a glyph filter, or reading text back from an image. The results are graded automatically. No user data is involved.</li>
+      <li><strong>Real use.</strong> How often prompts finish without errors, with working code at the end, and without being stopped, retried or undone, and how people rate replies with the thumbs buttons. Only these outcomes are counted, never the content of your chats.</li>
+    </ul>
+    <p>A new model starts with its test result, so it has dots from day one. Each finished prompt then moves the score a little. After a few hundred prompts, real use outweighs the tests.</p>
+    <h5>## Badges</h5>
+    <p>Three badges mark the current leaders: <strong>Cheapest</strong>, <strong>Fastest</strong> (shortest typical time from Send until the assistant has finished) and <strong>Best quality</strong> (the most Quality dots, with ties broken by the exact score behind them, so it reflects our tests, how prompts finish and your ratings together). Each belongs to the one model that leads that measure right now, and moves automatically when another model overtakes it. Every model can do the same tasks with the assistant’s tools, so the cards don’t describe what a model is “for”. Pick by what matters to you: quality or price, and the badges if speed matters.</p>
+    <h5>## Price per prompt</h5>
+    <p>The Per prompt line shows a range, such as 1–3 ct, and up to five coloured dots. A prompt is everything that happens after you press Send: the model’s reply and every tool it uses along the way.</p>
+    <ul>
+      <li>The <strong>low end</strong> is what the first prompt of a chat costs on average.</li>
+      <li>The <strong>high end</strong> is what the costliest prompt of a chat costs on average. Prompts get more expensive as a chat grows, because the model rereads the whole conversation each time. Starting a new chat for a new task keeps prices near the low end.</li>
+      <li>Both are averages over the most recent 200 chats with that model, across all users, rounded to whole cents, at least 1 ct. The prices include all fees and VAT, so they match what is deducted from your credit.</li>
+      <li>Each dot stands for a price band: up to 3 ct, up to 10 ct, up to 25 ct, up to 50 ct, and above. The dots from the low end’s band to the high end’s band are lit, so you can compare models at a glance.</li>
+    </ul>
+    <p>Only the cost and token counts of each prompt are stored for this, with a random chat number that isn’t linked to your account. Your prompts, replies and font are never stored.</p>
+    <h5>## New models and versions</h5>
+    <p>Each model has a version menu under its card. <strong>Latest</strong> is selected by default and moves to a new version only after that version has passed our requirements (image input, tool use, ZDR) and our tests. The menu also lists up to three specific versions, if you prefer to stay with one that works well for you. If a version you picked is withdrawn, your next prompt uses Latest instead and the chat says so.</p>
+    <p>A new version starts with the prices of the version before it, and real prices take over prompt by prompt. A model that is completely new has no history, so its price is estimated from the token prices its hosts advertise and from how many tokens it used in our tests. Estimated prices are marked with “≈” and drawn as rings instead of filled dots until enough real chats have finished.</p>
+    <h5>## Where your prompt goes</h5>
+    <p>Closed models always run with the same ZDR hosting partner, chosen by us. For open-weight models, Counterpunch picks the host for you: it only considers hosts that guarantee ZDR, handle images and tools correctly in our tests, and keep a good quality score. Among those, it prefers the one that is cheapest for a typical chat and fast.</p>
+    <p>Once a chat has started, it stays with the same host. The host keeps the conversation it has already read in a short-lived cache, which makes later prompts much cheaper and faster. A chat moves to another host only if the current one fails, or after the chat has been idle for more than 30 minutes, when the cache has expired anyway. If no host can answer for the model you picked, the chat shows an error with a Retry button. Counterpunch never switches you to a different model on its own.</p>
+    <h5>## Overage</h5>
+    <p>When your included credit for the month is used up and you have overage turned on, prompts cost twice the standard price. The picker then shows all prices doubled. See <a>Subscription and usage</a>.</p>
+  </div></details>
+
+  <details class="doc"><summary>Revised: AI assistant (ai/01-ai-assistant-overview.md), changed parts</summary><div class="md">
+    <h5>## Models</h5>
+    <p>The chip under the prompt field picks the model for the next prompt and shows what a prompt costs. All models run with zero data retention. How quality and prices are measured is in <a>Models and prices</a>.</p>
+    <h5>## Chat history</h5>
+    <p>Chats are saved on this computer, separately for each font. The clock button next to <strong>+</strong> lists the chats for the open font, newest first, with the model, the number of prompts and what the chat cost. Open one to see it exactly as it was and to carry on. <strong>+</strong> starts a new chat; the old one stays in the history. You can delete single chats or clear the history for a font. Chats are stored in your browser, not in the cloud, so they don’t follow you to another computer, and clearing site data removes them. Chats about a font that was never saved are kept only until you close it.</p>
+    <p>Chats in the glyph filter editor are kept until you close the tab and have no history. <strong>Clear chat</strong> empties the chat for the open filter.</p>
+    <h5>## Feedback</h5>
+    <p>Under the last reply of each prompt, thumbs up and down tell us how it went. Only the rating itself is counted, together with the model that answered, never your font or the chat. Ratings feed the Quality dots: a thumbs down counts the prompt as failed, and a thumbs up tells us that stopping, retrying or undoing on that prompt wasn’t a sign of a bad answer.</p>
+    <h5>## Looking at your font</h5>
+    <p>The assistant can take a snapshot of the text view, filled in as in preview mode, and look at it, for example to check spacing or spot a broken outline. Snapshots appear as thumbnails in the chat and are sent to the model like the rest of the prompt.</p>
+    <p class="mut" style="color:var(--muted)">Removed: “Conversations are currently not yet saved…”. Unchanged: Assistant editing, What it writes, Required subscription.</p>
+  </div></details>
+
+  <details class="doc"><summary>Revised: Safety and review (ai/02-ai-safety-and-review.md), changed parts</summary><div class="md">
+    <h5>## What leaves your computer</h5>
+    <p>A prompt sends your message, the chat so far, a compact summary of the editor state, the results of the tools the assistant used, and any snapshots it took. A complete font file is never sent. Every model runs with zero data retention: the company running it may not keep or train on any of this. Counterpunch stores only the cost, token counts and outcome of each prompt, without your account or any content. See <a>Models and prices</a>.</p>
+    <h5>## What each tool may do</h5>
+    <p>The tool list in the Assistant view marks every tool with one of three labels, and tool steps in the chat show the same label:</p>
+    <ul>
+      <li><strong>Read-only</strong> tools only look: at the font, the documentation, compiled binaries or a snapshot. They change nothing.</li>
+      <li><strong>Consequential</strong> tools change something you can see and undo, such as the text in the editor, feature toggles, the open font or a Script Editor draft.</li>
+      <li><strong>Unsafe</strong> tools run Python code, whose effect depends on the code. With Assistant editing off, the code still can’t change your font. With it on, the assistant says what the code will do before it runs, and <code>Cmd/Ctrl+Z</code> undoes the result.</li>
+    </ul>
+  </div></details>
+
+  <details class="doc"><summary>Revised: Subscription and usage (ai/03-subscription-trial-and-usage.md), changed parts</summary><div class="md">
+    <h5>## Credit</h5>
+    <p>Every account includes assistant credit each month: €0.50 on the free plan, more on paid plans. Each prompt deducts its cost, which the model picker shows in advance as a range. Credit renews on the first of each month.</p>
+    <p>When your credit gets low, a small meter appears next to the model chip, such as “≈ 12 prompts left”. The number depends on the selected model, so a cheaper model gives you more prompts. Tap the meter to see the exact balance and the renewal date.</p>
+    <h5>## Overage</h5>
+    <p>On a paid plan you can turn on overage in your account. Once your included credit is used up, prompts then continue at <strong>twice the standard price</strong> and are added to your next invoice. The chat tells you when this starts, the meter reads “Overage · ×2”, and the model picker shows every price doubled. A prompt that uses up the last of your credit is billed partly from credit and partly at the overage price.</p>
+    <p>Without overage, the assistant pauses until your credit renews.</p>
+    <p>A higher plan includes more credit at standard prices before overage starts. If you often reach overage, compare plans in your account.</p>
+  </div></details>
+</section>
+
+<section>
+  <h2>Phases</h2>
+  <div class="phase"><span class="n">P0</span><div><strong>Strict ZDR everywhere.</strong> Add <code>zdr: true</code>, filter routing to OpenRouter’s ZDR endpoint list, and pin Luna to Azure. Website only, released with <code>previewrelease.sh --services</code>.</div></div>
+  <div class="phase"><span class="n">P0b</span><div><strong>Caching.</strong> A stable prompt prefix (editor state moves out of the system prompt), a sticky provider per chat, and ranking by cached cost. It pays off on Flash right away and needs no UI.</div></div>
+  <div class="phase"><span class="n">P1</span><div><strong>Server model registry.</strong> Catalog sync from OpenRouter with version gate and curation (<code>ai_model_versions</code> in D1), our own “Latest” resolution, the <code>model</code> and <code>version</code> parameters, per-model routing profiles and the image probe, <code>ai_prompt_metrics</code> with token counts and a window by count, <code>ai_model_price_stats</code> (low, high, avg) plus the cron job, seed rows for new versions, the token-profile estimate for new families, and the extended <code>/api/ai/settings</code> with credit, renewal date and overage total.</div></div>
+  <div class="phase"><span class="n">P2</span><div><strong>Model picker UI</strong> in the chat and in both filter modes: maker lines, Quality and Per prompt dot lines shared by cards and version rows, per-reply model labels, error with Retry for an unavailable model. The credit meter, low and overage banners, doubled prices in overage and the higher-plan line. Ships with the new handbook page Models and prices and the revised Subscription and usage page.</div></div>
+  <div class="phase"><span class="n">P1b</span><div><strong>Benchmark and seed scores</strong>, before the picker ships: the font task suite, one run over every model and provider, and the nightly cron job. The snapshot-reading task joins once P4 delivers snapshots.</div></div>
+  <div class="phase"><span class="n">P2b</span><div><strong>Quality and feedback.</strong> Signal counters, live <code>ai_quality_stats</code> totals, thumbs, quality-first ranking for open-weight models, dots in the picker from day one, internal view with stumbles and docs-first refusals per model, the docs-first block in the editor and the stricter system prompt line. The docs report can follow later.</div></div>
+  <div class="phase"><span class="n">P2c</span><div><strong>Tool hints.</strong> A hint on every tool, badges in the tool explanation dialog and on chat tool cards, description tags and toolbox rules for the model, the coverage test. Ships with the revised Safety and review page. Can start any time, and lays the groundwork for WebMCP.</div></div>
+  <div class="phase"><span class="n">P3</span><div><strong>Chat persistence and the history picker.</strong> Filter chats move to sessionStorage with a clear action. Includes the restore-equals-original DOM test and the revised chat history and feedback parts of the AI assistant page. This can run in parallel with P1 and P2.</div></div>
+  <div class="phase"><span class="n">P4</span><div><strong>Images.</strong> First the image size experiment (needs the dev key), then content-part messages, <code>snapshot_canvas</code> with per-model default size and <code>region</code>, thumbnails in tool cards, image storage in IndexedDB.</div></div>
+  <div class="phase"><span class="n">P5</span><div><strong>Reference tools:</strong> FEA spec bundle, OpenType proxy, tag and Unicode registries. Can start any time.</div></div>
+  <div class="phase"><span class="n">P6</span><div><strong>Engineering tools</strong>, in this order: <code>fea_check</code>, <code>interpolation_check</code>, <code>glyph_grid</code> and <code>render_proof</code>, <code>ttx_dump</code>, <code>qa_checks</code>, then the rest.</div></div>
+</section>
+
+<section>
+  <h2>Decided</h2>
+  <ol class="decisions">
+    <li>Strict image input and ZDR only. DeepSeek Pro and GLM 5.3 are left out.</li>
+    <li>Inkling 2 Small and Mini are both in.</li>
+    <li>Closed Google models are left out entirely, with no Google column. Gemma 4 31B stays in the open-weight column.</li>
+    <li>Chats go in localStorage and snapshot images in IndexedDB.</li>
+    <li>A chosen model that fails shows an error with Retry, with no switch to another model.</li>
+    <li>Price and quality stats pool all users. The window holds the newest 200 chats per model for prices and the newest 500 prompts per model and provider for quality, with a 180-day age limit. Older rows are deleted. Only prices, token counts and outcome counts are stored, never chat content.</li>
+    <li>Only thumbs up and down, in the chat under each prompt’s last reply. Thumbs down fails the prompt; thumbs up cancels its soft signals (Stop, Retry, quick undo) but not hard errors. No written feedback and no contact option, because a comment can’t be followed up without the font and chat context, which we don’t store.</li>
+    <li>The nightly benchmark budget is approved, at about €5–15 a month.</li>
+    <li>Caching comes before price and speed in the routing decider.</li>
+    <li>The model is remembered per chat (assistant and glyph filter), and per surface as the default for new chats. Not per font.</li>
+    <li>Python tools are blocked until <code>python_api_docs</code> has been read in the chat. A refused call doesn’t count against quality; it is counted per model in the internal view.</li>
+    <li>Python errors count against a model’s quality only when the prompt ends on a failed run. Recovered errors show up only as cost and time, and as stumbles per model in the internal view.</li>
+    <li>Quality shows from the first prompt on, seeded by the benchmark and updated live with every prompt.</li>
+    <li>A price range is always shown. A new version starts from 10 seed rows copied from the previous version and real prompts join the average from the first one. A new family starts from a token-profile estimate, shown with rings and “≈”.</li>
+    <li>Price shows as five coloured band dots with the range right next to them, on its own line under Quality, labelled “Quality” and “Per prompt”. Cards and version rows use the same layout. The picker title has no legend.</li>
+    <li>Open-weight cards show the maker on its own line.</li>
+    <li>No written model descriptions. They either repeat generic claims or suggest a model can’t do things it can with our tools. Cards show only measured facts: Quality and Per prompt, plus at most three automatic badges across the picker (Cheapest, Fastest, Best quality), each held by the single current leader.</li>
+    <li>A credit meter in prompts left appears when credit is low. Overage is shown clearly, with every price doubled, and the higher-plan line appears in the low, overage and used-up states.</li>
+    <li>Every tool carries a read-only, consequential or unsafe hint, shown in the dialog, given to the model and mapped to WebMCP later.</li>
+    <li>A new handbook page, Models and prices, explains model choice in detail. The other three AI pages are revised to match.</li>
+    <li>Each model has a version menu with “Latest” as the default, plus up to 3 recent versions, all collected, checked and measured automatically.</li>
+  </ol>
+  <h2>Still open</h2>
+  <ol class="decisions">
+    <li>The dev OpenRouter key and the account settings listed under the image experiment.</li>
+    <li>The low-credit thresholds (20% of the month’s credit, or 20 prompts left) are a first guess; tune them after launch.</li>
+  </ol>
+</section>
+</main>
+
+<script>
+var state='normal';
+var PCOL=['#5fd39b','#a8d36a','#e8c25a','#f0a95a','#ff8a90'];
+function fmt(c){return c<100? c+' ct' : '€'+(c/100).toFixed(2);}
+function range(lo,hi,est){var t=lo===hi?fmt(lo):(hi<100?lo+'–'+hi+' ct':fmt(lo)+'–'+fmt(hi));return (est?'≈':'')+t;}
+function band(c){return c<=3?1:c<=10?2:c<=25?3:c<=50?4:5;}
+function dots(from,to,colors,est,label){
+  var h='<span class="dt'+(est?' est':'')+'" role="img" aria-label="'+label+'">';
+  for(var i=1;i<=5;i++){var on=i>=from&&i<=to;h+='<i'+(on?' class="on" style="--c:'+(colors?colors[i-1]:'#8ea4ff')+'"':'')+'></i>';}
+  return h+'</span>';
+}
+function render(){
+  var m=state==='over'?2:1;
+  document.querySelectorAll('.st[data-lo]').forEach(function(el){
+    var lo=+el.dataset.lo*m, hi=+el.dataset.hi*m, q=+el.dataset.q, est=el.dataset.est==='1', r=range(lo,hi,est);
+    el.innerHTML='<span class="sl">Quality</span>'+dots(1,q,null,false,'Quality '+q+' of 5')+'<span></span>'+
+      '<span class="sl">Per prompt</span>'+dots(band(lo),band(hi),PCOL,est,(est?'Estimated ':'')+r+' per prompt')+'<span class="sv">'+r+'</span>';
+  });
+  var p=document.querySelector('.picker'); p.classList.toggle('low',state==='low'); p.classList.toggle('over',state==='over');
+  var sel=document.querySelector('.picker .m[aria-checked="true"]'), st=sel.querySelector('.st'), chip=document.querySelector('.panel .chip');
+  if(chip){chip.querySelector('b').textContent=sel.dataset.name;var pr=chip.querySelector('.pr');pr.textContent=range(+st.dataset.lo*m,+st.dataset.hi*m,st.dataset.est==='1');pr.style.color=state==='over'?'#f0a95a':'';}
+  var meter=document.querySelector('.panel .meter');
+  if(meter){meter.hidden=state==='normal';meter.className='meter '+state;meter.textContent=state==='low'?'≈ 12 prompts left':'Overage · ×2';}
+}
+document.querySelectorAll('.picker .m').forEach(function(b){
+  b.addEventListener('click',function(){
+    document.querySelectorAll('.picker .m').forEach(function(x){x.setAttribute('aria-checked','false')});
+    b.setAttribute('aria-checked','true'); render();
+  });
+});
+document.querySelectorAll('.seg button').forEach(function(b){
+  b.addEventListener('click',function(){
+    state=b.dataset.state;
+    document.querySelectorAll('.seg button').forEach(function(x){x.setAttribute('aria-pressed',x===b?'true':'false')});
+    render();
+  });
+});
+render();
+</script>

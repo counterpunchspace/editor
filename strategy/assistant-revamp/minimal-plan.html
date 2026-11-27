@@ -1,0 +1,278 @@
+<title>Flash Reliability Plan</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column; each step is a self-contained block with why / change / test, grouped by repo. Same visual language as the big revamp plan. */
+:root{
+  --bg:#f6f7f9; --surface:#ffffff; --fg:#1b1f27; --muted:#5d6676; --line:#dde1e8;
+  --accent:#3b5bdb; --accent-soft:#e7ecfd; --ok:#1f8a5a; --ok-soft:#e2f4ea;
+  --warn:#b25e09; --warn-soft:#fcefdc; --bad:#b4232c; --bad-soft:#fbe5e6;
+  --sans:"Instrument Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono:"JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#12151b; --surface:#1a1e26; --fg:#e6e9ef; --muted:#9aa3b2; --line:#2c323d;
+  --accent:#8ea4ff; --accent-soft:#232c4a; --ok:#5fd39b; --ok-soft:#173327;
+  --warn:#f0a95a; --warn-soft:#3a2a16; --bad:#ff8a90; --bad-soft:#3d1c20; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#12151b; --surface:#1a1e26; --fg:#e6e9ef; --muted:#9aa3b2; --line:#2c323d;
+  --accent:#8ea4ff; --accent-soft:#232c4a; --ok:#5fd39b; --ok-soft:#173327;
+  --warn:#f0a95a; --warn-soft:#3a2a16; --bad:#ff8a90; --bad-soft:#3d1c20; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:16px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:28px 64px}
+main{max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:36px}
+h1,h2,h3{text-wrap:balance;line-height:1.2;margin:0}
+h1{font-size:2rem;font-weight:700;letter-spacing:-.01em}
+h2{font-size:1.35rem;font-weight:650;border-top:1px solid var(--line);padding-top:24px}
+h3{font-size:1.02rem;font-weight:650}
+p,ul,ol{margin:0}
+section{display:flex;flex-direction:column;gap:14px}
+ul,ol{padding-left:1.25em;display:flex;flex-direction:column;gap:6px}
+code{font-family:var(--mono);font-size:.84em;background:var(--accent-soft);padding:.08em .35em;border-radius:4px;overflow-wrap:anywhere}
+.lede{color:var(--muted);font-size:1.05rem}
+.eyebrow{font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:600}
+.callout{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:8px}
+.callout.warn{border-color:var(--warn);background:var(--warn-soft)}
+.step{border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.step-head{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.sid{font-family:var(--mono);font-size:.8rem;font-weight:500;color:var(--accent)}
+.tag{font-size:.68rem;font-weight:700;padding:1px 7px;border-radius:5px;white-space:nowrap}
+.t-rel{background:var(--ok-soft);color:var(--ok)} .t-cache{background:var(--accent-soft);color:var(--accent)} .t-priv{background:var(--warn-soft);color:var(--warn)} .t-obs{background:var(--line);color:var(--muted)}
+.repo{margin-left:auto;font-family:var(--mono);font-size:.75rem;color:var(--muted)}
+.row{display:grid;grid-template-columns:72px 1fr;gap:4px 12px;font-size:.93rem}
+.row > b{font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:600;padding-top:3px}
+.row > div{min-width:0;display:flex;flex-direction:column;gap:6px}
+@media (max-width:520px){.row{grid-template-columns:1fr}.row > b{padding-top:6px}}
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:.88rem;min-width:520px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+tr:last-child td{border-bottom:0}
+.order{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;align-items:baseline}
+.order .n{font-family:var(--mono);font-size:.8rem;color:var(--accent)}
+.order > div{min-width:0}
+</style>
+
+<main>
+<header style="display:flex;flex-direction:column;gap:10px">
+  <span class="eyebrow">Counterpunch editor · minimal plan · 23 Nov 2026</span>
+  <h1>Flash reliability and caching</h1>
+  <p class="lede">The smallest set of changes that makes today’s DeepSeek Flash assistant fail less, fall back correctly, answer faster, cache its prompts and run strictly ZDR. No model picker, no UI, no new statistics tables. The big revamp plan stays as it is; everything here is a subset of its P0 and P0b, adjusted to what the code actually does.</p>
+  <p class="lede">Every step works from the first request, with no measurement period. Pushing and releasing are not part of this plan; they happen separately when the work is done.</p>
+</header>
+
+<section>
+  <h2>What the code does today</h2>
+  <p>Mapped by three readers and checked by a reviewer per step, with file and line references in every step below.</p>
+  <ul>
+    <li><strong>Provider picker.</strong> An hourly cron calls <code>/api/ai/route</code>. <code>chooseRoute</code> resolves the newest dated Flash model, filters endpoints by tools, context, quantization and uptime, ranks them by a price that already weights the cache-read price at 65%, and probes the top 8 with a multi-round tool conversation. A probe also fails if fewer than half of its later prompt tokens were cached. The best 4 by price and speed are stored in D1 <code>ai_routes</code>.</li>
+    <li><strong>Requests.</strong> Each round sends <code>order</code> = <code>only</code> = the stored 4, plus <code>data_collection: "deny"</code>. No <code>zdr</code> flag exists anywhere in the website code. Luna, the fallback, sends only <code>data_collection: "deny"</code> and isn’t pinned to any provider.</li>
+    <li><strong>Fallback and demotion.</strong> A failing Flash step is redone on Luna. Any pre-stream Flash failure, even a 413 for an oversized chat, demotes an empty provider name (which removes nothing), marks the route stale and starts a full re-probe.</li>
+    <li><strong>Prompt prefix.</strong> The editor puts the edit permission and the full, pretty-printed editor state into the system prompt and rebuilds it every round. Any text, caret, location or feature change breaks the cached prefix for the whole history behind it. The glyph filter chat does the same with the current filter code.</li>
+  </ul>
+  <div class="callout warn">
+    <strong>The biggest reliability problem.</strong>
+    <p><code>chooseRoute</code> never throws: when the OpenRouter catalog call fails or every probe fails, it returns an empty provider list. <code>refreshRoute</code> stores it with a fresh timestamp, and every request then goes straight to Luna until a later refresh succeeds, up to about an hour. One catalog hiccup at the top of the hour switches Flash off for everyone.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Website</h2>
+  <p>Server and route changes.</p>
+
+  <div class="step">
+    <div class="step-head"><span class="sid">A0</span><h3>Log one line per step</h3><span class="tag t-obs">Verification</span><span class="repo">website</span></div>
+    <div class="row"><b>Why</b><div><p>The served provider, the fallback reason, timings and <code>cached_tokens</code> only reach the client’s done event today. A structured line per step lets us confirm, within minutes of it running, that every other step works, and watch production after the cutover.</p></div></div>
+    <div class="row"><b>Change</b><div>
+      <p>In <code>sendDoneWithGenLookup</code> (<code>functions/api/ai/assistant.js:620-672</code>), just before <code>sendDone</code>, log <code>{evt: "assistant_step", model, provider, tag, pin, attempt, first_prompt, round, ttft_ms, stream_ms, prompt_tokens, cached_tokens, completion_tokens, total_cost, abandoned_legs}</code> from this step’s usage. <code>first_prompt</code> is true when the request history holds no earlier assistant message, <code>round</code> counts the steps within the prompt, and the two timings come from the stream the server already reads (A7 uses them). <code>pin</code> is <code>kept</code>, <code>new</code> or <code>moved</code> (A8). <code>attempt</code> is one of <code>flash</code>, <code>luna_no_route</code>, <code>luna_after_flash_http</code>, <code>luna_after_flash_guard</code>, so “no route” and “Flash failed” stay apart; the pre-stream failure count from <code>:443-461</code> is passed in for that.</p>
+      <p>Turn the existing <code>console.warn</code> in <code>reportFlashFailure</code> (<code>:281-291</code>) into a structured <code>assistant_flash_failure</code> line with phase, optional status and a short reason category, and add an <code>assistant_fallback_failure</code> line where Luna fails after a Flash redo (<code>:834-838</code>). No message text and no user id in any line.</p>
+    </div></div>
+    <div class="row"><b>Test</b><div><p><code>test/ai-assistant-fallback.test.js</code> with <code>vi.spyOn(console, "log")</code>: one record each for a Flash step, a guard-failure redo and a no-route case, with the right <code>attempt</code>; the fixture gets <code>prompt_tokens_details.cached_tokens</code>; no record contains the user id or message text.</p></div></div>
+    <div class="row"><b>Note</b><div><p>Read live with <code>wrangler pages deployment tail</code> while running the checks below. No history is needed.</p></div></div>
+  </div>
+
+  <div class="step">
+    <div class="step-head"><span class="sid">A1</span><h3>A failed refresh keeps the last good route</h3><span class="tag t-rel">Reliability</span><span class="repo">website</span></div>
+    <div class="row"><b>Why</b><div><p>The problem in the box above: an empty refresh result overwrites a working route.</p></div></div>
+    <div class="row"><b>Change</b><div>
+      <p>In <code>refreshRoute</code> (<code>utils/ai-route-store.js:98-115</code>): read the stored route first. When the new result has no providers and the stored one has some, keep <code>model</code> and <code>providers_json</code>, write the new warnings plus “refresh found no endpoint; kept previous route”, set <code>refresh_started_at = NULL</code> so the lock doesn’t block retries, and back-date <code>checked_at</code> to now − 80 min so the Assistant’s 90-minute stale check retries on the next traffic about 10 minutes later. The hourly cron retries anyway. Return the kept route. Store an empty route only when there was none, or the stored list was already empty. A route is kept only if it was chosen under the same rules: the A7 migration adds a <code>policy</code> column (<code>"zdr-v1"</code>), <code>storeRoute</code> writes it, and a stored route with another or no policy is never kept, so a route picked before ZDR can’t survive the change.</p>
+      <p><strong>Policy mismatch means stale.</strong> <code>readRoute</code> callers treat a stored route whose <code>policy</code> isn’t the current one exactly like a route that is too old: the deploy health check’s <code>ensureRoute</code> and the first Assistant request both start a refresh straight away, in the background, instead of waiting 55 or 90 minutes. Until it finishes (one probe run, about a minute or two), requests still use the old route and answer, at worst through Luna. Raising the policy version later (<code>zdr-v2</code>) forces a fresh route on the next deploy the same way.</p>
+      <p>This also applies when every probe failed. That can be a real outage, but it looks the same as a key or probe-side problem, so keeping the old route is the safer default. If the endpoints really are gone, each request makes one failed Flash call before Luna: extra latency, no errors.</p>
+    </div></div>
+    <div class="row"><b>Test</b><div><p><code>test/ai-route-store.test.js</code>: with a stored 2-provider route, a failing <code>/models</code> call and an all-probes-fail run both keep <code>providers_json</code>, write the warning, set <code>checked_at</code> to the back-dated value and clear the lock. No stored route, or a stored empty list, still stores the empty result. A stored route with no <code>policy</code> makes <code>ensureRoute</code> refresh even when <code>checked_at</code> is recent, and the Assistant request path schedules a background refresh for it.</p></div></div>
+  </div>
+
+  <div class="step">
+    <div class="step-head"><span class="sid">A2</span><h3>Re-probe only on failures a re-probe can fix</h3><span class="tag t-rel">Reliability</span><span class="repo">website</span></div>
+    <div class="row"><b>Why</b><div><p>Every pre-stream Flash failure calls <code>reportFlashFailure(env, waitUntil, "", …)</code> (<code>assistant.js:458</code>). A user’s oversized chat (413), an exhausted credit (402) or a rate limit (429) therefore marks the route stale and probes 8 endpoints, for everyone. The refresh lock limits this to about one probe run every few minutes, but each run can reorder providers and cost cache hits.</p></div></div>
+    <div class="row"><b>Change</b><div>
+      <p>Decide on the raw <code>upstream.status</code>, not the mapped <code>failure.status</code>, because <code>upstreamError</code> maps OpenRouter 401/403 to 502 (<code>:275-276</code>) and a bad key would otherwise trigger probes that fail the same way. Call <code>reportFlashFailure</code> for a thrown fetch, for 5xx that isn’t a mapped 401/403, and for 404, which is how OpenRouter reports that no endpoint in <code>only</code> is available. Only log 400, 402, 408, 413 and 429.</p>
+      <p>In <code>demoteProvider</code>, return early for an empty key so an anonymous failure doesn’t zero <code>checked_at</code>. That part is tidy-up only: the re-probe itself comes from the <code>refreshRoute</code> call in <code>reportFlashFailure</code>, which the status gate controls.</p>
+    </div></div>
+    <div class="row"><b>Test</b><div><p>Flash 413: Luna answers and the D1 row is untouched. Flash 401: no refresh. Flash 503 and 404: a refresh is scheduled (await the captured <code>waitUntil</code> promises). <code>demoteProvider(DB, "")</code> leaves the row unchanged.</p></div></div>
+  </div>
+
+  <div class="step">
+    <div class="step-head"><span class="sid">A3</span><h3>The cron always reaches the route refresh</h3><span class="tag t-rel">Reliability</span><span class="repo">website</span></div>
+    <div class="row"><b>Why</b><div><p><code>functions/scheduled/index.js:22-26</code> awaits maintenance, the overage report and the route refresh in a row with no guard. Several maintenance calls can throw (<code>utils/cloud-maintenance.js:151, 154, 161, 162, 172</code>), and one throw skips both the hourly overage billing and the route refresh.</p></div></div>
+    <div class="row"><b>Change</b><div><p>Run each of the three in its own <code>try/catch</code> with <code>console.error</code>, collect the errors and rethrow one after all three ran, so a failed cron still shows as failed in Cloudflare.</p></div></div>
+    <div class="row"><b>Test</b><div><p>New <code>test/scheduled.test.js</code>: mock maintenance to reject, stub <code>fetch</code>, and assert <code>/api/ai/route</code> was called, the overage report ran and <code>scheduled()</code> rejects.</p></div></div>
+  </div>
+
+  <div class="step">
+    <div class="step-head"><span class="sid">A4</span><h3>Always finish a step, even without a usage chunk</h3><span class="tag t-rel">Reliability</span><span class="repo">website</span></div>
+    <div class="row"><b>Why</b><div><p><code>finishStep</code> sends done, bills and runs the empty-reply guard, but only runs when a chunk carries <code>usage</code> (<code>assistant.js:773-808</code>). If a stream ends without one, nothing after the loop (<code>:813-814</code>) sends done: the client keeps a possibly empty reply as final, billing is skipped, and an empty Flash reply never falls back to Luna.</p></div></div>
+    <div class="row"><b>Change</b><div><p>Track <code>lastUsage</code> on every parsed chunk, and after the loop add <code>if (!doneSent) await finishStep(lastUsage)</code>. An empty guarded Flash step then throws into the existing Luna redo. Billing can’t double-count: <code>addGenerationCostToBillingRun</code> skips generation ids it already recorded. Don’t send done on the Luna error path at <code>:830-836</code>; it already sends an error and closes, and a done there would look like a successful empty reply to every editor build.</p></div></div>
+    <div class="row"><b>Test</b><div><p>Flash text with <code>finish_reason</code> but no usage: one done, billed once. Flash with no text, no tools and no usage: a Luna redo with <code>fallback: true</code>. A Luna stream with an error chunk: the error comes before any done and the stream closes. The existing tool-call case still sends exactly one done.</p></div></div>
+  </div>
+
+  <div class="step">
+    <div class="step-head"><span class="sid">A5</span><h3>Keep the first provider unless it fails or is clearly worse</h3><span class="tag t-cache">Caching</span><span class="repo">website</span></div>
+    <div class="row"><b>Why</b><div><p>Every round sends the stored order, and the hourly ranking adds half the probe’s run time to the score. Run-to-run timing noise can swap first and second place with nothing really changed, and every running chat then lands on a cold cache.</p></div></div>
+    <div class="row"><b>Change</b><div>
+      <p>Add an exported helper <code>keepPrevious(ranked, previousTag, margin = 0.15)</code> in <code>plugins-worker/review/ai-route.mjs</code>: if last hour’s first provider passed this probe run and scores within 15% of the new best, it stays first; the rest follow by score. <code>chooseRoute</code> gets an optional <code>previous</code> argument, applied after <code>rankProbes</code> (<code>:554-556</code>); without it, ranking is exactly as today. <code>refreshRoute</code> reads the stored route and passes its first provider.</p>
+      <p>This is global and best effort. A real price change across a time-of-day pricing window can still take first place (intended), and a demoted provider makes the old second place the new first.</p>
+    </div></div>
+    <div class="row"><b>Test</b><div><p><code>test/review-route.test.js</code>: the previous first at 1.1× the best score stays first, at 1.3× it loses, a failed or missing one changes nothing, and no <code>previous</code> gives today’s order. <code>test/ai-route-store.test.js</code>: a seeded route keeps its first provider through a refresh where the second is slightly faster; after a demotion, the old second is promoted.</p></div></div>
+    <div class="row"><b>Note</b><div><p><code>ai-route.mjs</code> also drives the PR-review plugin worker (<code>route.mjs</code>, <code>server.mjs</code>), which is why the new argument must be optional.</p></div></div>
+  </div>
+
+  <div class="step">
+    <div class="step-head"><span class="sid">A6</span><h3>Strict ZDR, Luna included</h3><span class="tag t-priv">Privacy</span><span class="repo">website</span></div>
+    <div class="row"><b>Why</b><div><p>Not a reliability fix, but the one thing the assistant promises that it doesn’t enforce: <code>data_collection: "deny"</code> excludes training, not retention for abuse checks. It goes in this release because the routing code is open anyway.</p></div></div>
+    <div class="row"><b>Change</b><div>
+      <p>One shared constant in <code>ai-route.mjs</code>, <code>PRIVACY = {data_collection: "deny", zdr: true}</code>, spread into <code>routing()</code>, <code>pinned()</code> (probes must apply the same rule as real requests, or they admit endpoints that requests then reject) and <code>providerPrefsFor</code> in <code>assistant.js</code> (so Luna gets it). Remove the duplicate constant at <code>assistant.js:54</code>.</p>
+      <p>Decide first whether the PR-review worker should be ZDR-strict too. If not, apply the flag only on the Assistant side: in <code>assistant.js:115</code> and through an option to <code>pinned()</code> for the assistant profile.</p>
+    </div></div>
+    <div class="row"><b>Gate</b><div><p>Before this step goes live, check against OpenRouter’s docs and live endpoint list (a few minutes with <code>curl</code>): that <code>provider.zdr</code> exists and behaves as assumed; that <code>~openai/gpt-luna-latest</code> currently has at least one ZDR endpoint; and that the Flash family has at least two ZDR endpoints that pass <code>endpointProblem</code>. If Luna has none, choose a different fallback before shipping, never a fallback that always fails.</p></div></div>
+    <div class="row"><b>Test</b><div><p>Update the exact <code>toEqual</code> in <code>test/review-route.test.js:171-176</code> and the assertions in <code>test/ai-assistant-fallback.test.js:104-108, :122</code> and <code>test/ai-route-store.test.js:100-111</code>. Once it runs, one real prompt must show Flash serving in the A0 log.</p></div></div>
+  </div>
+  <div class="step">
+    <div class="step-head"><span class="sid">A7</span><h3>Faster first answers: shared prefix, real speed, speed under a price ceiling</h3><span class="tag t-cache">Speed</span><span class="repo">website</span></div>
+    <div class="row"><b>Why</b><div><p>Before a chat’s own cache builds up, speed depends on which provider answers. Today speed is one timing per provider from the hourly probe conversation: it mixes queueing, thinking and output into one number, is noisy (the reason A5 exists), and is added to price with half the weight, so a slightly cheaper endpoint beats a much faster one. A Flash prompt costs about a cent; a few seconds of waiting matter more.</p></div></div>
+    <div class="row"><b>Change</b><div>
+      <p><strong>a) Shared prefix for first prompts.</strong> After B1, the system prompt and tools are byte-identical for every user, several thousand tokens before the user’s own words, and all requests use one OpenRouter account. With A5 sending new chats to the same first provider, that prefix should stay cached there, so even a chat’s first prompt starts partly cached. No code beyond B1 and A5; A0’s <code>first_prompt</code> and <code>cached_tokens</code> show whether providers share the cache across requests from one account.</p>
+      <p><strong>b) Real speed per provider.</strong> A small D1 table, <code>ai_route_speed</code> (<code>tag</code>, <code>ttft_ms</code>, <code>tokens_per_s</code>, <code>created_at</code>), no user id and no content. <code>finishStep</code> inserts one row per Flash step in <code>waitUntil</code>; the endpoint tag is exact, because A8 sends every Flash request to one tag only. The route refresh takes, per tag, the median of the newest 200 rows from the last 24 hours, and deletes older rows. With fewer than 20 rows it falls back to OpenRouter’s published endpoint latency and throughput if the endpoints payload carries them, otherwise to the probe timing.</p>
+      <p><strong>c) Rank by speed under a price ceiling.</strong> A new assistant-profile ranking after the probes: every endpoint that passed and costs at most 1.3× the cheapest passing <code>workloadPrice</code> is a candidate; candidates are ordered by expected reply time, <code>ttft_ms + 600 tokens ÷ tokens_per_s</code>; endpoints above the ceiling follow by price. A5’s <code>keepPrevious</code> margin then applies to this reply time instead of the old score. The review profile keeps <code>rankProbes</code> unchanged.</p>
+      <p><strong>Quality stays gated.</strong> Speed only orders endpoints that already passed everything: the probe and its caching check, the fp8-or-better quantization rule, the exclusion of turbo, fast, flex and spot endpoints, the uptime limits, and the reply guard’s demotion on a broken reply.</p>
+    </div></div>
+    <div class="row"><b>Test</b><div><p><code>test/review-route.test.js</code>: within the ceiling the faster endpoint wins even when 20% dearer; above the ceiling price decides; with too few samples the fallback timing is used; the review profile’s order is unchanged. <code>test/ai-assistant-fallback.test.js</code>: a Flash step writes one speed row with the right tag and no user data; a Luna step writes none. <code>test/ai-route-store.test.js</code>: the refresh uses the median and prunes rows older than 24 hours.</p></div></div>
+    <div class="row"><b>Note</b><div><p>Needs a migration adding <code>ai_route_speed</code> to <code>schema.sql</code>. Fully working from the first request: until a provider has 20 real rows, its speed comes from OpenRouter’s published endpoint figures if present, otherwise the probe timing, and the first route refresh after deployment ranks with that straight away. Real figures take over by themselves within hours of normal traffic.</p></div></div>
+  </div>
+  <div class="step">
+    <div class="step-head"><span class="sid">A8</span><h3>Pin each chat to its provider</h3><span class="tag t-cache">Caching</span><span class="repo">website</span></div>
+    <div class="row"><b>Why</b><div><p>A provider only has a chat cached if that chat’s previous request went to it. Today every request sends the whole provider list, and OpenRouter’s own stickiness is off because we set <code>provider.order</code> (its docs say so). So a chat can move whenever the list changes, and each move rereads the whole conversation at full input price: on DeepSeek through OpenRouter, cache reads cost 0.1× and writes 1×.</p></div></div>
+    <div class="row"><b>Change</b><div>
+      <p><strong>One provider per request.</strong> The Flash target no longer sends the route list. It sends exactly one endpoint tag: <code>{order: [tag], only: [tag], allow_fallbacks: false, quantizations, ...PRIVACY}</code>, built by a new <code>pinnedRouting(tag)</code> next to <code>routing()</code>, which stays for the PR-review worker.</p>
+      <p><strong>Which tag.</strong> The request body accepts an optional <code>providerPin</code>. If it is a tag in the current route (same <code>policy</code>), the request goes there (<code>pin: "kept"</code>). If it is missing, as on a chat’s first request or from an older editor build, the request goes to the route’s first tag (<code>"new"</code>). If it is no longer in the route, it goes to the first tag too (<code>"moved"</code>). Anything that isn’t a tag in the current route is ignored, so the client can never steer a request outside the ZDR route.</p>
+      <p><strong>When the pinned provider fails before streaming</strong> (thrown fetch, 5xx, 404), the server tries the next tag in route order, one tag per request, and only after all of them falls back to Luna. A mid-stream failure keeps today’s Luna redo. Because each request names one tag, a failure demotes exactly that tag: <code>demoteProvider</code> gets the tag instead of a display name, which fixes the unreliable name matching found in the code map.</p>
+      <p><strong>Telling the editor.</strong> The done event carries <code>providerPin</code>: the tag that served the step when Flash served it. When Luna served, it is left out and the editor keeps what it has; the server checks it again on the next request.</p>
+    </div></div>
+    <div class="row"><b>Test</b><div><p><code>test/ai-assistant-fallback.test.js</code>: a request with a valid pin sends <code>only</code> with that single tag and <code>allow_fallbacks: false</code>, and done returns the same pin; no pin goes to the first tag; a pin not in the route, or not a tag at all, goes to the first tag; a 503 on the pinned tag retries on the next tag and done returns the new pin; all tags failing ends on Luna with no pin in done; a guard failure demotes exactly the served tag. <code>test/review-route.test.js</code>: <code>routing()</code> is unchanged.</p></div></div>
+    <div class="row"><b>Note</b><div><p>No new storage: the pin travels with the chat. Older editor builds send none, so all their requests land on the route’s first tag, which A5 keeps stable. That is already a pin in practice. No idle rule is needed: staying with the same provider is never worse, because if its cache has expired, any other provider would miss too.</p></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>Editor</h2>
+  <p>Client changes. The server passes messages through unchanged, so they work against the old and the new server alike.</p>
+
+  <div class="step">
+    <div class="step-head"><span class="sid">B1</span><h3>Static system prompt, editor state at the end</h3><span class="tag t-cache">Caching</span><span class="repo">editor</span></div>
+    <div class="row"><b>Why</b><div><p><code>buildSystemPrompt</code> (<code>assistant/profile.ts:51-61</code>) appends the permission, the stale-script notice and the editor state to the system prompt, and <code>streamRound</code> rebuilds it every round (<code>assistant/chat-session.ts:704-718</code>). After any state change within a prompt, and nearly always between prompts, the whole history behind it is billed uncached. This is the largest caching win.</p></div></div>
+    <div class="row"><b>Change</b><div>
+      <p><code>buildSystemPrompt</code> returns only <code>ASSISTANT_SYSTEM_PROMPT</code>, byte-identical every round. A new optional profile hook, <code>buildContextMessage</code>, returns “[Editor context, not a user request]”, the permission line, the stale notice and the editor state. <code>AssistantChatSession.streamRound</code> adds it as the last <code>{role: "user"}</code> message of the request only, never to <code>conversationMessages</code>, so the stored history stays append-only.</p>
+      <p>Update the sentence in the system prompt (<code>assistant-config.ts:778</code>) to say the state comes in the last message. Optional size cut: serialize the state without indentation and drop the duplicate <code>textBuffer</code> field. Keep <code>textBufferRaw</code>, which the tool descriptions and tests rely on.</p>
+    </div></div>
+    <div class="row"><b>Test</b><div><p><code>tests/assistant-chat-session.test.js</code> with a mocked <code>fetch</code>: two consecutive requests with different editor state have the same system prompt and the same message prefix, differ only in the last message, and <code>conversationMessages</code> never contains the context block. If the size cut is done, update <code>tests/assistant-editor-state.test.js:78-87</code>.</p></div></div>
+    <div class="row"><b>Check</b><div><p>Once deployed, a three-round tool prompt should show <code>cached_tokens</code> covering most of <code>prompt_tokens</code> from round 2 on, for Flash and for the Luna fallback. Also confirm that both accept a user message right after tool results.</p></div></div>
+  </div>
+
+  <div class="step">
+    <div class="step-head"><span class="sid">B2</span><h3>The same for the glyph filter chat</h3><span class="tag t-cache">Caching</span><span class="repo">editor</span></div>
+    <div class="row"><b>Why</b><div><p>The filter chat’s system prompt ends with the filter file, description and current code with its revision (<code>glyph-filter-chat.ts:115-127</code>). Every edit round changes it, so nothing is cached during the edit-validate-test loop the prompt asks for.</p></div></div>
+    <div class="row"><b>Change</b><div>
+      <p>Using B1’s hook, the system prompt keeps only <code>FILTER_SYSTEM_PROMPT</code> and the guide, and the filter file, description and code go in the trailing context message. Move <code>session.markDocumentRead(state.revision)</code> (<code>:122</code>) into that builder, and change the prompt sentence that says the code is “at the end of this prompt”.</p>
+      <p>Fix the guide reset (<code>:145-147</code>): remember the first guide text a session got, fallback included, so a later successful fetch can’t change the system prompt mid-chat. The taken filter names in the <code>name_filter</code> description don’t change within a chat, so they stay where they are.</p>
+    </div></div>
+    <div class="row"><b>Test</b><div><p>Update <code>tests/glyph-filter-chat.test.js:60-80</code>. New: identical system prompt and tools before and after a <code>replace_python</code> call, only the context message differs; a failed guide fetch followed by a successful one keeps the same system prompt.</p></div></div>
+  </div>
+
+  <div class="step">
+    <div class="step-head"><span class="sid">B3</span><h3>Retry server failures and keep finished tool rounds</h3><span class="tag t-rel">Reliability</span><span class="repo">editor</span></div>
+    <div class="row"><b>Why</b><div><p>Only dropped connections are retried. A 502/503/504, an in-stream error and a stream that ends without done all end the turn, and a stream without done is even kept as the final answer. When a turn fails, <code>commit()</code> never runs (<code>chat-session.ts:551-558</code>), so tool rounds that already edited the font vanish from history and the model no longer knows about its own edits.</p></div></div>
+    <div class="row"><b>Change</b><div>
+      <p>In <code>streamRound</code>: treat 502, 503 and 504 as a dropped connection, using the existing 3-attempt backoff. Not 429: that’s the user’s own hourly or daily limit (<code>assistant.js:322-336</code>), which a few seconds of backoff won’t clear. Treat a stream without done as dropped only when no tool calls arrived; with tool calls, run them as today. Treat an in-stream error event the same way, keeping the streamed text and generation id.</p>
+      <p>In <code>send()</code>, call <code>commit()</code> at the start of the error branch, and in the stop branch also when no text was streamed. At that point the history holds only completed rounds, so nothing needs trimming.</p>
+    </div></div>
+    <div class="row"><b>Test</b><div><p>Mock <code>fetch</code> with <code>host.streamRound</code> unset: 503 then 200 retries once; 429 doesn’t retry; a stream without done and without tool calls is retried; one with tool calls runs them once; a failure in round 3 leaves two complete rounds in the history, on error and on stop.</p></div></div>
+  </div>
+  <div class="step">
+    <div class="step-head"><span class="sid">B4</span><h3>Remember the provider with the chat</h3><span class="tag t-cache">Caching</span><span class="repo">editor</span></div>
+    <div class="row"><b>Why</b><div><p>The other half of A8: the editor is where the pin lives, so the server needs no storage.</p></div></div>
+    <div class="row"><b>Change</b><div><p><code>AssistantChatSession</code> keeps a <code>providerPin</code> next to its conversation, never inside <code>conversationMessages</code>. <code>streamRound</code> sends it with every request, including each tool round within a prompt, and updates it from every done event that carries one. <code>reset()</code> (the <strong>+</strong> button) clears it; <code>fork()</code> copies it. The glyph filter chat uses the same class and gets it for free. When chat history is saved (big plan, P3), the pin is saved with the chat, so a reopened chat goes back to its provider.</p></div></div>
+    <div class="row"><b>Test</b><div><p><code>tests/assistant-chat-session.test.js</code> with a mocked <code>fetch</code>: the first request has no pin; after a done with <code>providerPin</code>, the next round and the next prompt send it; a done without one keeps the old pin; <code>reset()</code> clears it; <code>fork()</code> copies it; the pin never appears in <code>conversationMessages</code>.</p></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>Checks when the work is done</h2>
+  <div class="order">
+    <span class="n">1</span><div><strong>Before deploying (minutes).</strong> Run the A6 gate against OpenRouter: <code>provider.zdr</code> exists, Luna has a ZDR endpoint, the Flash family has at least two ZDR endpoints that pass <code>endpointProblem</code>. Check whether the endpoints payload carries latency and throughput for A7. All website and editor tests green locally.</div>
+    <span class="n">2</span><div><strong>Right after deploying.</strong> The <code>ai_route_speed</code> table and <code>policy</code> column migration has run. Confirm that the automatic refresh ran: <code>/api/ai/route</code> shows a route with <code>policy</code> <code>zdr-v1</code> and a fresh <code>checked_at</code> within a few minutes of deployment. Only if it doesn’t, calling <code>/api/ai/route</code> forces one.</div>
+    <span class="n">3</span><div><strong>Smoke test (about 15 minutes), with <code>wrangler pages deployment tail</code> open.</strong>
+      <ul>
+        <li>A three-round tool prompt in the assistant: <code>attempt: "flash"</code>, and from round 2 on <code>cached_tokens</code> covers most of <code>prompt_tokens</code>.</li>
+        <li>A second new chat right after: its first prompt shows cached tokens roughly the size of the system prompt and tools (A7a), or none if providers don’t share caches per account, which only affects that bonus.</li>
+        <li>A glyph filter chat with two edit rounds: cached tokens rise in the same way.</li>
+        <li>Stop a prompt after its first tool round, then ask a follow-up: the model knows about the edit it made (B3).</li>
+        <li>A speed row appears in <code>ai_route_speed</code> for each Flash step; none for Luna.</li>
+        <li>Every step of one chat logs the same <code>tag</code>, with <code>pin: "new"</code> on its first request and <code>"kept"</code> after that; a second chat also starts on the route’s first tag.</li>
+        <li>No <code>assistant_flash_failure</code> lines, and no <code>luna_no_route</code> steps.</li>
+      </ul></div>
+    <span class="n">4</span><div><strong>If ZDR leaves Flash or Luna without endpoints,</strong> A6 can be reverted on its own; the other steps don’t depend on it.</div>
+  </div>
+</section>
+
+<section>
+  <h2>How we know it worked</h2>
+  <p>Nothing here needs a waiting period. Most checks have an absolute target that the smoke test confirms; cost per prompt can be compared with the history already in D1 <code>assistant_billing_runs</code>, which records the exact cost of every prompt.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Measure</th><th>From</th><th>Target</th></tr></thead>
+    <tbody>
+      <tr><td>Cache hit rate, Flash steps, round 2 and later</td><td>A0 log, done event</td><td>Most prompt tokens cached</td></tr>
+      <tr><td>Cached share of first prompts</td><td>A0 <code>cached_tokens</code> with <code>first_prompt</code></td><td>About the size of system prompt and tools, if providers share caches per account</td></tr>
+      <tr><td>Time to first token and reply time</td><td>A0 <code>ttft_ms</code>, <code>stream_ms</code></td><td>Steady; the fastest provider under the price ceiling serves new chats</td></tr>
+      <tr><td>Provider moves within a chat</td><td>A0 <code>pin</code></td><td><code>moved</code> only after a real failure or a route change that dropped the provider</td></tr>
+      <tr><td>Fallbacks</td><td>A0 <code>attempt</code></td><td>No <code>luna_no_route</code>; Luna only after a real Flash failure</td></tr>
+      <tr><td>Re-probes after 4xx failures</td><td><code>assistant_flash_failure</code> lines</td><td>None</td></tr>
+      <tr><td>Route refreshed every hour, with ZDR</td><td><code>ai_routes.checked_at</code>, <code>policy</code></td><td>Advances hourly, policy <code>zdr-v1</code></td></tr>
+      <tr><td>Cost per prompt</td><td><code>assistant_billing_runs.raw_cost_usd</code>, before and after the change went live</td><td>Lower, mainly from B1 and B2</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2>Left out on purpose</h2>
+  <ul>
+    <li><strong>OpenRouter cache options</strong> (<code>prompt_cache_key</code>, <code>cache_control</code>). DeepSeek caches the prefix automatically; B1 and B2 fix the prefix.</li>
+    <li><strong>Cache-write price and measured cache mix in the ranking.</strong> The ranking already weights cache reads at 65%, and changing the formula now would fight A5.</li>
+    <li><strong>Feeding real <code>cached_tokens</code> back into ranking.</strong> Needs per-endpoint stats storage. A0 first shows whether endpoints differ.</li>
+    <li><strong>Moving refreshes off <code>waitUntil</code></strong> to a queue or alarm. A1–A3 remove most of the harm a cut-off background refresh can do.</li>
+    <li><strong>Discarding a failed Flash step’s text before Luna’s redo.</strong> A real problem, but it needs a new stream event and visible UI change. It stays in the big plan.</li>
+    <li><strong>History trimming, the forced summary round, duplicated round texts.</strong> None break caching; they belong to the big plan.</li>
+    <li><strong>Staging route freshness.</strong> The cron targets production only; staging relies on the deploy health check and the stale trigger.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Open questions the checks answer</h2>
+  <ul>
+    <li>Whether providers share prefix caches across requests from one account (A7a). The smoke test shows it; everything works either way.</li>
+    <li>Whether OpenRouter’s endpoint list publishes latency and throughput (A7 fallback). Checked before deploying; without it, the probe timing is the fallback until real rows arrive.</li>
+    <li>Whether Auto Exacto reorders an explicit <code>order</code> plus <code>only</code>. Visible in the A0 <code>provider</code> field; if it does, add <code>allow_fallbacks: false</code> in a follow-up.</li>
+  </ul>
+</section>
+</main>

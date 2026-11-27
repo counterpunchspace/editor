@@ -108,6 +108,7 @@ Do it in the same change. Never hand-edit generated docs.
 | How a host calls a plugin type                                                               | Bump the contract per `developer-docs/PLUGIN_CONTRACTS.md`: `contracts.json`, probes, fixtures, `node plugin-contracts/generate.mjs`, bundled-wheel preflight, `npm run sync-plugin-contracts` in website |
 | Rust in `babelfont-fontc-build/src/`                                                         | `./build-fontc-wasm.sh`, check the generated files changed                                                                                                                                                |
 | Skill Python or data (e.g. `plugins/skills/arabic/counterpunch_arabic/data/`) | `python3 plugins/skills/build.py`; the editor loads `webapp/wheels/`, not `plugins/`                                                                                                               |
+| Y.Doc shape, or code that writes or reads room documents (`change-bridge-ydoc.ts`, `patch-sync-engine.ts`, the compile worker’s seed) | Backward-compatibility tests: add a fixture written by the last release to `webapp/tests/fixtures/legacy-rooms/` (the header of `patch-sync-room-backcompat.test.js` says how; never by hand, never delete one), and keep every fixture loading, editing, handing on and compiling. If old rooms can’t stay readable, ask the author first |
 
 `npm run generate-docs` (repo root) runs every doc generator at once.
 
