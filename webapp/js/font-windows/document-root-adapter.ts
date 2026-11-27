@@ -7,15 +7,7 @@
 
 import { NativeAdapter } from '../file-system-adapter';
 import type { DiskDocument } from './document-store';
-
-type PermissionCapable = {
-    queryPermission(options: {
-        mode: 'read' | 'readwrite';
-    }): Promise<PermissionState>;
-    requestPermission(options: {
-        mode: 'read' | 'readwrite';
-    }): Promise<PermissionState>;
-};
+import type { PermissionHandle as PermissionCapable } from './file-access';
 
 function notFound(name: string): DOMException {
     return new DOMException(`${name} is not in this folder`, 'NotFoundError');

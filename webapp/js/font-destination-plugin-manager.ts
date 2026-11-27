@@ -1,5 +1,6 @@
 import type { FileSystemAdapter, FileInfo } from './file-system-adapter';
 import { settingsFolder, SETTINGS_FOLDER_PATHS } from './settings-folder';
+import { postBinaryFontExportMessage } from './binary-font-export-message';
 import { Logger } from './logger';
 import { resolveWebsiteURL } from './website-url';
 import { runHostPythonAsync } from './skills/host-python';
@@ -700,17 +701,7 @@ for entry in entries:
                 this.openDestinations.delete(pluginId);
                 continue;
             }
-            const messageBytes = bytes.slice();
-            destination.window.postMessage(
-                {
-                    type: 'counterpunch:binary-font-exported',
-                    version: 1,
-                    bytes: messageBytes.buffer,
-                    metadata
-                },
-                window.location.origin,
-                [messageBytes.buffer]
-            );
+            postBinaryFontExportMessage(destination.window, bytes, metadata);
         }
     }
 

@@ -4,7 +4,7 @@
 // red once editing has paused (see offline-edit-limit.ts).
 
 import type { OfflineLevel } from './filesystem-plugins/offline-edit-limit';
-import { bindModalEscape } from './ui/modal-escape';
+import { mountModalOverlay } from './ui/confirm-dialog';
 
 export const OFFLINE_STRIP_ID = 'offline-strip';
 export const OFFLINE_LEVEL_EVENT = 'cloudOfflineLevelChanged';
@@ -87,9 +87,10 @@ export function renderOfflineStrip(level: OfflineLevel): void {
 /** Explains, for beginners, how offline edits meet everyone else’s. */
 export function openOfflineMergeDialog(): HTMLElement {
     document.querySelector('.offline-merge-dialog-overlay')?.remove();
-    const overlay = document.createElement('div');
-    overlay.className = 'info-popup-overlay offline-merge-dialog-overlay';
-    overlay.innerHTML = `
+    const { overlay, close } = mountModalOverlay({
+        closeSelector: '.info-popup-close',
+        onDismiss: () => {},
+        innerHTML: `
         <div class="info-popup offline-merge-dialog" role="dialog" aria-labelledby="offline-merge-dialog-title">
             <div class="info-popup-header">
                 <h3 id="offline-merge-dialog-title">When you reconnect</h3>
@@ -109,21 +110,9 @@ export function openOfflineMergeDialog(): HTMLElement {
                 </div>
             </div>
         </div>
-    `;
-    document.body.append(overlay);
-    const close = () => {
-        overlay.remove();
-        escape.release();
-    };
-    const escape = bindModalEscape(close, {
-        isOpen: () => overlay.isConnected
+    `
     });
-    overlay.addEventListener('click', (event) => {
-        if (event.target === overlay) close();
-    });
-    overlay
-        .querySelector('.info-popup-close')
-        ?.addEventListener('click', close);
+    overlay.classList.add('offline-merge-dialog-overlay');
     overlay
         .querySelector('[data-action="close"]')
         ?.addEventListener('click', close);

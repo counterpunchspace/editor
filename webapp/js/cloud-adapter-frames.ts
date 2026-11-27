@@ -262,13 +262,17 @@ export function decodeLiveUpdatePayload(payload: Uint8Array): {
     };
 }
 
-export function encodeLiveUpdatePayload(fields: {
+export type LiveUpdatePayloadFields = {
     clientId: string;
     seq: number;
     update: Uint8Array;
     clientTransactionId?: string | null;
     collaborationMessages?: CollaborationMessageEnvelope[] | null;
-}): Uint8Array {
+};
+
+export function encodeLiveUpdatePayload(
+    fields: LiveUpdatePayloadFields
+): Uint8Array {
     const extra: Record<string, unknown> = {};
     if (fields.clientTransactionId) {
         extra.clientTransactionId = fields.clientTransactionId;
@@ -306,13 +310,9 @@ export function encodeLiveUpdatePayload(fields: {
  * [u32 type][u32 logId-hi][u32 logId-lo][u32 payloadLen][payload].
  * Client-originated updates carry logId 0; the room assigns the journal id.
  */
-export function encodeLiveUpdateFrame(fields: {
-    clientId: string;
-    seq: number;
-    update: Uint8Array;
-    clientTransactionId?: string | null;
-    collaborationMessages?: CollaborationMessageEnvelope[] | null;
-}): Uint8Array {
+export function encodeLiveUpdateFrame(
+    fields: LiveUpdatePayloadFields
+): Uint8Array {
     const payload = encodeLiveUpdatePayload(fields);
     const out = new Uint8Array(16 + payload.byteLength);
     const view = new DataView(out.buffer);

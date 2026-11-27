@@ -304,6 +304,21 @@ export class KerningEditorDialog {
         return [...font.stations];
     }
 
+    private hasSelectedPair(rows: KerningPairRow[]): boolean {
+        return (
+            this.selectedFirst !== null &&
+            this.selectedSecond !== null &&
+            rows.some((row) =>
+                isSamePair(
+                    this.selectedFirst,
+                    this.selectedSecond,
+                    row.first,
+                    row.second
+                )
+            )
+        );
+    }
+
     private collectRows(stations: Station[]): KerningPairRow[] {
         const isRTL = this.direction === 'rtl';
         const byPair = new Map<string, KerningPairRow>();
@@ -431,17 +446,7 @@ export class KerningEditorDialog {
 
         const stations = this.getStations();
         const rows = this.collectRows(stations);
-        let hasSelectedRow =
-            this.selectedFirst !== null &&
-            this.selectedSecond !== null &&
-            rows.some((row) =>
-                isSamePair(
-                    this.selectedFirst,
-                    this.selectedSecond,
-                    row.first,
-                    row.second
-                )
-            );
+        let hasSelectedRow = this.hasSelectedPair(rows);
 
         if (
             options.scrollSelectedToCenter &&
@@ -452,19 +457,8 @@ export class KerningEditorDialog {
             // Property-panel pair is not defined in this direction's table.
             this.selectedFirst = null;
             this.selectedSecond = null;
+            hasSelectedRow = false;
         }
-
-        hasSelectedRow =
-            this.selectedFirst !== null &&
-            this.selectedSecond !== null &&
-            rows.some((row) =>
-                isSamePair(
-                    this.selectedFirst,
-                    this.selectedSecond,
-                    row.first,
-                    row.second
-                )
-            );
 
         this.arrowInputs = [];
 

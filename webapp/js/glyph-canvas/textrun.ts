@@ -6,6 +6,7 @@
 // - selection handling
 
 import { Logger } from '../logger';
+import { isViewFocused } from '../undo-redo-context';
 import type { FeaturesManager } from './features';
 import type { AxesManager } from './variations';
 import type { UserspaceLocation } from '../locations';
@@ -1322,20 +1323,14 @@ export class TextRunEditor {
     }
 
     async paste() {
-        const editorFocused = !!document
-            .getElementById('view-editor')
-            ?.classList.contains('focused');
-        if (!editorFocused) {
+        if (!isViewFocused('view-editor')) {
             return;
         }
 
         try {
             // Async read so Fontra tagged MIME is visible (readText alone is not).
             const payloads = await readClipboardPayloadsAsync();
-            const editorStillFocused = !!document
-                .getElementById('view-editor')
-                ?.classList.contains('focused');
-            if (!editorStillFocused) {
+            if (!isViewFocused('view-editor')) {
                 return;
             }
 
@@ -2053,10 +2048,7 @@ export class TextRunEditor {
         // Do not preventDefault when another view is focused — that would
         // suppress the document `paste` event (overview whole-glyph paste).
         if ((e.metaKey || e.ctrlKey) && e.key === 'v') {
-            const editorFocused = !!document
-                .getElementById('view-editor')
-                ?.classList.contains('focused');
-            if (!editorFocused) {
+            if (!isViewFocused('view-editor')) {
                 return;
             }
             e.preventDefault();

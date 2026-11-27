@@ -469,6 +469,38 @@ export const DEFAULT_WEBSITE_BASE_URL = resolveWebsiteURL();
 
 export type CloudAssetRole = 'owner' | 'editor' | 'viewer';
 
+export function decodeBase64UrlJson<T>(value: string): T | null {
+    try {
+        const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+        const padded = normalized.padEnd(
+            Math.ceil(normalized.length / 4) * 4,
+            '='
+        );
+        const decoded = atob(padded);
+        return JSON.parse(decoded) as T;
+    } catch {
+        return null;
+    }
+}
+
+export function extractRoleFromRoomToken(token: string): CloudAssetRole | null {
+    const parts = String(token || '').split('.');
+    if (parts.length !== 3) {
+        return null;
+    }
+
+    const payload = decodeBase64UrlJson<{ role?: string }>(parts[1]);
+    if (
+        payload?.role === 'owner' ||
+        payload?.role === 'editor' ||
+        payload?.role === 'viewer'
+    ) {
+        return payload.role;
+    }
+
+    return null;
+}
+
 export type CloudSeededShardAttestation = {
     shardId: string;
     checkpointObjectKey: string;

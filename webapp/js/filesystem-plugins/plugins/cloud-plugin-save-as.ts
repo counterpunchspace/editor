@@ -4,10 +4,10 @@ import {
     CloudAdapter,
     type CloudSeededShardAttestation
 } from '../../cloud-adapter';
-import { getCloudRequestHeaders } from '../../cloud-website-api';
 import { seedDocumentSetWithProgress } from '../cancellable-shard-transfer';
 import {
     captureCloudSaveSeedState,
+    createPendingCloudAsset,
     estimateCloudTransferTimeoutMs,
     formatCloudByteCount,
     recaptureCloudSaveSeedIfBridgeChanged
@@ -32,32 +32,12 @@ export const cloudPluginSaveAsMethods = {
         }
         this._warnBeforeNearLimitCloudSave(seed);
 
-        const resp = await fetch(`${this._websiteBaseUrl}/api/cloud/assets`, {
-            method: 'POST',
-            credentials: 'include',
-            headers: getCloudRequestHeaders({
-                'Content-Type': 'application/json'
-            }),
-            body: JSON.stringify({
-                name,
-                estimatedSeedBytes: seed.byteLength,
-                estimatedGlyphCount: seed.glyphCount
-            })
+        const asset = await createPendingCloudAsset({
+            websiteBaseUrl: this._websiteBaseUrl,
+            name,
+            estimatedSeedBytes: seed.byteLength,
+            estimatedGlyphCount: seed.glyphCount
         });
-
-        if (!resp.ok) {
-            const err = await resp.text().catch(() => '');
-            if (resp.status === 429) {
-                throw new Error(
-                    'Cloud save blocked: too many cloud fonts were created in a short time. Try again in a few minutes.'
-                );
-            }
-            throw new Error(
-                `Failed to create cloud asset: ${resp.status} ${err}`
-            );
-        }
-
-        const { asset } = (await resp.json()) as { asset: CloudAsset };
         const assetId = asset.id;
         // The account now owns one more font.
         this._eligibility = null;

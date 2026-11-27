@@ -29,6 +29,50 @@ function isInitialSyncStillPending(adapter): boolean {
     );
 }
 
+function reconnectAfterTimeout(
+    adapter,
+    options: {
+        reason: string;
+        detail: string;
+        ws?: WebSocket;
+        clearAuth?: boolean;
+        clearInitialSync?: boolean;
+        clearOutboundAck?: boolean;
+    }
+): void {
+    console.warn(`CloudAdapter: ${options.detail}`);
+    adapter._lastReconnectReason = options.reason;
+    if (options.clearAuth) {
+        adapter._clearAuthenticationTimeout();
+    }
+    if (options.clearInitialSync) {
+        adapter._clearInitialSyncTimeout();
+    }
+    if (options.clearOutboundAck) {
+        adapter._clearOutboundAckTimeout();
+    }
+    adapter._setStatus('connecting', options.detail);
+    adapter._markVisibleRebaselineNeeded();
+    adapter._resetBootstrapStateForReconnect();
+    // Buffered live frames, half pages, and unacknowledged packets are dropped
+    // and replayed in order after reconnect.
+    adapter._abandonSocketState();
+
+    const ws = options.ws ?? adapter._ws;
+    if (ws) {
+        if (!options.ws || adapter._ws === ws) {
+            adapter._ws = null;
+            adapter._clientId = null;
+        }
+        adapter._requestSocketClose(
+            ws,
+            CLIENT_RECONNECT_CLOSE_CODE,
+            options.reason
+        );
+    }
+    adapter._scheduleReconnect();
+}
+
 export const cloudAdapterTimeoutMethods = {
     _armInitialSyncTimeout(
         startedAt = Date.now(),
@@ -106,28 +150,12 @@ export const cloudAdapterTimeoutMethods = {
             : !this._initialServerStateApplied
               ? 'Cloud initial sync timed out before applying server state'
               : 'Cloud initial sync durability ack timed out';
-        console.warn(`CloudAdapter: ${detail}`);
-        this._lastReconnectReason = 'sync-timeout';
-        this._clearAuthenticationTimeout();
-        this._clearInitialSyncTimeout();
-        this._setStatus('connecting', detail);
-        this._markVisibleRebaselineNeeded();
-        this._resetBootstrapStateForReconnect();
-        // The cursor only ever moved past pages that applied; buffered live
-        // frames and a half page are dropped and replayed after it.
-        this._abandonSocketState();
-
-        const ws = this._ws;
-        if (ws) {
-            this._ws = null;
-            this._clientId = null;
-            this._requestSocketClose(
-                ws,
-                CLIENT_RECONNECT_CLOSE_CODE,
-                'sync-timeout'
-            );
-        }
-        this._scheduleReconnect();
+        reconnectAfterTimeout(this, {
+            reason: 'sync-timeout',
+            detail,
+            clearAuth: true,
+            clearInitialSync: true
+        });
     },
 
     _handleOutboundAckTimeout(seq: number): void {
@@ -164,28 +192,12 @@ export const cloudAdapterTimeoutMethods = {
             return;
         }
 
-        const detail = 'Cloud update acknowledgement timed out';
-        console.warn(`CloudAdapter: ${detail}`);
-        this._lastReconnectReason = 'ack-timeout';
-        this._clearAuthenticationTimeout();
-        this._clearOutboundAckTimeout();
-        this._setStatus('connecting', detail);
-        this._markVisibleRebaselineNeeded();
-        this._resetBootstrapStateForReconnect();
-        // Unacknowledged packets go back to the head of the queue in order.
-        this._abandonSocketState();
-
-        const ws = this._ws;
-        if (ws) {
-            this._ws = null;
-            this._clientId = null;
-            this._requestSocketClose(
-                ws,
-                CLIENT_RECONNECT_CLOSE_CODE,
-                'ack-timeout'
-            );
-        }
-        this._scheduleReconnect();
+        reconnectAfterTimeout(this, {
+            reason: 'ack-timeout',
+            detail: 'Cloud update acknowledgement timed out',
+            clearAuth: true,
+            clearOutboundAck: true
+        });
     },
 
     _armAuthenticationTimeout(
@@ -217,25 +229,11 @@ export const cloudAdapterTimeoutMethods = {
                 return;
             }
 
-            const detail = 'Cloud room authentication timed out';
-            console.warn(`CloudAdapter: ${detail}`);
-            this._lastReconnectReason = 'auth-timeout';
-            this._setStatus('connecting', detail);
-            this._markVisibleRebaselineNeeded();
-            this._resetBootstrapStateForReconnect();
-            this._abandonSocketState();
-            if (this._ws === ws) {
-                // Do not wait for a possibly delayed close event before retrying.
-                // Once auth has stalled, this socket is no longer the active path.
-                this._ws = null;
-                this._clientId = null;
-            }
-            this._requestSocketClose(
-                ws,
-                CLIENT_RECONNECT_CLOSE_CODE,
-                'auth-timeout'
-            );
-            this._scheduleReconnect();
+            reconnectAfterTimeout(this, {
+                reason: 'auth-timeout',
+                detail: 'Cloud room authentication timed out',
+                ws
+            });
         }, delayOverrideMs);
     },
 

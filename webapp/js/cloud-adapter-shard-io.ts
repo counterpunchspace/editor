@@ -33,6 +33,7 @@ import {
 import { throwIfAborted, yieldToUi } from './yield-to-ui';
 import {
     checkpointLogIdFromHeaders,
+    fetchCloudShardStateResponse,
     normalizeCloudShardHttpUrl,
     normalizeCloudShardPackUrl
 } from './cloud-adapter-bootstrap';
@@ -46,9 +47,6 @@ import {
     abortSignalWithTimeout,
     HYDRATE_PACK_FETCH_TIMEOUT_MS,
     shouldRetryHydrateTransport,
-    readRoomErrorBody,
-    cloudRefusalFromBody,
-    CloudRoomHttpError,
     type CloudShardIoOptions,
     type CloudShardIoProgress,
     type CloudSeededShardAttestation,
@@ -1042,51 +1040,13 @@ export const cloudAdapterShardIoMethods = {
                     documentId
                 );
                 this._noteTransferActivity('receiving');
-                // A state the room is rebuilding or just replaced (503
-                // `state_unavailable`, `state_superseded`) is asked for
-                // again; `broken_journal` (500) is final.
-                let response: Response;
-                for (let attempt = 0; ; attempt += 1) {
-                    try {
-                        response = await fetch(httpUrl, {
-                            headers: { Authorization: `Bearer ${token}` },
-                            signal: options?.signal
-                        });
-                        if (response.ok || response.status === 404) {
-                            break;
-                        }
-                        const body = await readRoomErrorBody(response);
-                        const refusal = cloudRefusalFromBody(
-                            documentId,
-                            body,
-                            undefined
-                        );
-                        if (refusal) {
-                            throw refusal;
-                        }
-                        throw new CloudRoomHttpError(
-                            `shard hydrate failed (${documentId}): ${response.status}${typeof body?.code === 'string' ? ` ${body.code}` : ''}`,
-                            {
-                                status: response.status,
-                                code: body?.code,
-                                retryable: body?.retryable
-                            }
-                        );
-                    } catch (error) {
-                        if (
-                            !shouldRetryHydrateTransport(
-                                error,
-                                options?.signal?.aborted === true,
-                                attempt
-                            )
-                        ) {
-                            throw error;
-                        }
-                        await new Promise((resolve) =>
-                            setTimeout(resolve, 100 * 2 ** attempt)
-                        );
-                    }
-                }
+                const response = await fetchCloudShardStateResponse({
+                    url: httpUrl,
+                    token,
+                    documentId,
+                    signal: options?.signal,
+                    errorPrefix: `shard hydrate failed (${documentId})`
+                });
                 if (response.status === 404) {
                     cursor.completed += 1;
                     await emitShardIoProgress(options, {

@@ -25,12 +25,17 @@ import type { Babelfont } from './babelfont';
 import type { Font as BabelfontModelFont } from './babelfont-model';
 import type { StationTopologyGate } from './filesystem-plugins/filesystem-plugin';
 import {
+    categorizeFeaturesForShaper,
+    extractFontLanguageSystems,
     getFeatureExecutionOrder,
     getFeatureName,
+    groupScriptsByShaper,
     isDiscretionary,
-    SCRIPT_TO_SHAPER,
+    parseFeatureClassGlyphMembers,
+    resolveFeatureClassGlyphs,
     validateFeatureTag
 } from './opentype-features';
+import { generateStableId } from './drawing-geometry-ydoc';
 import { extractPrimaryFeatureIssue } from './feature-error-parser';
 import { pluginSettingsRegistry } from './plugin-settings/plugin-settings-registry';
 import { featureGeneratorEngine } from './skills/feature-generator-engine';
@@ -160,7 +165,6 @@ type FeatureItemType = 'prefix' | 'class' | 'feature';
 type FontNameFieldKey = keyof Babelfont.Names;
 type FontRootFieldKey = 'upm' | 'version' | 'note' | 'date';
 type CustomOTFieldKey = keyof Babelfont.CustomOTValues;
-type StationFieldKey = 'id';
 type InstanceFieldKey = 'id' | 'variable' | 'linked_style';
 type RecordDropPlacement = 'before' | 'after';
 
@@ -6512,85 +6516,160 @@ class FontInfoManager {
         options.refresh?.();
     }
 
-    private applyLocalStationNameFieldValue(
-        stationIndex: number,
+    private applyLocalRecordNameFieldValue(
+        kind: 'station' | 'instance',
+        index: number,
         nextValue: Babelfont.I18NDictionary
     ) {
         const font = window.currentFontModel as any;
-        const station = font?.stations?.[stationIndex];
-        if (!station) {
+        const list = kind === 'station' ? font?.stations : font?.instances;
+        const record = list?.[index];
+        if (!record) {
             return;
         }
-
-        const normalizedNextValue = normalizeLocalizedStringValue(nextValue);
-        station.name = normalizedNextValue;
+        record.name = normalizeLocalizedStringValue(nextValue);
     }
 
-    private commitStationNameFieldValue(
-        stationIndex: number,
+    private commitRecordNameFieldValue(
+        kind: 'station' | 'instance',
+        index: number,
         nextValue: Babelfont.I18NDictionary
     ) {
         const font = window.currentFontModel as any;
-        const station = font?.stations?.[stationIndex];
-        if (!station) {
+        const list = kind === 'station' ? font?.stations : font?.instances;
+        const record = list?.[index];
+        if (!record) {
             return;
         }
 
-        const previousValue = normalizeLocalizedStringValue(station.name);
+        const previousValue = normalizeLocalizedStringValue(record.name);
         const normalizedNextValue = normalizeLocalizedStringValue(nextValue);
         if (areLocalizedStringValuesEqual(previousValue, normalizedNextValue)) {
             if (
+                kind === 'station' &&
                 this.pendingStationsModelSyncRefresh &&
                 this.currentTab === 'masters'
             ) {
                 requestAnimationFrame(() =>
                     this.refreshVisibleStationsContent()
                 );
+            } else if (
+                kind === 'instance' &&
+                this.pendingInstancesModelSyncRefresh &&
+                this.currentTab === 'instances'
+            ) {
+                requestAnimationFrame(() =>
+                    this.refreshVisibleInstancesContent()
+                );
             }
             return;
         }
 
+        const isStation = kind === 'station';
         this.commitFontPathChange({
-            label: 'Edit station name',
-            path: ['masters', stationIndex, 'name'],
+            label: isStation ? 'Edit station name' : 'Edit instance name',
+            path: [isStation ? 'masters' : 'instances', index, 'name'],
             oldValue: { ...previousValue },
             newValue: { ...normalizedNextValue },
             applyLocal: () =>
-                this.applyLocalStationNameFieldValue(
-                    stationIndex,
+                this.applyLocalRecordNameFieldValue(
+                    kind,
+                    index,
                     normalizedNextValue
                 ),
-            markDirtyKey: 'font-info-station-name',
-            refresh: () => this.refreshStationSidebarItemSummary(stationIndex)
+            markDirtyKey: isStation
+                ? 'font-info-station-name'
+                : 'font-info-instance-name',
+            refresh: () =>
+                isStation
+                    ? this.refreshStationSidebarItemSummary(index)
+                    : this.refreshInstanceSidebarItemSummary(index)
         });
     }
 
-    private applyLocalStationLocationValue(
-        stationIndex: number,
+    private applyLocalRecordLocationValue(
+        kind: 'station' | 'instance',
+        index: number,
         axisTag: string,
         nextValue: number | undefined
     ) {
         const font = window.currentFontModel as any;
-        const station = font?.stations?.[stationIndex];
-        if (!station) {
+        const list = kind === 'station' ? font?.stations : font?.instances;
+        const record = list?.[index];
+        if (!record) {
             return;
         }
 
         if (nextValue === undefined) {
-            if (station.location) {
-                delete station.location[axisTag];
-                if (Object.keys(station.location).length === 0) {
-                    delete station.location;
+            if (record.location) {
+                delete record.location[axisTag];
+                if (Object.keys(record.location).length === 0) {
+                    delete record.location;
                 }
             }
             return;
         }
 
-        if (!station.location) {
-            station.location = {};
+        if (!record.location) {
+            record.location = {};
+        }
+        record.location[axisTag] = nextValue;
+    }
+
+    private commitRecordLocationValue(
+        kind: 'station' | 'instance',
+        index: number,
+        axisTag: string,
+        nextValue: number | undefined
+    ) {
+        const font = window.currentFontModel as any;
+        const list = kind === 'station' ? font?.stations : font?.instances;
+        const record = list?.[index];
+        if (!record) {
+            return;
         }
 
-        station.location[axisTag] = nextValue;
+        const previousValue = record.location?.[axisTag];
+        if (previousValue === nextValue) {
+            return;
+        }
+
+        const isStation = kind === 'station';
+        this.commitFontPathChange({
+            label: isStation
+                ? 'Edit station location'
+                : 'Edit instance location',
+            path: [
+                isStation ? 'masters' : 'instances',
+                index,
+                'location',
+                axisTag
+            ],
+            oldValue: previousValue,
+            newValue: nextValue,
+            remove: nextValue === undefined,
+            applyLocal: () =>
+                this.applyLocalRecordLocationValue(
+                    kind,
+                    index,
+                    axisTag,
+                    nextValue
+                ),
+            markDirtyKey: isStation
+                ? 'font-info-station-location'
+                : 'font-info-instance-location',
+            refresh: () =>
+                isStation
+                    ? this.refreshStationSidebarItemSummary(index)
+                    : this.refreshInstanceSidebarItemSummary(index)
+        });
+    }
+
+    private commitStationNameFieldValue(
+        stationIndex: number,
+        nextValue: Babelfont.I18NDictionary
+    ) {
+        this.commitRecordNameFieldValue('station', stationIndex, nextValue);
     }
 
     private commitStationLocationValue(
@@ -6598,32 +6677,12 @@ class FontInfoManager {
         axisTag: string,
         nextValue: number | undefined
     ) {
-        const font = window.currentFontModel as any;
-        const station = font?.stations?.[stationIndex];
-        if (!station) {
-            return;
-        }
-
-        const previousValue = station.location?.[axisTag];
-        if (previousValue === nextValue) {
-            return;
-        }
-
-        this.commitFontPathChange({
-            label: 'Edit station location',
-            path: ['masters', stationIndex, 'location', axisTag],
-            oldValue: previousValue,
-            newValue: nextValue,
-            remove: nextValue === undefined,
-            applyLocal: () =>
-                this.applyLocalStationLocationValue(
-                    stationIndex,
-                    axisTag,
-                    nextValue
-                ),
-            markDirtyKey: 'font-info-station-location',
-            refresh: () => this.refreshStationSidebarItemSummary(stationIndex)
-        });
+        this.commitRecordLocationValue(
+            'station',
+            stationIndex,
+            axisTag,
+            nextValue
+        );
     }
 
     private applyLocalStationMetricValue(
@@ -6674,56 +6733,11 @@ class FontInfoManager {
         });
     }
 
-    private applyLocalInstanceNameFieldValue(
-        instanceIndex: number,
-        nextValue: Babelfont.I18NDictionary
-    ) {
-        const font = window.currentFontModel as any;
-        const instance = font?.instances?.[instanceIndex];
-        if (!instance) {
-            return;
-        }
-
-        instance.name = normalizeLocalizedStringValue(nextValue);
-    }
-
     private commitInstanceNameFieldValue(
         instanceIndex: number,
         nextValue: Babelfont.I18NDictionary
     ) {
-        const font = window.currentFontModel as any;
-        const instance = font?.instances?.[instanceIndex];
-        if (!instance) {
-            return;
-        }
-
-        const previousValue = normalizeLocalizedStringValue(instance.name);
-        const normalizedNextValue = normalizeLocalizedStringValue(nextValue);
-        if (areLocalizedStringValuesEqual(previousValue, normalizedNextValue)) {
-            if (
-                this.pendingInstancesModelSyncRefresh &&
-                this.currentTab === 'instances'
-            ) {
-                requestAnimationFrame(() =>
-                    this.refreshVisibleInstancesContent()
-                );
-            }
-            return;
-        }
-
-        this.commitFontPathChange({
-            label: 'Edit instance name',
-            path: ['instances', instanceIndex, 'name'],
-            oldValue: { ...previousValue },
-            newValue: { ...normalizedNextValue },
-            applyLocal: () =>
-                this.applyLocalInstanceNameFieldValue(
-                    instanceIndex,
-                    normalizedNextValue
-                ),
-            markDirtyKey: 'font-info-instance-name',
-            refresh: () => this.refreshInstanceSidebarItemSummary(instanceIndex)
-        });
+        this.commitRecordNameFieldValue('instance', instanceIndex, nextValue);
     }
 
     private applyLocalInstanceFieldValue(
@@ -6777,75 +6791,21 @@ class FontInfoManager {
         });
     }
 
-    private applyLocalInstanceLocationValue(
-        instanceIndex: number,
-        axisTag: string,
-        nextValue: number | undefined
-    ) {
-        const font = window.currentFontModel as any;
-        const instance = font?.instances?.[instanceIndex];
-        if (!instance) {
-            return;
-        }
-
-        if (nextValue === undefined) {
-            if (instance.location) {
-                delete instance.location[axisTag];
-                if (Object.keys(instance.location).length === 0) {
-                    delete instance.location;
-                }
-            }
-            return;
-        }
-
-        if (!instance.location) {
-            instance.location = {};
-        }
-        instance.location[axisTag] = nextValue;
-    }
-
     private commitInstanceLocationValue(
         instanceIndex: number,
         axisTag: string,
         nextValue: number | undefined
     ) {
-        const font = window.currentFontModel as any;
-        const instance = font?.instances?.[instanceIndex];
-        if (!instance) {
-            return;
-        }
-
-        const previousValue = instance.location?.[axisTag];
-        if (previousValue === nextValue) {
-            return;
-        }
-
-        this.commitFontPathChange({
-            label: 'Edit instance location',
-            path: ['instances', instanceIndex, 'location', axisTag],
-            oldValue: previousValue,
-            newValue: nextValue,
-            remove: nextValue === undefined,
-            applyLocal: () =>
-                this.applyLocalInstanceLocationValue(
-                    instanceIndex,
-                    axisTag,
-                    nextValue
-                ),
-            markDirtyKey: 'font-info-instance-location',
-            refresh: () => this.refreshInstanceSidebarItemSummary(instanceIndex)
-        });
+        this.commitRecordLocationValue(
+            'instance',
+            instanceIndex,
+            axisTag,
+            nextValue
+        );
     }
 
-    private createFontInfoRecordId(prefix: string): string {
-        if (
-            typeof crypto !== 'undefined' &&
-            typeof crypto.randomUUID === 'function'
-        ) {
-            return crypto.randomUUID();
-        }
-
-        return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    private createFontInfoRecordId(_prefix: string): string {
+        return generateStableId();
     }
 
     private getDefaultAxisLocation(): Record<string, number> | undefined {
@@ -9010,60 +8970,18 @@ class FontInfoManager {
     }
 
     private parseClassGlyphMembers(classCode: string): Set<string> {
-        const glyphs = new Set<string>();
-        if (!classCode) return glyphs;
-
-        // Remove comments
-        const codeWithoutComments = classCode.replace(/#.*/g, '');
-
-        // Split by whitespace - the class code is already a space-separated list
-        const tokens = codeWithoutComments
-            .split(/\s+/)
-            .map((t) => t.trim())
-            .filter((t) => t.length > 0);
-
-        tokens.forEach((token) => {
-            if (token.startsWith('@')) {
-                // It's a nested class reference - will be resolved later
-                glyphs.add(token);
-            } else {
-                // It's a glyph name
-                glyphs.add(token);
-            }
-        });
-
-        return glyphs;
+        return parseFeatureClassGlyphMembers(classCode);
     }
 
     private getAllGlyphsInClass(
         className: string,
         visited: Set<string> = new Set()
     ): Set<string> {
-        const allGlyphs = new Set<string>();
-
-        // Prevent infinite recursion
-        if (visited.has(className)) return allGlyphs;
-        visited.add(className);
-
-        // Remove @ prefix if present
-        const cleanName = className.startsWith('@')
-            ? className.slice(1)
-            : className;
-        const members = this.classGlyphMembers.get(cleanName);
-
-        if (!members) return allGlyphs;
-
-        members.forEach((member) => {
-            if (member.startsWith('@')) {
-                // Recursively get glyphs from nested class
-                const nestedGlyphs = this.getAllGlyphsInClass(member, visited);
-                nestedGlyphs.forEach((g) => allGlyphs.add(g));
-            } else {
-                allGlyphs.add(member);
-            }
-        });
-
-        return allGlyphs;
+        return resolveFeatureClassGlyphs(
+            className,
+            this.classGlyphMembers,
+            visited
+        );
     }
 
     private loadClassesList() {
@@ -9116,39 +9034,7 @@ class FontInfoManager {
     }
 
     private extractLanguageSystems(): string[] {
-        const font = window.currentFontModel;
-        if (!font || !font.features) return ['DFLT'];
-
-        const scripts = new Set<string>();
-        scripts.add('DFLT'); // Always include default
-
-        // Parse all feature code for languagesystem declarations
-        const allCode: string[] = [];
-
-        // Collect from prefixes
-        if (font.features.prefixes) {
-            Object.values(font.features.prefixes).forEach((prefix) => {
-                if (prefix.code) allCode.push(prefix.code);
-            });
-        }
-
-        // Collect from features
-        if (font.features.features) {
-            font.features.features.forEach(([_, codeData]) => {
-                if (codeData.code) allCode.push(codeData.code);
-            });
-        }
-
-        // Parse languagesystem declarations
-        const languageSystemRegex = /languagesystem\s+(\w+)\s+\w+/gi;
-        allCode.forEach((code) => {
-            let match;
-            while ((match = languageSystemRegex.exec(code)) !== null) {
-                scripts.add(match[1]);
-            }
-        });
-
-        return Array.from(scripts).sort();
+        return extractFontLanguageSystems(window.currentFontModel?.features);
     }
 
     private loadPluginSettingsList(): void {
@@ -9290,17 +9176,10 @@ class FontInfoManager {
         console.log('[FontInfo] Supported scripts:', supportedScripts);
 
         // Map scripts to shapers and deduplicate
-        const shaperMap = new Map<string, string[]>(); // shaper -> [scripts]
-        supportedScripts.forEach((script) => {
-            const shaper = SCRIPT_TO_SHAPER[script] || 'default';
-            if (!shaperMap.has(shaper)) {
-                shaperMap.set(shaper, []);
-            }
-            shaperMap.get(shaper)!.push(script);
-        });
+        const shaperMap = groupScriptsByShaper(supportedScripts);
 
         // Get unique shapers sorted alphabetically
-        const availableShapers = Array.from(shaperMap.keys()).sort();
+        const availableShapers = Array.from(shaperMap.keys());
 
         // Ensure selectedShaper is valid, otherwise use first available
         if (
@@ -9375,10 +9254,9 @@ class FontInfoManager {
         );
 
         // Build categorized feature lists
-        const categorized = this.categorizeFeaturesByScript(
+        const categorized = categorizeFeaturesForShaper(
             features,
-            executionOrder,
-            supportedScripts
+            executionOrder
         );
 
         // Helper to add section header
@@ -9396,34 +9274,6 @@ class FontInfoManager {
                 this.selectedShaper.slice(1);
             addSectionHeader(`Used by ${shaperDisplayName} shaper`);
             categorized.usedByShaper.forEach(
-                ({
-                    tag,
-                    codeData,
-                    index,
-                    isDiscretionary: isDisc,
-                    isUserFeature
-                }) => {
-                    const item = this.createListItem(
-                        'feature',
-                        index,
-                        codeData,
-                        tag,
-                        isDisc,
-                        isUserFeature
-                    );
-                    this.featureListItems.set(index, item);
-                    this.featureCodeData.set(index, {
-                        tag,
-                        code: codeData.code || ''
-                    });
-                    listContainer.appendChild(item);
-                }
-            );
-        }
-
-        if (categorized.notInLanguagesystem.length > 0) {
-            addSectionHeader('Not in languagesystem');
-            categorized.notInLanguagesystem.forEach(
                 ({
                     tag,
                     codeData,
@@ -9634,137 +9484,6 @@ class FontInfoManager {
             nextKeys.length - 1
         );
         this.selectItem(type, nextKeys[nextIndex]);
-    }
-
-    private categorizeFeaturesByScript(
-        features: Array<[string, Babelfont.PossiblyAutomaticCode]>,
-        executionOrder: string[],
-        supportedScripts: string[]
-    ): {
-        usedByShaper: Array<{
-            tag: string;
-            codeData: Babelfont.PossiblyAutomaticCode;
-            index: number;
-            isDiscretionary: boolean;
-            isUserFeature: boolean;
-        }>;
-        postUserFeatures: Array<{
-            tag: string;
-            codeData: Babelfont.PossiblyAutomaticCode;
-            index: number;
-            isDiscretionary: boolean;
-            isUserFeature: boolean;
-        }>;
-        notUsedByShaper: Array<{
-            tag: string;
-            codeData: Babelfont.PossiblyAutomaticCode;
-            index: number;
-            isDiscretionary: boolean;
-            isUserFeature: boolean;
-        }>;
-        notInLanguagesystem: Array<{
-            tag: string;
-            codeData: Babelfont.PossiblyAutomaticCode;
-            index: number;
-            isDiscretionary: boolean;
-            isUserFeature: boolean;
-        }>;
-        discretionary: Array<{
-            tag: string;
-            codeData: Babelfont.PossiblyAutomaticCode;
-            index: number;
-            isDiscretionary: boolean;
-            isUserFeature: boolean;
-        }>;
-    } {
-        const usedByShaper: any[] = [];
-        const postUserFeatures: any[] = [];
-        const notUsedByShaper: any[] = [];
-        const notInLanguagesystem: any[] = [];
-        const discretionary: any[] = [];
-
-        // Split execution order at '--- USER FEATURES ---' marker
-        const userFeaturesIndex = executionOrder.indexOf(
-            '--- USER FEATURES ---'
-        );
-        let preUserFeatures: string[] = [];
-        let postUserFeaturesList: string[] = [];
-
-        if (userFeaturesIndex >= 0) {
-            preUserFeatures = executionOrder
-                .slice(0, userFeaturesIndex)
-                .filter((f) => !f.startsWith('---'));
-            postUserFeaturesList = executionOrder
-                .slice(userFeaturesIndex + 1)
-                .filter((f) => !f.startsWith('---'));
-        } else {
-            // No USER FEATURES marker, treat all as pre-user
-            preUserFeatures = executionOrder.filter(
-                (f) => !f.startsWith('---')
-            );
-        }
-
-        const preUserFeaturesSet = new Set(preUserFeatures);
-        const postUserFeaturesSet = new Set(postUserFeaturesList);
-
-        features.forEach(([tag, codeData], index) => {
-            const isDisc = isDiscretionary(tag);
-            const featureData = {
-                tag,
-                codeData,
-                index,
-                isDiscretionary: isDisc,
-                isUserFeature: isDisc
-            };
-
-            if (isDisc) {
-                // Discretionary features go in their own category
-                discretionary.push(featureData);
-            } else {
-                if (preUserFeaturesSet.has(tag)) {
-                    // Feature before USER FEATURES marker
-                    usedByShaper.push(featureData);
-                } else if (postUserFeaturesSet.has(tag)) {
-                    // Feature after USER FEATURES marker
-                    postUserFeatures.push(featureData);
-                } else {
-                    // Required feature not used by current shaper
-                    notUsedByShaper.push(featureData);
-                }
-            }
-        });
-
-        // Sort each category
-        // Used by shaper: by execution order (before USER FEATURES)
-        usedByShaper.sort((a, b) => {
-            const aPos = preUserFeatures.indexOf(a.tag);
-            const bPos = preUserFeatures.indexOf(b.tag);
-            return aPos - bPos;
-        });
-
-        // Post-user features: by execution order (after USER FEATURES)
-        postUserFeatures.sort((a, b) => {
-            const aPos = postUserFeaturesList.indexOf(a.tag);
-            const bPos = postUserFeaturesList.indexOf(b.tag);
-            return aPos - bPos;
-        });
-
-        // Not used by shaper: alphabetically
-        notUsedByShaper.sort((a, b) => a.tag.localeCompare(b.tag));
-
-        // Not in languagesystem: alphabetically
-        notInLanguagesystem.sort((a, b) => a.tag.localeCompare(b.tag));
-
-        // Discretionary: by source order
-        discretionary.sort((a, b) => a.index - b.index);
-
-        return {
-            usedByShaper,
-            postUserFeatures,
-            notUsedByShaper,
-            notInLanguagesystem,
-            discretionary
-        };
     }
 
     private selectedGeneratorStamp() {

@@ -53,6 +53,7 @@ import {
     type KerningGroupChip
 } from './glyph-canvas/kerning-group-widget';
 import { Logger } from './logger';
+import { isViewFocused } from './undo-redo-context';
 import { editorHealth } from './editor-health-monitor';
 import APP_SETTINGS from './settings';
 import { attachTopRowSidebarInterpolation } from './top-row-sidebar-interpolation';
@@ -71,6 +72,7 @@ import {
     Guide,
     Drawing,
     Station,
+    isAssociatedFreeDrawing,
     withSuppressedModelRecording
 } from './babelfont-model';
 import { updateUrlState, encodeLocation } from './url-state';
@@ -158,10 +160,6 @@ function syncLatestOpenSessionIdFromLifecycle(event: Event): void {
 
 function isPlainNumericInputValue(value: string): boolean {
     return /^[+-]?\d+(?:\.\d+)?$/.test(value.trim());
-}
-
-function isViewFocused(viewId: string): boolean {
-    return !!document.getElementById(viewId)?.classList.contains('focused');
 }
 
 function isNativeEditableClipboardTarget(target: EventTarget | null): boolean {
@@ -2186,8 +2184,7 @@ class GlyphCanvas {
     }
 
     restoreCanvasKeyboardFocus(): void {
-        const editorView = document.getElementById('view-editor');
-        if (!editorView?.classList.contains('focused') || !this.canvas) {
+        if (!isViewFocused('view-editor') || !this.canvas) {
             return;
         }
         this.canvas.focus({ preventScroll: true });
@@ -2260,8 +2257,7 @@ class GlyphCanvas {
         this.canvas!.addEventListener('keydown', (e) => {
             this.syncBrowserWindowActiveState();
 
-            const editorView = document.getElementById('view-editor');
-            if (!editorView?.classList.contains('focused')) {
+            if (!isViewFocused('view-editor')) {
                 // View activation via keyboard can leave the canvas focused
                 // briefly; never type into the editor unless it is the focused view.
                 return;
@@ -2327,8 +2323,7 @@ class GlyphCanvas {
             }
         });
         this.canvas!.addEventListener('keyup', (e) => {
-            const editorView = document.getElementById('view-editor');
-            if (!editorView?.classList.contains('focused')) {
+            if (!isViewFocused('view-editor')) {
                 return;
             }
 
@@ -2635,9 +2630,7 @@ class GlyphCanvas {
                     return;
                 }
 
-                const editorView = document.querySelector('#view-editor');
-                const isEditorFocused =
-                    !!editorView && editorView.classList.contains('focused');
+                const isEditorFocused = isViewFocused('view-editor');
                 const activeElement =
                     document.activeElement as HTMLElement | null;
                 const isCanvasActive = activeElement === this.canvas;
@@ -2741,12 +2734,9 @@ class GlyphCanvas {
                 });
 
                 // Check if editing view is active and in editing mode
-                const editorView = document.querySelector('#view-editor');
-                const isEditorFocused =
-                    editorView && editorView.classList.contains('focused');
+                const isEditorFocused = isViewFocused('view-editor');
 
                 console.log('[GlyphCanvas] Editor focus check:', {
-                    editorView: !!editorView,
                     isEditorFocused,
                     outlineEditorActive: this.outlineEditor.active
                 });
@@ -2810,11 +2800,7 @@ class GlyphCanvas {
 
         document.addEventListener('keydown', (e) => {
             if ((e.metaKey || e.ctrlKey) && e.altKey && e.code === 'KeyG') {
-                const editorView = document.querySelector('#view-editor');
-                const isEditorFocused =
-                    !!editorView && editorView.classList.contains('focused');
-
-                if (!isEditorFocused) {
+                if (!isViewFocused('view-editor')) {
                     return;
                 }
 
@@ -3219,9 +3205,7 @@ class GlyphCanvas {
             return false;
         }
 
-        const editorView = document.querySelector('#view-editor');
-        const isEditorFocused =
-            !!editorView && editorView.classList.contains('focused');
+        const isEditorFocused = isViewFocused('view-editor');
         const activeElement = document.activeElement as HTMLElement | null;
         const isCanvasActive = activeElement === this.canvas;
 
@@ -5977,8 +5961,7 @@ class GlyphCanvas {
                     );
                 }
 
-                const editorView = document.getElementById('view-editor');
-                if (editorView && editorView.classList.contains('focused')) {
+                if (isViewFocused('view-editor')) {
                     setTimeout(() => this.canvas!.focus(), 0);
                 }
             });
@@ -6025,16 +6008,10 @@ class GlyphCanvas {
                 });
 
                 freeDrawings = glyphDrawings.filter((drawing) => {
-                    const drawingStation = drawing.station;
                     return (
-                        drawingStation &&
-                        typeof drawingStation === 'object' &&
-                        'type' in drawingStation &&
-                        drawingStation.type === 'AssociatedWithMaster' &&
+                        isAssociatedFreeDrawing(drawing) &&
                         getDrawingStationId(drawing) === station.id &&
-                        drawing.id !== defaultDrawing?.id &&
-                        !!drawing.location &&
-                        Object.keys(drawing.location).length > 0
+                        drawing.id !== defaultDrawing?.id
                     );
                 });
 
@@ -6312,11 +6289,7 @@ class GlyphCanvas {
 
     async handleTextModeEscapeKey(e: KeyboardEvent): Promise<void> {
         // Check if editor view is focused
-        const editorView = document.querySelector('#view-editor');
-        const isEditorFocused =
-            editorView && editorView.classList.contains('focused');
-
-        if (!isEditorFocused) {
+        if (!isViewFocused('view-editor')) {
             return;
         }
 

@@ -1,3 +1,5 @@
+import { isPlainObject } from './yjs-prelim';
+
 export type FontDataPatchOperation = {
     op: 'add' | 'remove' | 'replace';
     path: (string | number)[];
@@ -14,10 +16,6 @@ function cloneValue<T>(value: T): T {
         return value;
     }
     return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-    return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
 function valuesDiffer(left: unknown, right: unknown): boolean {

@@ -4,7 +4,12 @@
  */
 
 import { Logger } from './logger';
-import { getFontStations, getStationDisplayName } from './tour-utils';
+import {
+    getFontStations,
+    getSelectedGlyphOutlineFontRect,
+    getSelectedGlyphWorldOrigin,
+    getStationDisplayName
+} from './tour-utils';
 
 const console = new Logger('Tour');
 
@@ -117,7 +122,7 @@ export function captureTourDrawArea(): void {
         return;
     }
     const outline = getSelectedGlyphOutlineFontRect();
-    const origin = getGlyphWorldOrigin();
+    const origin = getSelectedGlyphWorldOrigin();
     session.drawArea = outline
         ? padRect(
               offsetRect(outline, {
@@ -134,35 +139,6 @@ export function clearTourDrawingGuides(): void {
     guidesRoot = null;
 }
 
-function getGlyphWorldOrigin(): FontPoint {
-    const textRun = window.glyphCanvas?.textRunEditor;
-    const index = textRun?.selectedGlyphIndex ?? -1;
-    if (
-        textRun &&
-        typeof textRun._getGlyphPosition === 'function' &&
-        index >= 0
-    ) {
-        const position = textRun._getGlyphPosition(index);
-        return {
-            x: (position.xPosition || 0) + (position.xOffset || 0),
-            y: position.yOffset || 0
-        };
-    }
-    const glyphs = textRun?.shapedGlyphs || [];
-    if (index < 0 || index >= glyphs.length) {
-        return { x: 0, y: 0 };
-    }
-    let xPosition = 0;
-    for (let i = 0; i < index; i++) {
-        xPosition += glyphs[i].ax || 0;
-    }
-    const glyph = glyphs[index];
-    return {
-        x: xPosition + (glyph.dx || 0),
-        y: glyph.dy || 0
-    };
-}
-
 function offsetRect(rect: FontRect, origin: FontPoint): FontRect {
     return {
         minX: rect.minX + origin.x,
@@ -172,36 +148,9 @@ function offsetRect(rect: FontRect, origin: FontPoint): FontRect {
     };
 }
 
-function getSelectedGlyphOutlineFontRect(): FontRect | null {
-    const canvas = window.glyphCanvas;
-    if (!canvas?.outlineEditor?.active) {
-        return null;
-    }
-    const index = canvas.textRunEditor?.selectedGlyphIndex;
-    if (typeof index !== 'number' || index < 0) {
-        return null;
-    }
-    const bounds = canvas.glyphBounds?.[index];
-    if (
-        !bounds ||
-        !Number.isFinite(bounds.x1) ||
-        !Number.isFinite(bounds.x2) ||
-        !Number.isFinite(bounds.y1) ||
-        !Number.isFinite(bounds.y2)
-    ) {
-        return null;
-    }
-    return {
-        minX: bounds.x + bounds.x1,
-        maxX: bounds.x + bounds.x2,
-        minY: bounds.y + bounds.y1,
-        maxY: bounds.y + bounds.y2
-    };
-}
-
 /** Frozen drawing hole in glyph-local space, placed with the live origin. */
 export function getDrawAreaFontRect(): FontRect | null {
-    const origin = getGlyphWorldOrigin();
+    const origin = getSelectedGlyphWorldOrigin();
     if (session.drawArea) {
         return offsetRect(session.drawArea, origin);
     }
@@ -445,7 +394,7 @@ function readExtraBoldBackgroundPath(): TourPath | null {
 }
 
 function localToWorld(point: FontPoint): FontPoint {
-    const origin = getGlyphWorldOrigin();
+    const origin = getSelectedGlyphWorldOrigin();
     return {
         x: origin.x + point.x,
         y: origin.y + point.y

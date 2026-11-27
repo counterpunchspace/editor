@@ -991,3 +991,199 @@ export function validateFeatureTag(tag: string): FeatureTagCheck {
         ...(close.length === 1 ? { suggestion: close[0] } : {})
     };
 }
+
+export type FeatureCodeLike = { code?: string | null };
+
+export type FontFeaturesLike = {
+    prefixes?: Record<string, FeatureCodeLike | null | undefined> | null;
+    features?: Array<[string, FeatureCodeLike | null | undefined]> | null;
+};
+
+export type CategorizedShaperFeature<T = unknown> = {
+    tag: string;
+    codeData: T;
+    index: number;
+    isDiscretionary: boolean;
+    isUserFeature: boolean;
+};
+
+export type CategorizedShaperFeatures<T = unknown> = {
+    usedByShaper: Array<CategorizedShaperFeature<T>>;
+    discretionary: Array<CategorizedShaperFeature<T>>;
+    postUserFeatures: Array<CategorizedShaperFeature<T>>;
+    notUsedByShaper: Array<CategorizedShaperFeature<T>>;
+};
+
+export function parseFeatureClassGlyphMembers(classCode: string): Set<string> {
+    const glyphs = new Set<string>();
+    if (!classCode) {
+        return glyphs;
+    }
+
+    const codeWithoutComments = classCode.replace(/#.*/g, '');
+    const tokens = codeWithoutComments
+        .split(/\s+/)
+        .map((token) => token.trim())
+        .filter(Boolean);
+
+    tokens.forEach((token) => glyphs.add(token));
+    return glyphs;
+}
+
+export function resolveFeatureClassGlyphs(
+    className: string,
+    classGlyphMembers: Map<string, Set<string>>,
+    visited: Set<string> = new Set()
+): Set<string> {
+    const allGlyphs = new Set<string>();
+    if (visited.has(className)) {
+        return allGlyphs;
+    }
+    visited.add(className);
+
+    const cleanName = className.startsWith('@')
+        ? className.slice(1)
+        : className;
+    const members = classGlyphMembers.get(cleanName);
+    if (!members) {
+        return allGlyphs;
+    }
+
+    members.forEach((member) => {
+        if (member.startsWith('@')) {
+            const nestedGlyphs = resolveFeatureClassGlyphs(
+                member,
+                classGlyphMembers,
+                visited
+            );
+            nestedGlyphs.forEach((glyph) => allGlyphs.add(glyph));
+        } else {
+            allGlyphs.add(member);
+        }
+    });
+
+    return allGlyphs;
+}
+
+export function extractFontLanguageSystems(
+    features: FontFeaturesLike | null | undefined
+): string[] {
+    if (!features) {
+        return ['DFLT'];
+    }
+
+    const scripts = new Set<string>(['DFLT']);
+    const allCode: string[] = [];
+
+    if (features.prefixes) {
+        Object.values(features.prefixes).forEach((prefix) => {
+            if (prefix?.code) {
+                allCode.push(prefix.code);
+            }
+        });
+    }
+
+    if (features.features) {
+        features.features.forEach(([, codeData]) => {
+            if (codeData?.code) {
+                allCode.push(codeData.code);
+            }
+        });
+    }
+
+    const languageSystemRegex = /languagesystem\s+(\w+)\s+\w+/gi;
+    allCode.forEach((code) => {
+        let match: RegExpExecArray | null;
+        while ((match = languageSystemRegex.exec(code)) !== null) {
+            scripts.add(match[1]);
+        }
+    });
+
+    return Array.from(scripts).sort();
+}
+
+export function groupScriptsByShaper(
+    scripts: readonly string[]
+): Map<string, string[]> {
+    const shaperMap = new Map<string, string[]>();
+    scripts.forEach((script) => {
+        const shaper = SCRIPT_TO_SHAPER[script] || 'default';
+        if (!shaperMap.has(shaper)) {
+            shaperMap.set(shaper, []);
+        }
+        shaperMap.get(shaper)!.push(script);
+    });
+
+    return new Map(
+        Array.from(shaperMap.entries()).sort(([left], [right]) =>
+            left.localeCompare(right)
+        )
+    );
+}
+
+export function categorizeFeaturesForShaper<T>(
+    features: Array<[string, T]>,
+    executionOrder: readonly string[]
+): CategorizedShaperFeatures<T> {
+    const userFeaturesIndex = executionOrder.indexOf('--- USER FEATURES ---');
+    const preUserFeatures = (
+        userFeaturesIndex >= 0
+            ? executionOrder.slice(0, userFeaturesIndex)
+            : executionOrder
+    ).filter((feature) => !feature.startsWith('---'));
+    const postUserFeaturesList =
+        userFeaturesIndex >= 0
+            ? executionOrder
+                  .slice(userFeaturesIndex + 1)
+                  .filter((feature) => !feature.startsWith('---'))
+            : [];
+
+    const preUserFeaturesSet = new Set(preUserFeatures);
+    const postUserFeaturesSet = new Set(postUserFeaturesList);
+
+    const usedByShaper: Array<CategorizedShaperFeature<T>> = [];
+    const discretionary: Array<CategorizedShaperFeature<T>> = [];
+    const postUserFeatures: Array<CategorizedShaperFeature<T>> = [];
+    const notUsedByShaper: Array<CategorizedShaperFeature<T>> = [];
+
+    features.forEach(([tag, codeData], index) => {
+        const isDisc = isDiscretionary(tag);
+        const entry: CategorizedShaperFeature<T> = {
+            tag,
+            codeData,
+            index,
+            isDiscretionary: isDisc,
+            isUserFeature: isDisc
+        };
+
+        if (isDisc) {
+            discretionary.push(entry);
+        } else if (preUserFeaturesSet.has(tag)) {
+            usedByShaper.push(entry);
+        } else if (postUserFeaturesSet.has(tag)) {
+            postUserFeatures.push(entry);
+        } else {
+            notUsedByShaper.push(entry);
+        }
+    });
+
+    usedByShaper.sort(
+        (left, right) =>
+            preUserFeatures.indexOf(left.tag) -
+            preUserFeatures.indexOf(right.tag)
+    );
+    discretionary.sort((left, right) => left.index - right.index);
+    postUserFeatures.sort(
+        (left, right) =>
+            postUserFeaturesList.indexOf(left.tag) -
+            postUserFeaturesList.indexOf(right.tag)
+    );
+    notUsedByShaper.sort((left, right) => left.tag.localeCompare(right.tag));
+
+    return {
+        usedByShaper,
+        discretionary,
+        postUserFeatures,
+        notUsedByShaper
+    };
+}

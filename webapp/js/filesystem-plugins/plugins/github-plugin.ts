@@ -17,14 +17,17 @@ import {
     loadGitHubRepositories,
     readBranch,
     repositoryLabel,
-    sameRepository,
     saveGitHubPullRequest,
     type GitHubPullRequestRef,
     type GitHubRepository,
     type GitHubRepositorySpec
 } from '../../github/github-session';
 import { FilesystemPlugin, type SaveSummary } from '../filesystem-plugin';
-import { GitHubAdapter, type GitHubAdapterState } from './github-adapter';
+import {
+    findGitHubRepository,
+    GitHubAdapter,
+    type GitHubAdapterState
+} from './github-adapter';
 import { escapeHtml, openDialog } from '../../font-windows/dialogs';
 
 const console = new Logger('GitHubPlugins');
@@ -65,11 +68,7 @@ export class GitHubPlugin extends FilesystemPlugin {
     }
 
     private find(spec: GitHubRepositorySpec): GitHubRepository | null {
-        return (
-            this.state.repositories.find((entry) =>
-                sameRepository(entry, spec)
-            ) ?? null
-        );
+        return findGitHubRepository(this.state.repositories, spec);
     }
 
     /** Take a stored repository; drop what was read from an old branch. */

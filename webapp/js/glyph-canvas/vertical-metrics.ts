@@ -283,25 +283,34 @@ export function getCoreDrawableMetricLineEntries(
  * including non-zero Typo/Hhea line-gap lines). Used for extents, empty-glyph
  * hits, and similar layout math.
  */
-export function getVisibleVerticalMetricValues(
-    verticalMetrics: Record<string, number> | null | undefined
+function mergeUniqueMetricValues(
+    base: number[],
+    additional: number[],
+    epsilon = 0.25
 ): number[] {
-    const merged = collectUniqueMetricValues(
-        verticalMetrics,
-        ALL_GEOMETRIC_VERTICAL_METRIC_KEYS,
-        { includeBaseline: true }
-    );
-    for (const value of getAdditionalDrawableVerticalMetricValues(
-        verticalMetrics
-    )) {
+    const merged = [...base];
+    for (const value of additional) {
         const alreadyPresent = merged.some(
-            (existingValue) => Math.abs(existingValue - value) < 0.25
+            (existingValue) => Math.abs(existingValue - value) < epsilon
         );
         if (!alreadyPresent) {
             merged.push(value);
         }
     }
     return merged;
+}
+
+export function getVisibleVerticalMetricValues(
+    verticalMetrics: Record<string, number> | null | undefined
+): number[] {
+    return mergeUniqueMetricValues(
+        collectUniqueMetricValues(
+            verticalMetrics,
+            ALL_GEOMETRIC_VERTICAL_METRIC_KEYS,
+            { includeBaseline: true }
+        ),
+        getAdditionalDrawableVerticalMetricValues(verticalMetrics)
+    );
 }
 
 /**
@@ -317,18 +326,10 @@ export function getSnappableVerticalMetricValues(
         return core;
     }
 
-    const additional =
-        getAdditionalDrawableVerticalMetricValues(verticalMetrics);
-    const merged = [...core];
-    for (const value of additional) {
-        const alreadyPresent = merged.some(
-            (existingValue) => Math.abs(existingValue - value) < 0.25
-        );
-        if (!alreadyPresent) {
-            merged.push(value);
-        }
-    }
-    return merged;
+    return mergeUniqueMetricValues(
+        core,
+        getAdditionalDrawableVerticalMetricValues(verticalMetrics)
+    );
 }
 
 export function getLowestVisibleVerticalMetricValue(

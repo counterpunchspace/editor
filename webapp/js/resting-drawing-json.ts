@@ -8,6 +8,7 @@
 
 import type { Babelfont } from './babelfont';
 import { affineToDecomposedAffine } from './glyph-path-geometry';
+import { isPlainObject } from './yjs-prelim';
 type PlainObject = Record<string, unknown>;
 
 export const RESTING_DRAWING_RUNTIME_KEYS = [
@@ -24,10 +25,6 @@ export const RESTING_DRAWING_RUNTIME_KEYS = [
 export const RESTING_DRAWING_IDENTITY_KEYS = ['id', 'width', 'master'] as const;
 
 const SHAPE_RUNTIME_KEYS = ['isInterpolated', 'layerData'] as const;
-
-function isPlainObject(value: unknown): value is PlainObject {
-    return !!value && typeof value === 'object' && !Array.isArray(value);
-}
 
 export function omitRestingDrawingRuntimeKeys(
     record: PlainObject

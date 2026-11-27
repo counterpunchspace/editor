@@ -68,27 +68,6 @@ export function clear_preview_layer_overlay(): void;
  */
 export function close_layout_from_fea(feature_code: string, glyph_names_json: string, seed_names_json: string): string;
 
-/**
- * Compile a font from babelfont JSON directly to TTF
- *
- * This is the main entry point that takes a .babelfont JSON string
- * and produces compiled TTF bytes.
- *
- * # Arguments
- * * `babelfont_json` - JSON string in .babelfont format
- * * `options` - Compilation options:
- *  - `skip_kerning`: bool - Skip creation of kern tables
- *  - `skip_features`: bool - Skip OpenType feature compilation
- *  - `skip_metrics`: bool - Skip metrics compilation
- *  - `skip_outlines`: bool - Skip `glyf`/`gvar` table creation
- *  - `dont_use_production_names`: bool - Don't use production names for glyphs
- *  - `subset_glyphs`: String[] - List of glyph names to include
- *  - `drop_incompatible_paths`: bool - Drop incompatible paths during compilation
- *  - `produce_varc_table`: bool - Produce VARC table (variable fonts)
- *
- * # Returns
- * * `Vec<u8>` - Compiled TTF font bytes
- */
 export function compile_babelfont(babelfont_json: string, options: any): Uint8Array;
 
 /**
@@ -227,24 +206,6 @@ export function get_font_axes(font_bytes: Uint8Array): string;
  */
 export function get_font_features(font_bytes: Uint8Array): string;
 
-/**
- * Get all available features from compiled font bytes with their table locations
- *
- * Returns a JSON object mapping feature tags to their tables:
- * ```json
- * {
- *   "liga": ["GSUB"],
- *   "kern": ["GPOS"],
- *   "calt": ["GSUB", "GPOS"]
- * }
- * ```
- *
- * # Arguments
- * * `font_bytes` - Compiled TTF/OTF font bytes
- *
- * # Returns
- * * `String` - JSON object mapping feature tags to array of table names
- */
 export function get_font_features_with_tables(font_bytes: Uint8Array): string;
 
 /**
@@ -596,18 +557,18 @@ export interface InitOutput {
     readonly ufo_glyph_files_for_paths: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly validate_feature_source_with_full_filter_pipeline: (a: any) => [number, number];
     readonly version: () => [number, number];
-    readonly add_axis_with_master_copies_yjs: (a: number, b: number) => [number, number, number];
-    readonly add_master_with_interpolated_layers_yjs: (a: number, b: number) => [number, number, number];
-    readonly refine_layer_snapshots_yjs: (a: number, b: number, c: number, d: number, e: any) => [number, number, number];
-    readonly reinterpolate_layer_yjs: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly reinterpolate_master_layers_yjs: (a: number, b: number) => [number, number, number];
-    readonly remove_masters_yjs: (a: number, b: number) => [number, number, number];
     readonly get_font_axes: (a: number, b: number) => [number, number, number, number];
     readonly get_font_features: (a: number, b: number) => [number, number, number, number];
     readonly get_font_features_with_tables: (a: number, b: number) => [number, number, number, number];
     readonly get_glyph_name: (a: number, b: number, c: number) => [number, number, number, number];
     readonly get_glyph_order: (a: number, b: number) => [number, number, number, number];
     readonly get_stylistic_set_names: (a: number, b: number) => [number, number, number, number];
+    readonly add_axis_with_master_copies_yjs: (a: number, b: number) => [number, number, number];
+    readonly add_master_with_interpolated_layers_yjs: (a: number, b: number) => [number, number, number];
+    readonly refine_layer_snapshots_yjs: (a: number, b: number, c: number, d: number, e: any) => [number, number, number];
+    readonly reinterpolate_layer_yjs: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly reinterpolate_master_layers_yjs: (a: number, b: number) => [number, number, number];
+    readonly remove_masters_yjs: (a: number, b: number) => [number, number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

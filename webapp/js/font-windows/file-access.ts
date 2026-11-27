@@ -29,7 +29,7 @@ type FileAccessWindow = {
     }) => Promise<FileSystemDirectoryHandle>;
 };
 
-type PermissionHandle = {
+export type PermissionHandle = {
     queryPermission(options: {
         mode: 'read' | 'readwrite';
     }): Promise<PermissionState>;

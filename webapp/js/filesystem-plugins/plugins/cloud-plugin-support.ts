@@ -3,6 +3,12 @@
  * (open pipeline, save-as, and live orchestration support).
  */
 import { assertEncodableDocumentSet } from '../../cloud-document-encode-gate';
+import {
+    decodeBase64UrlJson,
+    extractRoleFromRoomToken,
+    type CloudAssetRole
+} from '../../cloud-adapter-support';
+import { getCloudRequestHeaders } from '../../cloud-website-api';
 import type { PatchSyncEngine } from '../../patch-sync-engine';
 import {
     getPathSegments,
@@ -21,6 +27,7 @@ import {
     FONT_CORE_DOCUMENT_ID,
     FONT_DEPS_DOCUMENT_ID,
     glyphDocumentId,
+    glyphIdFromDocumentId,
     type EncodedShard
 } from '../cloud-document-set';
 import {
@@ -29,7 +36,7 @@ import {
     type ShardSizeReport
 } from '../cloud-shard-limits';
 
-export type CloudAssetRole = 'owner' | 'editor' | 'viewer';
+export { decodeBase64UrlJson, extractRoleFromRoomToken, type CloudAssetRole };
 
 type CloudAssetSizeWarningState = {
     visible: boolean;
@@ -209,36 +216,37 @@ export function committedChangeAffectsResidentClosure(
     );
 }
 
-export function decodeBase64UrlJson<T>(value: string): T | null {
-    try {
-        const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
-        const padded = normalized.padEnd(
-            Math.ceil(normalized.length / 4) * 4,
-            '='
-        );
-        const decoded = atob(padded);
-        return JSON.parse(decoded) as T;
-    } catch {
-        return null;
-    }
-}
+export async function createPendingCloudAsset(options: {
+    websiteBaseUrl: string;
+    name: string;
+    estimatedSeedBytes: number;
+    estimatedGlyphCount: number;
+}): Promise<CloudAsset> {
+    const resp = await fetch(`${options.websiteBaseUrl}/api/cloud/assets`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: getCloudRequestHeaders({
+            'Content-Type': 'application/json'
+        }),
+        body: JSON.stringify({
+            name: options.name,
+            estimatedSeedBytes: options.estimatedSeedBytes,
+            estimatedGlyphCount: options.estimatedGlyphCount
+        })
+    });
 
-export function extractRoleFromRoomToken(token: string): CloudAssetRole | null {
-    const parts = String(token || '').split('.');
-    if (parts.length !== 3) {
-        return null;
+    if (!resp.ok) {
+        const err = await resp.text().catch(() => '');
+        if (resp.status === 429) {
+            throw new Error(
+                'Cloud save blocked: too many cloud fonts were created in a short time. Try again in a few minutes.'
+            );
+        }
+        throw new Error(`Failed to create cloud asset: ${resp.status} ${err}`);
     }
 
-    const payload = decodeBase64UrlJson<{ role?: string }>(parts[1]);
-    if (
-        payload?.role === 'owner' ||
-        payload?.role === 'editor' ||
-        payload?.role === 'viewer'
-    ) {
-        return payload.role;
-    }
-
-    return null;
+    const { asset } = (await resp.json()) as { asset: CloudAsset };
+    return asset;
 }
 
 export function normalizeCloudComponentTransform(
@@ -370,10 +378,10 @@ export function glyphNameForCloudDocument(
     fontJson: Record<string, unknown> | null | undefined,
     documentId: string
 ): string | null {
-    if (!documentId.startsWith('glyph:') || !fontJson) {
+    const glyphId = glyphIdFromDocumentId(documentId);
+    if (!glyphId || !fontJson) {
         return null;
     }
-    const glyphId = documentId.slice('glyph:'.length);
     const match = listGlyphRecords(fontJson).find(
         (glyph) => glyph.id === glyphId || glyph.name === glyphId
     );

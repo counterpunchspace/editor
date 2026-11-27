@@ -9,6 +9,7 @@ import { Drawing, DecomposedAffineTransform } from '../babelfont-model';
 import { pathHasSubtractionFlag } from '../path-boolean-flag';
 import { fillPunchFillContoursOnContext } from '../punch-fill-contours';
 import { Logger } from '../logger';
+import { isViewFocused } from '../undo-redo-context';
 import { getPathFillOpacity } from '../path-fill-opacity-pref';
 import { get_glyph_name } from '../opentype-table-reader';
 import { isCcmpShellGlyph } from '../skills/ccmp-shells';
@@ -36,6 +37,7 @@ const console = new Logger('Renderer');
 
 import type { ViewportManager } from './viewport';
 import type { TextRunEditor } from './textrun';
+import { sameGuideHandle } from './outline-editor';
 import { GlyphCanvas } from '../glyph-canvas';
 import {
     buildAnimatedGlyphDrawOps,
@@ -217,29 +219,6 @@ function outlineShapeIsComponent(shape: any): boolean {
     return typeof shape.reference === 'string' && !Array.isArray(shape.nodes);
 }
 
-/**
- * Calculate bounding box from SVG path data
- * Parses M, L, C, Q, Z commands and resolves curve extrema.
- */
-function calculatePathBounds(pathData: string): {
-    minX: number;
-    minY: number;
-    maxX: number;
-    maxY: number;
-} | null {
-    const bounds = Drawing.calculateSvgPathBounds(pathData);
-    if (!bounds) {
-        return null;
-    }
-
-    return {
-        minX: bounds.minX,
-        minY: bounds.minY,
-        maxX: bounds.maxX,
-        maxY: bounds.maxY
-    };
-}
-
 function parseRgbaColor(color: string): {
     r: number;
     g: number;
@@ -379,14 +358,12 @@ export class GlyphCanvasRenderer {
         const computedStyle = getComputedStyle(document.documentElement);
 
         // Check if the editor view has the 'focused' class
-        const editorView = document.querySelector('#view-editor');
-        const isViewFocused =
-            editorView && editorView.classList.contains('focused');
+        const isEditorViewFocused = isViewFocused('view-editor');
 
         const advertisingBackground = advertisingCanvasBackground();
         if (advertisingBackground) {
             this.ctx.fillStyle = advertisingBackground;
-        } else if (isViewFocused) {
+        } else if (isEditorViewFocused) {
             // Active/focused background (same as .view.focused)
             this.ctx.fillStyle = computedStyle
                 .getPropertyValue('--background-primary')
@@ -796,7 +773,7 @@ export class GlyphCanvasRenderer {
 
                 // Get bounds for hit testing
                 const pathBounds = glyphData
-                    ? calculatePathBounds(glyphData)
+                    ? Drawing.calculateSvgPathBounds(glyphData)
                     : useExplicitOutline && explicitOutline?.bounds
                       ? {
                             minX: explicitOutline.bounds.xMin,
@@ -1809,17 +1786,6 @@ export class GlyphCanvasRenderer {
         this.ctx.rect(x, y, width, height);
     }
 
-    private sameGuideHandle(
-        left: { scope: 'station' | 'drawing'; index: number } | null,
-        right: { scope: 'station' | 'drawing'; index: number } | null
-    ): boolean {
-        if (!left || !right) {
-            return left === right;
-        }
-
-        return left.scope === right.scope && left.index === right.index;
-    }
-
     private getGuideColor(scope: 'station' | 'drawing'): string {
         return scope === 'station'
             ? 'rgba(220, 64, 64, 0.95)'
@@ -2250,11 +2216,11 @@ export class GlyphCanvasRenderer {
 
         this.withContentFrameClip(() => {
             for (const guideEntry of guides) {
-                const isHovered = this.sameGuideHandle(
+                const isHovered = sameGuideHandle(
                     guideEntry,
                     hoveredGuideHandle
                 );
-                const isSelected = this.sameGuideHandle(
+                const isSelected = sameGuideHandle(
                     guideEntry,
                     selectedGuideHandle
                 );
@@ -6120,7 +6086,7 @@ export class GlyphCanvasRenderer {
                     ? this.textRunEditor.hbFont.glyphToPath(glyphId)
                     : null;
                 const pathBounds = glyphData
-                    ? calculatePathBounds(glyphData)
+                    ? Drawing.calculateSvgPathBounds(glyphData)
                     : null;
                 const isVisuallyEmpty =
                     this.glyphCanvas.isShapedGlyphVisuallyEmpty(glyphIndex);
@@ -6203,9 +6169,7 @@ export class GlyphCanvasRenderer {
 
         const range = this.textRunEditor.getSelectionRange();
         const selectionFill = 'rgba(100, 150, 255, 0.3)';
-        const editorView = document.querySelector('#view-editor');
-        const isEditorViewFocused =
-            !!editorView && editorView.classList.contains('focused');
+        const isEditorViewFocused = isViewFocused('view-editor');
 
         console.log('[Renderer]', '=== Drawing Selection ===');
         console.log('[Renderer]', 'Selection range:', range);

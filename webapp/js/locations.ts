@@ -349,3 +349,30 @@ export function userspaceLocationsEqual(
         (tag) => tag in right && Number(left[tag]) === Number(right[tag])
     );
 }
+
+/**
+ * True when two designspace locations match across the union of `axisTags`
+ * and their own keys (missing coordinates default to 0), within `epsilon`.
+ */
+export function designspaceLocationsMatch(
+    left: DesignspaceLocation | undefined,
+    right: DesignspaceLocation | undefined,
+    axisTags: readonly string[],
+    epsilon: number = 0
+): boolean {
+    if (!left || !right) {
+        return false;
+    }
+    const tags = new Set<string>([
+        ...axisTags,
+        ...Object.keys(left),
+        ...Object.keys(right)
+    ]);
+    for (const tag of tags) {
+        const diff = Math.abs(Number(left[tag] ?? 0) - Number(right[tag] ?? 0));
+        if (diff > epsilon) {
+            return false;
+        }
+    }
+    return true;
+}

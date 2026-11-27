@@ -62,6 +62,27 @@ export function transformPointWithAffine(
     };
 }
 
+export function isOffCurveNodeType(type: string | undefined): boolean {
+    const normalizedType = (type || '').toString().toLowerCase();
+    return normalizedType === 'offcurve' || normalizedType === 'o';
+}
+
+export function isOffCurveNode(
+    node: Babelfont.Node | null | undefined
+): boolean {
+    return isOffCurveNodeType(node?.nodetype);
+}
+
+export function isOnCurveNode(
+    node: Babelfont.Node | null | undefined
+): boolean {
+    return Boolean(node) && !isOffCurveNodeType(node?.nodetype);
+}
+
+export function isCurveNode(node: Babelfont.Node | null | undefined): boolean {
+    return node?.nodetype === 'Curve' || node?.nodetype === 'QCurve';
+}
+
 export function clampUnitInterval(value: number): number {
     if (!Number.isFinite(value)) {
         return 0;
@@ -164,7 +185,7 @@ export function setGlyphStandInContours(
     glyphStandInContours = provider;
 }
 
-function boundsFromMinMax(
+export function boundsFromMinMax(
     minX: number,
     minY: number,
     maxX: number,
@@ -676,13 +697,10 @@ export function calculateGlyphPathBounds(pathData: {
             const p3 = next.node;
             includePoint(p0.x, p0.y);
             includePoint(p3.x, p3.y);
-            for (const t of collectCubicExtrema(p0.x, p1.x, p2.x, p3.x)) {
-                includePoint(
-                    calculateCubicAt(p0.x, p1.x, p2.x, p3.x, t),
-                    calculateCubicAt(p0.y, p1.y, p2.y, p3.y, t)
-                );
-            }
-            for (const t of collectCubicExtrema(p0.y, p1.y, p2.y, p3.y)) {
+            for (const t of [
+                ...collectCubicExtrema(p0.x, p1.x, p2.x, p3.x),
+                ...collectCubicExtrema(p0.y, p1.y, p2.y, p3.y)
+            ]) {
                 includePoint(
                     calculateCubicAt(p0.x, p1.x, p2.x, p3.x, t),
                     calculateCubicAt(p0.y, p1.y, p2.y, p3.y, t)
@@ -717,31 +735,18 @@ export function calculateGlyphPathBounds(pathData: {
 
             includePoint(segmentStart.x, segmentStart.y);
             includePoint(segmentEnd.x, segmentEnd.y);
-            for (const t of collectQuadraticExtrema(
-                segmentStart.x,
-                control.x,
-                segmentEnd.x
-            )) {
-                includePoint(
-                    calculateQuadraticAt(
-                        segmentStart.x,
-                        control.x,
-                        segmentEnd.x,
-                        t
-                    ),
-                    calculateQuadraticAt(
-                        segmentStart.y,
-                        control.y,
-                        segmentEnd.y,
-                        t
-                    )
-                );
-            }
-            for (const t of collectQuadraticExtrema(
-                segmentStart.y,
-                control.y,
-                segmentEnd.y
-            )) {
+            for (const t of [
+                ...collectQuadraticExtrema(
+                    segmentStart.x,
+                    control.x,
+                    segmentEnd.x
+                ),
+                ...collectQuadraticExtrema(
+                    segmentStart.y,
+                    control.y,
+                    segmentEnd.y
+                )
+            ]) {
                 includePoint(
                     calculateQuadraticAt(
                         segmentStart.x,

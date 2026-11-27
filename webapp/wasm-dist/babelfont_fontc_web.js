@@ -199,25 +199,6 @@ export function close_layout_from_fea(feature_code, glyph_names_json, seed_names
 }
 
 /**
- * Compile a font from babelfont JSON directly to TTF
- *
- * This is the main entry point that takes a .babelfont JSON string
- * and produces compiled TTF bytes.
- *
- * # Arguments
- * * `babelfont_json` - JSON string in .babelfont format
- * * `options` - Compilation options:
- *  - `skip_kerning`: bool - Skip creation of kern tables
- *  - `skip_features`: bool - Skip OpenType feature compilation
- *  - `skip_metrics`: bool - Skip metrics compilation
- *  - `skip_outlines`: bool - Skip `glyf`/`gvar` table creation
- *  - `dont_use_production_names`: bool - Don't use production names for glyphs
- *  - `subset_glyphs`: String[] - List of glyph names to include
- *  - `drop_incompatible_paths`: bool - Drop incompatible paths during compilation
- *  - `produce_varc_table`: bool - Produce VARC table (variable fonts)
- *
- * # Returns
- * * `Vec<u8>` - Compiled TTF font bytes
  * @param {string} babelfont_json
  * @param {any} options
  * @returns {Uint8Array}
@@ -638,22 +619,6 @@ export function get_font_features(font_bytes) {
 }
 
 /**
- * Get all available features from compiled font bytes with their table locations
- *
- * Returns a JSON object mapping feature tags to their tables:
- * ```json
- * {
- *   "liga": ["GSUB"],
- *   "kern": ["GPOS"],
- *   "calt": ["GSUB", "GPOS"]
- * }
- * ```
- *
- * # Arguments
- * * `font_bytes` - Compiled TTF/OTF font bytes
- *
- * # Returns
- * * `String` - JSON object mapping feature tags to array of table names
  * @param {Uint8Array} font_bytes
  * @returns {string}
  */

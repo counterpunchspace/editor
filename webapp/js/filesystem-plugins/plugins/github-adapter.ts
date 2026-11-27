@@ -25,6 +25,13 @@ import {
 
 const console = new Logger('GitHubPlugins');
 
+export function findGitHubRepository(
+    repositories: readonly GitHubRepository[],
+    spec: GitHubRepositorySpec
+): GitHubRepository | null {
+    return repositories.find((entry) => sameRepository(entry, spec)) ?? null;
+}
+
 /** Keep a UFO's files in memory, but do not grow without a limit. */
 const MAX_BLOB_CACHE_BYTES = 64 * 1024 * 1024;
 
@@ -123,11 +130,7 @@ export class GitHubAdapter implements FileSystemAdapter {
     private findRepository(
         spec: GitHubRepositorySpec
     ): GitHubRepository | null {
-        return (
-            this.state.repositories.find((entry) =>
-                sameRepository(entry, spec)
-            ) ?? null
-        );
+        return findGitHubRepository(this.state.repositories, spec);
     }
 
     /** Split an adapter path and find the added repository it belongs to. */

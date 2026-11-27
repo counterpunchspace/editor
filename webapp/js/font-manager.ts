@@ -68,8 +68,10 @@ import {
 import { sidebarErrorDisplay } from './sidebar-error-display';
 import type { FilesystemPlugin } from './filesystem-plugins';
 import type { FontModelReadyDetail } from './change-bridge-init';
+import { mapPool } from './filesystem-plugins/cloud-bounded-io';
 import { FONT_DEPS_DOCUMENT_ID } from './filesystem-plugins/cloud-document-set';
 import { catalogBucketOfDocument } from './filesystem-plugins/cloud-room-layout';
+import { normalizeCloudComponentTransform } from './filesystem-plugins/plugins/cloud-plugin-support';
 import {
     LocalSparseHydrator,
     sanitizeGlyphEmptyReferenceComponents,
@@ -297,6 +299,23 @@ export function fileContentsBytes(contents: string | Uint8Array): Uint8Array {
         : contents;
 }
 
+function unsupportedSourceSaveError(path: string): Error {
+    return new Error(
+        `Cannot save ${path} in its original format: source saving supports .babelfont, .glyphs, .glyphspackage, .ufo and .designspace sources. Use Save As to save it in one of those.`
+    );
+}
+
+function normalizeComponentTransformForRust(
+    transform: unknown
+): Babelfont.DecomposedAffine {
+    if (Array.isArray(transform)) {
+        return DecomposedAffineTransform.fromAffine(transform);
+    }
+    return normalizeCloudComponentTransform(
+        transform
+    ) as Babelfont.DecomposedAffine;
+}
+
 /**
  * Serialize a local sparse font directly from `fontc-worker`'s complete
  * resident `FONT_CACHE`, avoiding any main-thread full-font JSON build.
@@ -312,9 +331,7 @@ export async function serializeCachedLocalFontForSourceSave(
     if (extension === 'glyphs') {
         return callSourceWasmOp('save_cached_font_as_glyphs', []);
     }
-    throw new Error(
-        `Cannot save ${path} in its original format: source saving supports .babelfont, .glyphs, .glyphspackage, .ufo and .designspace sources. Use Save As to save it in one of those.`
-    );
+    throw unsupportedSourceSaveError(path);
 }
 
 export async function serializeFontForSourceSave(
@@ -340,9 +357,7 @@ export async function serializeFontForSourceSave(
         ]);
     }
 
-    throw new Error(
-        `Cannot save ${path} in its original format: source saving supports .babelfont, .glyphs, .glyphspackage, .ufo and .designspace sources. Use Save As to save it in one of those.`
-    );
+    throw unsupportedSourceSaveError(path);
 }
 
 /**
@@ -385,21 +400,6 @@ export async function serializeFolderSourceEntries(
         return null;
     }
     return result;
-}
-
-/** Runs `task` over `items`, `concurrency` at a time. */
-async function forEachConcurrently<T>(
-    items: T[],
-    concurrency: number,
-    task: (item: T) => Promise<void>
-): Promise<void> {
-    let next = 0;
-    const worker = async (): Promise<void> => {
-        while (next < items.length) {
-            await task(items[next++]);
-        }
-    };
-    await Promise.all(Array.from({ length: concurrency }, worker));
 }
 
 /** The file's bytes, or null when it no longer exists or is a directory. */
@@ -833,45 +833,7 @@ class OpenedFont {
     private normalizeComponentTransformForRust(
         transform: unknown
     ): Babelfont.DecomposedAffine {
-        if (Array.isArray(transform)) {
-            return DecomposedAffineTransform.fromAffine(transform);
-        }
-
-        const identity = DecomposedAffineTransform.identity();
-        if (!transform || typeof transform !== 'object') {
-            return identity;
-        }
-
-        const record = transform as Record<string, unknown>;
-        const translation = Array.isArray(record.translation)
-            ? [
-                  Number(record.translation[0]) || 0,
-                  Number(record.translation[1]) || 0
-              ]
-            : [0, 0];
-        const scale = Array.isArray(record.scale)
-            ? [Number(record.scale[0]) || 1, Number(record.scale[1]) || 1]
-            : [1, 1];
-        const rawSkew = Array.isArray(record.skew)
-            ? record.skew
-            : [record.skew ?? 0, 0];
-        const skew = [Number(rawSkew[0]) || 0, Number(rawSkew[1]) || 0] as [
-            number,
-            number
-        ];
-        const rotation = Number(record.rotation) || 0;
-        const order =
-            record.order === 'Glyphs' || record.order === 'RestOfTheWorld'
-                ? (record.order as Babelfont.TransformOrder)
-                : identity.order;
-
-        return {
-            translation: translation as [number, number],
-            scale: scale as [number, number],
-            rotation,
-            skew,
-            order
-        };
+        return normalizeComponentTransformForRust(transform);
     }
 
     /**
@@ -1170,7 +1132,7 @@ class OpenedFont {
         const changed = Object.entries(entries.files).filter(
             ([path, text]) => !state.isUnchanged(path, text)
         );
-        await forEachConcurrently(
+        await mapPool(
             changed,
             FOLDER_WRITE_CONCURRENCY,
             async ([relativePath, text]) => {
@@ -4290,45 +4252,7 @@ class FontManager {
     private normalizeComponentTransformForRust(
         transform: unknown
     ): Babelfont.DecomposedAffine {
-        if (Array.isArray(transform)) {
-            return DecomposedAffineTransform.fromAffine(transform);
-        }
-
-        const identity = DecomposedAffineTransform.identity();
-        if (!transform || typeof transform !== 'object') {
-            return identity;
-        }
-
-        const record = transform as Record<string, unknown>;
-        const translation = Array.isArray(record.translation)
-            ? [
-                  Number(record.translation[0]) || 0,
-                  Number(record.translation[1]) || 0
-              ]
-            : [0, 0];
-        const scale = Array.isArray(record.scale)
-            ? [Number(record.scale[0]) || 1, Number(record.scale[1]) || 1]
-            : [1, 1];
-        const rawSkew = Array.isArray(record.skew)
-            ? record.skew
-            : [record.skew ?? 0, 0];
-        const skew = [Number(rawSkew[0]) || 0, Number(rawSkew[1]) || 0] as [
-            number,
-            number
-        ];
-        const rotation = Number(record.rotation) || 0;
-        const order =
-            record.order === 'Glyphs' || record.order === 'RestOfTheWorld'
-                ? (record.order as Babelfont.TransformOrder)
-                : identity.order;
-
-        return {
-            translation: translation as [number, number],
-            scale: scale as [number, number],
-            rotation,
-            skew,
-            order
-        };
+        return normalizeComponentTransformForRust(transform);
     }
 
     private normalizeShapeForRust(shape: any): any {

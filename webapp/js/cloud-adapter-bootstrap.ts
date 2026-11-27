@@ -179,6 +179,73 @@ export function checkpointLogIdFromHeaders(headers: Headers): number | null {
 }
 
 /**
+ * Fetch a shard `/state` response with retry on transient transport/room errors.
+ * Throws `CloudRefusalError` on terminal room refusals and `CloudRoomHttpError`
+ * on non-OK HTTP responses (other than 404, which is returned to the caller).
+ */
+export async function fetchCloudShardStateResponse(options: {
+    url: string;
+    token: string;
+    documentId: string;
+    errorPrefix: string;
+    signal?: AbortSignal;
+    cache?: RequestCache;
+    accept?: string;
+}): Promise<Response> {
+    // A state the room is rebuilding or just replaced (503
+    // `state_unavailable`, `state_superseded`) is asked for again;
+    // `broken_journal` (500) is final.
+    const headers: Record<string, string> = {
+        Authorization: `Bearer ${options.token}`
+    };
+    if (options.accept) {
+        headers.Accept = options.accept;
+    }
+    for (let attempt = 0; ; attempt += 1) {
+        try {
+            const response = await fetch(options.url, {
+                ...(options.cache ? { cache: options.cache } : {}),
+                headers,
+                ...(options.signal ? { signal: options.signal } : {})
+            });
+            if (response.ok || response.status === 404) {
+                return response;
+            }
+            const body = await readRoomErrorBody(response);
+            const refusal = cloudRefusalFromBody(
+                options.documentId,
+                body,
+                undefined
+            );
+            if (refusal) {
+                throw refusal;
+            }
+            throw new CloudRoomHttpError(
+                `${options.errorPrefix}: ${response.status}${typeof body?.code === 'string' ? ` ${body.code}` : ''}`,
+                {
+                    status: response.status,
+                    code: body?.code,
+                    retryable: body?.retryable
+                }
+            );
+        } catch (error) {
+            if (
+                !shouldRetryHydrateTransport(
+                    error,
+                    options.signal?.aborted === true,
+                    attempt
+                )
+            ) {
+                throw error;
+            }
+            await new Promise((resolve) =>
+                setTimeout(resolve, 100 * 2 ** attempt)
+            );
+        }
+    }
+}
+
+/**
  * Like `fetchCloudDocumentState`, with the log id the state holds every row
  * through (`X-Checkpoint-Log-Id`), or null when the room named none.
  */
@@ -195,48 +262,14 @@ export async function fetchCloudDocumentStateWithLogId(options: {
         options.assetId,
         options.documentId
     );
-    // A state the room is rebuilding or just replaced (503
-    // `state_unavailable`, `state_superseded`) is asked for again;
-    // `broken_journal` (500) is final.
-    let response: Response;
-    for (let attempt = 0; ; attempt += 1) {
-        try {
-            response = await fetch(url, {
-                cache: 'no-store',
-                headers: {
-                    Authorization: `Bearer ${options.token}`,
-                    Accept: 'application/octet-stream'
-                }
-            });
-            if (response.ok || response.status === 404) {
-                break;
-            }
-            const body = await readRoomErrorBody(response);
-            const refusal = cloudRefusalFromBody(
-                options.documentId,
-                body,
-                undefined
-            );
-            if (refusal) {
-                throw refusal;
-            }
-            throw new CloudRoomHttpError(
-                `loading ${options.documentId} failed: ${response.status}${typeof body?.code === 'string' ? ` ${body.code}` : ''}`,
-                {
-                    status: response.status,
-                    code: body?.code,
-                    retryable: body?.retryable
-                }
-            );
-        } catch (error) {
-            if (!shouldRetryHydrateTransport(error, false, attempt)) {
-                throw error;
-            }
-            await new Promise((resolve) =>
-                setTimeout(resolve, 100 * 2 ** attempt)
-            );
-        }
-    }
+    const response = await fetchCloudShardStateResponse({
+        url,
+        token: options.token,
+        documentId: options.documentId,
+        errorPrefix: `loading ${options.documentId} failed`,
+        cache: 'no-store',
+        accept: 'application/octet-stream'
+    });
     if (response.status === 404) {
         return null;
     }

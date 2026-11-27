@@ -158,49 +158,43 @@ pub fn get_stylistic_set_names(font_bytes: &[u8]) -> Result<String, JsValue> {
 ///
 /// # Returns
 /// * `String` - JSON object mapping feature tags to array of table names
+fn collect_font_feature_tables(font: &FontRef<'_>) -> HashMap<String, Vec<&'static str>> {
+    let mut features: HashMap<String, HashSet<&'static str>> = HashMap::new();
+    if let Ok(gsub) = font.gsub() {
+        if let Ok(feature_list) = gsub.feature_list() {
+            for record in feature_list.feature_records().iter() {
+                features
+                    .entry(record.feature_tag().to_string())
+                    .or_default()
+                    .insert("GSUB");
+            }
+        }
+    }
+    if let Ok(gpos) = font.gpos() {
+        if let Ok(feature_list) = gpos.feature_list() {
+            for record in feature_list.feature_records().iter() {
+                features
+                    .entry(record.feature_tag().to_string())
+                    .or_default()
+                    .insert("GPOS");
+            }
+        }
+    }
+    features
+        .into_iter()
+        .map(|(tag, tables)| {
+            let mut tables_vec: Vec<&'static str> = tables.into_iter().collect();
+            tables_vec.sort();
+            (tag, tables_vec)
+        })
+        .collect()
+}
+
 #[wasm_bindgen]
 pub fn get_font_features_with_tables(font_bytes: &[u8]) -> Result<String, JsValue> {
     let font = FontRef::new(font_bytes)
         .map_err(|e| JsValue::from_str(&format!("Failed to parse font: {:?}", e)))?;
-
-    let mut features: HashMap<String, HashSet<String>> = HashMap::new();
-
-    // Collect features from GSUB table
-    if let Ok(gsub) = font.gsub() {
-        if let Ok(feature_list) = gsub.feature_list() {
-            for record in feature_list.feature_records().iter() {
-                let tag = record.feature_tag().to_string();
-                features
-                    .entry(tag)
-                    .or_insert_with(HashSet::new)
-                    .insert("GSUB".to_string());
-            }
-        }
-    }
-
-    // Collect features from GPOS table
-    if let Ok(gpos) = font.gpos() {
-        if let Ok(feature_list) = gpos.feature_list() {
-            for record in feature_list.feature_records().iter() {
-                let tag = record.feature_tag().to_string();
-                features
-                    .entry(tag)
-                    .or_insert_with(HashSet::new)
-                    .insert("GPOS".to_string());
-            }
-        }
-    }
-
-    // Convert HashSets to sorted Vecs for JSON output
-    let features_with_tables: HashMap<String, Vec<String>> = features
-        .into_iter()
-        .map(|(tag, tables)| {
-            let mut tables_vec: Vec<String> = tables.into_iter().collect();
-            tables_vec.sort();
-            (tag, tables_vec)
-        })
-        .collect();
-
+    let features_with_tables = collect_font_feature_tables(&font);
     serde_json::to_string(&features_with_tables)
         .map_err(|e| JsValue::from_str(&format!("Failed to serialize features: {}", e)))
 }
@@ -221,31 +215,8 @@ pub fn get_font_features_with_tables(font_bytes: &[u8]) -> Result<String, JsValu
 pub fn get_font_features(font_bytes: &[u8]) -> Result<String, JsValue> {
     let font = FontRef::new(font_bytes)
         .map_err(|e| JsValue::from_str(&format!("Failed to parse font: {:?}", e)))?;
-
-    let mut features: HashSet<String> = HashSet::new();
-
-    // Collect features from GSUB table
-    if let Ok(gsub) = font.gsub() {
-        if let Ok(feature_list) = gsub.feature_list() {
-            for record in feature_list.feature_records().iter() {
-                features.insert(record.feature_tag().to_string());
-            }
-        }
-    }
-
-    // Collect features from GPOS table
-    if let Ok(gpos) = font.gpos() {
-        if let Ok(feature_list) = gpos.feature_list() {
-            for record in feature_list.feature_records().iter() {
-                features.insert(record.feature_tag().to_string());
-            }
-        }
-    }
-
-    // Convert to sorted vector for consistent ordering
-    let mut features_vec: Vec<String> = features.into_iter().collect();
+    let mut features_vec: Vec<String> = collect_font_feature_tables(&font).into_keys().collect();
     features_vec.sort();
-
     serde_json::to_string(&features_vec)
         .map_err(|e| JsValue::from_str(&format!("Failed to serialize features: {}", e)))
 }

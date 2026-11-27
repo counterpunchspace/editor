@@ -11,12 +11,17 @@
 
 import { Logger } from './logger';
 import { fontCompilation, type OpenFontSparseResult } from './font-compilation';
-import type { GlyphCatalogEntry } from './filesystem-plugins/cloud-glyph-catalog';
+import {
+    indexGlyphCodepoints,
+    normalizeGlyphCodepoints,
+    type GlyphCatalogEntry
+} from './filesystem-plugins/cloud-glyph-catalog';
 import {
     type FontDepEdgeKind,
     type FontDepsIndex
 } from './filesystem-plugins/cloud-font-deps';
 import { glyphDocumentId } from './filesystem-plugins/cloud-document-set';
+import { generateStableId } from './drawing-geometry-ydoc';
 
 type FontDepsRelation = FontDepEdgeKind;
 
@@ -108,14 +113,8 @@ export function sanitizeGlyphEmptyReferenceComponents(
     return glyph;
 }
 
-function generateLocalGlyphId(index: number): string {
-    if (
-        typeof crypto !== 'undefined' &&
-        typeof crypto.randomUUID === 'function'
-    ) {
-        return crypto.randomUUID();
-    }
-    return `local-glyph-${index}-${Math.random().toString(36).slice(2, 10)}`;
+function generateLocalGlyphId(_index: number): string {
+    return generateStableId();
 }
 
 /**
@@ -143,18 +142,8 @@ export function buildLocalSparseBootstrap(
         const glyphId = generateLocalGlyphId(i);
         glyphIdByName.set(entry.name, glyphId);
         glyphNameById.set(glyphId, entry.name);
-        const codepoints = Array.isArray(entry.codepoints)
-            ? entry.codepoints.filter(
-                  (cp): cp is number =>
-                      typeof cp === 'number' && Number.isFinite(cp)
-              )
-            : [];
-        for (const cp of codepoints) {
-            const key = String(cp);
-            const list = codepointIndex[key] ?? [];
-            list.push(glyphId);
-            codepointIndex[key] = list;
-        }
+        const codepoints = normalizeGlyphCodepoints(entry.codepoints);
+        indexGlyphCodepoints(codepointIndex, glyphId, codepoints);
         glyphCatalog[glyphId] = {
             glyphId,
             name: entry.name,

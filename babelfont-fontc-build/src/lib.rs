@@ -3587,36 +3587,21 @@ fn try_fast_patch_compiled_ttf(
 /// Compile a font that has ALREADY passed `apply_filter_pipeline_owned`,
 /// skipping the duplicate 8-filter + `RetainGlyphs`/FEA re-parse inside
 /// `BabelfontIrSource::compile` whenever no rare post-compile table is needed.
-fn compile_filtered_with_feature_debug_context(
-    mut font: babelfont::Font,
-    options: &CompilationOptions,
-    context: &str,
-) -> Result<Vec<u8>, JsValue> {
+fn prepare_features_for_compile(font: &mut babelfont::Font, options: &CompilationOptions) {
     if options.skip_features {
         font.features = babelfont::Features::default();
-        drop_unresolved_components(&mut font);
+        drop_unresolved_components(font);
     } else {
-        apply_compile_feature_overlay(&mut font);
+        apply_compile_feature_overlay(font);
     }
-    if can_compile_already_filtered(&font, options) {
-        let features = font.features.clone();
-        let source = BabelfontIrSource::new(font, options.clone());
-        return match fontc::generate_font(Box::new(source), fontc::Options::default())
-            .map_err(convert_fontc_error)
-        {
-            Ok(compiled) => Ok(zero_head_timestamps(compiled)),
-            Err(err) => Err(feature_debug_error_from_babelfont_error(
-                "Compilation failed",
-                &err,
-                &features.to_fea(),
-                context,
-            )),
-        };
-    }
-    // Rare post-compile tables (avar2, cmap14, symbol_cmap, VARC smart composites):
-    // delegate to BabelfontIrSource::compile.
-    let features = font.features.clone();
-    match BabelfontIrSource::compile(font, options.clone()) {
+}
+
+fn finalize_compile_result(
+    result: Result<Vec<u8>, BabelfontError>,
+    features: &babelfont::Features,
+    context: &str,
+) -> Result<Vec<u8>, JsValue> {
+    match result {
         Ok(compiled) => Ok(zero_head_timestamps(compiled)),
         Err(err) => Err(feature_debug_error_from_babelfont_error(
             "Compilation failed",
@@ -3627,28 +3612,35 @@ fn compile_filtered_with_feature_debug_context(
     }
 }
 
+fn compile_filtered_with_feature_debug_context(
+    mut font: babelfont::Font,
+    options: &CompilationOptions,
+    context: &str,
+) -> Result<Vec<u8>, JsValue> {
+    prepare_features_for_compile(&mut font, options);
+    let features = font.features.clone();
+    let result = if can_compile_already_filtered(&font, options) {
+        let source = BabelfontIrSource::new(font, options.clone());
+        fontc::generate_font(Box::new(source), fontc::Options::default())
+            .map_err(convert_fontc_error)
+    } else {
+        // Rare post-compile tables (avar2, cmap14, symbol_cmap, VARC smart composites):
+        // delegate to BabelfontIrSource::compile.
+        BabelfontIrSource::compile(font, options.clone())
+    };
+    finalize_compile_result(result, &features, context)
+}
+
 fn compile_with_feature_debug_context(
     mut font: babelfont::Font,
     options: &CompilationOptions,
     context: &str,
 ) -> Result<Vec<u8>, JsValue> {
-    if options.skip_features {
-        font.features = babelfont::Features::default();
-        drop_unresolved_components(&mut font);
-    } else {
-        apply_compile_feature_overlay(&mut font);
-    }
+    prepare_features_for_compile(&mut font, options);
     // Kept to explain a failure; the font itself moves into the compiler.
     let features = font.features.clone();
-    match BabelfontIrSource::compile(font, options.clone()) {
-        Ok(compiled) => Ok(zero_head_timestamps(compiled)),
-        Err(err) => Err(feature_debug_error_from_babelfont_error(
-            "Compilation failed",
-            &err,
-            &features.to_fea(),
-            context,
-        )),
-    }
+    let result = BabelfontIrSource::compile(font, options.clone());
+    finalize_compile_result(result, &features, context)
 }
 
 /// OpenType checksum: the sum of big-endian u32 words, zero-padded.
@@ -4111,6 +4103,19 @@ fn compute_layout_closure_cached_internal(
 ///
 /// # Returns
 /// * `Vec<u8>` - Compiled TTF font bytes
+fn extract_subset_glyphs_option(options: &JsValue) -> Option<Vec<String>> {
+    if options.is_undefined() || options.is_null() {
+        return None;
+    }
+    let subset_val = js_sys::Reflect::get(options, &JsValue::from_str("subset_glyphs")).ok()?;
+    if subset_val.is_undefined() || subset_val.is_null() {
+        return None;
+    }
+    let array = subset_val.dyn_into::<js_sys::Array>().ok()?;
+    let subset_glyphs: Vec<String> = array.iter().filter_map(|v| v.as_string()).collect();
+    (!subset_glyphs.is_empty()).then_some(subset_glyphs)
+}
+
 #[wasm_bindgen]
 pub fn compile_babelfont(babelfont_json: &str, options: &JsValue) -> Result<Vec<u8>, JsValue> {
     let _compile_span = PerfSpan::start("compile_babelfont.total");
@@ -4124,28 +4129,17 @@ pub fn compile_babelfont(babelfont_json: &str, options: &JsValue) -> Result<Vec<
 
     // Handle subset_glyphs option if present
     let _subset_span = PerfSpan::start("compile_babelfont.extract_subset_options");
-    if !options.is_undefined() && !options.is_null() {
-        if let Ok(subset_val) = js_sys::Reflect::get(options, &JsValue::from_str("subset_glyphs")) {
-            if !subset_val.is_undefined() && !subset_val.is_null() {
-                if let Ok(array) = subset_val.dyn_into::<js_sys::Array>() {
-                    let subset_glyphs: Vec<String> =
-                        array.iter().filter_map(|v| v.as_string()).collect();
-
-                    if !subset_glyphs.is_empty() {
-                        let _retain_span = PerfSpan::start("compile_babelfont.retain_glyphs");
-                        let real_names: HashSet<SmolStr> =
-                            font.glyphs.iter().map(|glyph| glyph.name.clone()).collect();
-                        prepare_font_for_layout_subset(&mut font, Some(&json_value));
-                        let subsetter = babelfont::filters::RetainGlyphs::new(subset_glyphs);
-                        subsetter.apply(&mut font).map_err(|e| {
-                            JsValue::from_str(&format!("Subsetting failed: {:?}", e))
-                        })?;
-                        drop_fea_parse_stub_glyphs(&mut font, &real_names);
-                        drop(_retain_span);
-                    }
-                }
-            }
-        }
+    if let Some(subset_glyphs) = extract_subset_glyphs_option(options) {
+        let _retain_span = PerfSpan::start("compile_babelfont.retain_glyphs");
+        let real_names: HashSet<SmolStr> =
+            font.glyphs.iter().map(|glyph| glyph.name.clone()).collect();
+        prepare_font_for_layout_subset(&mut font, Some(&json_value));
+        let subsetter = babelfont::filters::RetainGlyphs::new(subset_glyphs);
+        subsetter
+            .apply(&mut font)
+            .map_err(|e| JsValue::from_str(&format!("Subsetting failed: {:?}", e)))?;
+        drop_fea_parse_stub_glyphs(&mut font, &real_names);
+        drop(_retain_span);
     }
     drop(_subset_span);
 
@@ -5525,6 +5519,63 @@ pub fn seed_ydoc_document(document_id: &str, state_update: &[u8]) -> Result<(), 
     Ok(())
 }
 
+fn deserialize_glyph_from_shard(
+    glyph_id: &str,
+    name_hint: Option<&str>,
+) -> Result<Option<babelfont::Glyph>, JsValue> {
+    let maybe_glyph = with_glyph_doc_readonly(glyph_id, |glyph_doc| {
+        let glyph_txn = glyph_doc.transact();
+        let Some(glyph_map) = named_glyph_map(&glyph_txn) else {
+            return Ok(None);
+        };
+        let owned_name;
+        let name = match name_hint {
+            Some(n) => n,
+            None => match glyph_map.get(&glyph_txn, "name") {
+                Some(yrs::types::Value::Any(yrs::Any::String(n))) => {
+                    owned_name = n.to_string();
+                    owned_name.as_str()
+                }
+                _ => return Ok(None),
+            },
+        };
+        let glyph_json = ydoc_glyph_to_json(name, &glyph_map, &glyph_txn)?;
+        let glyph: babelfont::Glyph = serde_json::from_value(glyph_json)
+            .map_err(|error| format!("glyph {}: {}", name, error))?;
+        Ok(Some(glyph))
+    })
+    .map_err(|error| JsValue::from_str(&error))?;
+    Ok(maybe_glyph.flatten())
+}
+
+fn install_font_and_feature_caches(font: babelfont::Font) {
+    let fea = font.features.to_fea();
+    let font_glyphs: Vec<String> = font.glyphs.iter().map(|g| g.name.to_string()).collect();
+    let font_glyphs_ref: Vec<&str> = font_glyphs.iter().map(|s| s.as_str()).collect();
+    let new_feature_file =
+        FeatureFile::new_from_fea(&fea, Some(&font_glyphs_ref), font.source.clone()).ok();
+
+    *FONT_CACHE.lock().unwrap() = Some(Arc::new(font));
+    *FEATURE_FILE_CACHE.lock().unwrap() = new_feature_file;
+    *FEATURE_FEA_STRING_CACHE.lock().unwrap() = Some((fea, font_glyphs));
+    *GSUB_CLOSURE_GRAPH_CACHE.lock().unwrap() = None;
+    invalidate_last_compiled_ttf();
+
+    let next_epoch = FONT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed) + 1;
+    FONT_CACHE_BUILT_AT_EPOCH.store(next_epoch, Ordering::Relaxed);
+    SUBSET_FONT_CACHE_BUILT_AT_EPOCH.store(0, Ordering::Relaxed);
+    FILTER_EPOCH.fetch_add(1, Ordering::Relaxed);
+}
+
+fn invalidate_feature_and_closure_caches() {
+    *FEATURE_FILE_CACHE.lock().unwrap() = None;
+    *FEATURE_FEA_STRING_CACHE.lock().unwrap() = None;
+    *GSUB_CLOSURE_GRAPH_CACHE.lock().unwrap() = None;
+    invalidate_last_compiled_ttf();
+    LAYOUT_CLOSURE_CACHE.lock().unwrap().clear();
+    *LAST_LAYOUT_CLOSURE_CACHE_KEY.lock().unwrap() = None;
+}
+
 /// Stream a `babelfont::Font` directly from `Y_DOC` + dormant/live glyph shards
 /// one glyph at a time, without materializing a full-font `serde_json::Value` tree.
 fn stream_native_font_from_ydoc_set() -> Result<babelfont::Font, JsValue> {
@@ -5576,18 +5627,7 @@ fn stream_native_font_from_ydoc_set_with_txn<T: ReadTxn>(
         let Some(glyph_id) = id_by_name.get(&name) else {
             continue;
         };
-        let maybe_glyph = with_glyph_doc_readonly(glyph_id, |glyph_doc| {
-            let glyph_txn = glyph_doc.transact();
-            let Some(glyph_map) = named_glyph_map(&glyph_txn) else {
-                return Ok(None);
-            };
-            let glyph_json = ydoc_glyph_to_json(&name, &glyph_map, &glyph_txn)?;
-            let glyph: babelfont::Glyph = serde_json::from_value(glyph_json)
-                .map_err(|error| format!("glyph {}: {}", name, error))?;
-            Ok(Some(glyph))
-        })
-        .map_err(|error| JsValue::from_str(&error))?;
-        if let Some(Some(glyph)) = maybe_glyph {
+        if let Some(glyph) = deserialize_glyph_from_shard(glyph_id, Some(&name))? {
             font.glyphs.push(glyph);
         }
     }
@@ -5602,25 +5642,11 @@ fn install_native_font_cache(font: babelfont::Font) {
         .enumerate()
         .map(|(idx, g)| (g.name.to_string(), idx))
         .collect();
-    let fea = font.features.to_fea();
-    let font_glyphs: Vec<String> = font.glyphs.iter().map(|g| g.name.to_string()).collect();
-    let font_glyphs_ref: Vec<&str> = font_glyphs.iter().map(|s| s.as_str()).collect();
-    let new_feature_file =
-        FeatureFile::new_from_fea(&fea, Some(&font_glyphs_ref), font.source.clone()).ok();
 
     *CANONICAL_JSON_CACHE.lock().unwrap() = None;
     *CANONICAL_GLYPH_INDEX_CACHE.lock().unwrap() = Some(glyph_index);
     reset_debug_font_caches_with_fingerprint(Some(next_canonical_fingerprint()));
-    *FONT_CACHE.lock().unwrap() = Some(Arc::new(font));
-    *FEATURE_FILE_CACHE.lock().unwrap() = new_feature_file;
-    *FEATURE_FEA_STRING_CACHE.lock().unwrap() = Some((fea, font_glyphs));
-    *GSUB_CLOSURE_GRAPH_CACHE.lock().unwrap() = None;
-    invalidate_last_compiled_ttf();
-
-    let next_epoch = FONT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed) + 1;
-    FONT_CACHE_BUILT_AT_EPOCH.store(next_epoch, Ordering::Relaxed);
-    SUBSET_FONT_CACHE_BUILT_AT_EPOCH.store(0, Ordering::Relaxed);
-    FILTER_EPOCH.fetch_add(1, Ordering::Relaxed);
+    install_font_and_feature_caches(font);
 }
 
 /// Drop all derived caches (subset, filtered, feature, GSUB closure, compiled TTF,
@@ -5750,19 +5776,9 @@ pub fn merge_ydoc_set_into_font_cache() -> Result<(), JsValue> {
             continue;
         }
         if let Some(glyph_id) = id_by_name.get(&name) {
-            let maybe_glyph = with_glyph_doc_readonly(glyph_id, |glyph_doc| {
-                let glyph_txn = glyph_doc.transact();
-                let Some(glyph_map) = named_glyph_map(&glyph_txn) else {
-                    return Ok(None);
-                };
-                let glyph_json = ydoc_glyph_to_json(&name, &glyph_map, &glyph_txn)?;
-                let glyph: babelfont::Glyph = serde_json::from_value(glyph_json)
-                    .map_err(|error| format!("glyph {}: {}", name, error))?;
-                Ok(Some(glyph))
-            })
-            .map_err(|error| JsValue::from_str(&error))?;
+            let maybe_glyph = deserialize_glyph_from_shard(glyph_id, Some(&name))?;
             untouched_by_name.remove(&name);
-            if let Some(Some(glyph)) = maybe_glyph {
+            if let Some(glyph) = maybe_glyph {
                 merged_font.glyphs.push(glyph);
             }
         } else if let Some(glyph) = untouched_by_name.remove(&name) {
@@ -5802,23 +5818,7 @@ pub fn patch_seeded_glyph_shards_into_font_cache(glyph_ids_json: &str) -> Result
 
     let mut touched_names: Vec<String> = Vec::with_capacity(glyph_ids.len());
     for glyph_id in &glyph_ids {
-        let maybe_glyph = with_glyph_doc_readonly(glyph_id, |glyph_doc| {
-            let glyph_txn = glyph_doc.transact();
-            let Some(glyph_map) = named_glyph_map(&glyph_txn) else {
-                return Ok(None);
-            };
-            let name = match glyph_map.get(&glyph_txn, "name") {
-                Some(yrs::types::Value::Any(yrs::Any::String(n))) => n.to_string(),
-                _ => return Ok(None),
-            };
-            let glyph_json = ydoc_glyph_to_json(&name, &glyph_map, &glyph_txn)?;
-            let glyph: babelfont::Glyph = serde_json::from_value(glyph_json)
-                .map_err(|error| format!("glyph {}: {}", name, error))?;
-            Ok(Some(glyph))
-        })
-        .map_err(|error| JsValue::from_str(&error))?;
-
-        if let Some(Some(glyph)) = maybe_glyph {
+        if let Some(glyph) = deserialize_glyph_from_shard(glyph_id, None)? {
             let name = glyph.name.to_string();
             touched_names.push(name.clone());
             // Keep SUBSET_FONT_CACHE coherent in-place if this glyph is in the
@@ -6328,6 +6328,33 @@ fn refresh_kerning_related_caches_from_ydoc<T: ReadTxn>(
     Ok(())
 }
 
+fn deserialize_optional_or_default<T: DeserializeOwned + Default>(
+    value: Option<&serde_json::Value>,
+) -> Option<T> {
+    match value {
+        Some(val) => deserialize_json(val).ok(),
+        None => Some(T::default()),
+    }
+}
+
+fn apply_kerning_fields_to_native_font(
+    font: &mut babelfont::Font,
+    refresh_master_kerning: bool,
+    refresh_kern_groups: bool,
+    format_specific_json: Option<&serde_json::Value>,
+    first_kern_groups_json: Option<&serde_json::Value>,
+    second_kern_groups_json: Option<&serde_json::Value>,
+) -> Option<()> {
+    if refresh_master_kerning {
+        font.format_specific = deserialize_optional_or_default(format_specific_json)?;
+    }
+    if refresh_kern_groups {
+        font.first_kern_groups = deserialize_optional_or_default(first_kern_groups_json)?;
+        font.second_kern_groups = deserialize_optional_or_default(second_kern_groups_json)?;
+    }
+    Some(())
+}
+
 /// Copy the kerning-related fields of the canonical JSON into the native font,
 /// deserialized exactly as a full rebuild would (each is a plain
 /// `#[serde(default)]` field of `babelfont::Font`).
@@ -6335,35 +6362,23 @@ fn patch_native_font_kerning_from_canonical(
     refresh_master_kerning: bool,
     refresh_kern_groups: bool,
 ) -> Option<()> {
-    fn field<T: DeserializeOwned + Default>(canonical: &serde_json::Value, key: &str) -> Option<T> {
-        match canonical.get(key) {
-            Some(value) => deserialize_json(value).ok(),
-            None => Some(T::default()),
-        }
-    }
     let (masters, format_specific, first_kern_groups, second_kern_groups) = {
         let canonical_lock = CANONICAL_JSON_CACHE.lock().unwrap();
         let canonical = canonical_lock.as_ref()?;
         let masters = if refresh_master_kerning {
-            Some(field(canonical, "masters")?)
+            Some(deserialize_optional_or_default(canonical.get("masters"))?)
         } else {
             None
         };
-        let format_specific = if refresh_master_kerning {
-            Some(field(canonical, "format_specific")?)
-        } else {
-            None
-        };
-        let first = if refresh_kern_groups {
-            Some(field(canonical, "first_kern_groups")?)
-        } else {
-            None
-        };
-        let second = if refresh_kern_groups {
-            Some(field(canonical, "second_kern_groups")?)
-        } else {
-            None
-        };
+        let format_specific = refresh_master_kerning
+            .then(|| canonical.get("format_specific").cloned())
+            .flatten();
+        let first = refresh_kern_groups
+            .then(|| canonical.get("first_kern_groups").cloned())
+            .flatten();
+        let second = refresh_kern_groups
+            .then(|| canonical.get("second_kern_groups").cloned())
+            .flatten();
         (masters, format_specific, first, second)
     };
     let mut font_lock = FONT_CACHE.lock().unwrap();
@@ -6371,16 +6386,14 @@ fn patch_native_font_kerning_from_canonical(
     if let Some(masters) = masters {
         font.masters = masters;
     }
-    if let Some(format_specific) = format_specific {
-        font.format_specific = format_specific;
-    }
-    if let Some(first) = first_kern_groups {
-        font.first_kern_groups = first;
-    }
-    if let Some(second) = second_kern_groups {
-        font.second_kern_groups = second;
-    }
-    Some(())
+    apply_kerning_fields_to_native_font(
+        font,
+        refresh_master_kerning,
+        refresh_kern_groups,
+        format_specific.as_ref(),
+        first_kern_groups.as_ref(),
+        second_kern_groups.as_ref(),
+    )
 }
 
 fn patch_native_font_kerning_from_json(
@@ -6401,22 +6414,15 @@ fn patch_native_font_kerning_from_json(
                 existing.kerning_rtl = incoming.kerning_rtl;
             }
         }
-        font.format_specific = match format_specific_json {
-            Some(val) => deserialize_json(val).ok()?,
-            None => Default::default(),
-        };
     }
-    if refresh_kern_groups {
-        font.first_kern_groups = match first_kern_groups_json {
-            Some(val) => deserialize_json(val).ok()?,
-            None => Default::default(),
-        };
-        font.second_kern_groups = match second_kern_groups_json {
-            Some(val) => deserialize_json(val).ok()?,
-            None => Default::default(),
-        };
-    }
-    Some(())
+    apply_kerning_fields_to_native_font(
+        font,
+        refresh_master_kerning,
+        refresh_kern_groups,
+        format_specific_json,
+        first_kern_groups_json,
+        second_kern_groups_json,
+    )
 }
 
 fn refresh_top_level_caches_from_ydoc<T: ReadTxn>(txn: &T, keys: &[&str]) -> Result<(), JsValue> {
@@ -6463,13 +6469,7 @@ fn refresh_top_level_caches_from_ydoc<T: ReadTxn>(txn: &T, keys: &[&str]) -> Res
     }
     *SUBSET_FONT_CACHE.lock().unwrap() = None;
     *FILTERED_FONT_CACHE.lock().unwrap() = None;
-    invalidate_last_compiled_ttf();
-    *FEATURE_FILE_CACHE.lock().unwrap() = None;
-    *FEATURE_FEA_STRING_CACHE.lock().unwrap() = None;
-    *GSUB_CLOSURE_GRAPH_CACHE.lock().unwrap() = None;
-    invalidate_last_compiled_ttf();
-    LAYOUT_CLOSURE_CACHE.lock().unwrap().clear();
-    *LAST_LAYOUT_CLOSURE_CACHE_KEY.lock().unwrap() = None;
+    invalidate_feature_and_closure_caches();
 
     FONT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed);
     FONT_CACHE_BUILT_AT_EPOCH.store(0, Ordering::Relaxed);
@@ -6519,12 +6519,7 @@ fn refresh_feature_related_caches_from_ydoc<T: ReadTxn>(txn: &T) -> Result<(), J
     // its feature payload with the full source reintroduces references to
     // glyphs outside that subset, so rebuild it from canonical state instead.
     clear_active_subset_caches_for_closure_invalidation();
-    *FEATURE_FILE_CACHE.lock().unwrap() = None;
-    *FEATURE_FEA_STRING_CACHE.lock().unwrap() = None;
-    *GSUB_CLOSURE_GRAPH_CACHE.lock().unwrap() = None;
-    invalidate_last_compiled_ttf();
-    LAYOUT_CLOSURE_CACHE.lock().unwrap().clear();
-    *LAST_LAYOUT_CLOSURE_CACHE_KEY.lock().unwrap() = None;
+    invalidate_feature_and_closure_caches();
 
     let next_epoch = FONT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed) + 1;
     FONT_CACHE_BUILT_AT_EPOCH.store(
@@ -6604,22 +6599,7 @@ fn store_font_from_value(mut json_value: serde_json::Value) -> Result<(), JsValu
 
     // Build FeatureFile before acquiring FONT_CACHE lock to avoid re-entrant lock
     let _feature_span = PerfSpan::start("store_font_from_value.feature_file");
-    let fea = font.features.to_fea();
-    let font_glyphs: Vec<String> = font.glyphs.iter().map(|g| g.name.to_string()).collect();
-    let font_glyphs_ref: Vec<&str> = font_glyphs.iter().map(|s| s.as_str()).collect();
-    let new_feature_file =
-        FeatureFile::new_from_fea(&fea, Some(&font_glyphs_ref), font.source.clone()).ok();
-
-    *FONT_CACHE.lock().unwrap() = Some(Arc::new(font));
-    *FEATURE_FILE_CACHE.lock().unwrap() = new_feature_file;
-    *FEATURE_FEA_STRING_CACHE.lock().unwrap() = Some((fea, font_glyphs));
-    *GSUB_CLOSURE_GRAPH_CACHE.lock().unwrap() = None;
-    invalidate_last_compiled_ttf();
-
-    let next_epoch = FONT_CACHE_EPOCH.fetch_add(1, Ordering::Relaxed) + 1;
-    FONT_CACHE_BUILT_AT_EPOCH.store(next_epoch, Ordering::Relaxed);
-    SUBSET_FONT_CACHE_BUILT_AT_EPOCH.store(0, Ordering::Relaxed);
-    FILTER_EPOCH.fetch_add(1, Ordering::Relaxed);
+    install_font_and_feature_caches(font);
 
     Ok(())
 }
@@ -9208,6 +9188,75 @@ pub fn prime_debug_layout_closure_cache(glyph_names_json: &str) -> Result<u32, J
     Ok(result.len() as u32)
 }
 
+fn load_primed_closure_subset(
+    cache_key: &str,
+    missing_msg: &str,
+) -> Result<(Vec<String>, String), JsValue> {
+    let closure_subset = LAYOUT_CLOSURE_CACHE
+        .lock()
+        .unwrap()
+        .get(cache_key)
+        .cloned()
+        .ok_or_else(|| JsValue::from_str(missing_msg))?;
+    let prepared_subset_key = canonical_subset_key_from_sorted_unique(&closure_subset);
+    Ok((closure_subset, prepared_subset_key))
+}
+
+enum OverlayCompileOutcome {
+    Patched(Vec<u8>),
+    Filtered(babelfont::Font, Vec<SmolStr>),
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_fast_patch_or_build_filtered_overlay(
+    compile_font: babelfont::Font,
+    prepared_subset_key: &str,
+    current_filter_epoch: u64,
+    current_base_epoch: u64,
+    compilation_options: &CompilationOptions,
+    closure_subset: &[String],
+    overlay_layers: &[(LayerTarget, serde_json::Value)],
+    skip_layers: &HashSet<LayerTarget>,
+    anchors_changed_by_overlay: bool,
+) -> Result<OverlayCompileOutcome, JsValue> {
+    let dirty_glyph_names = collect_overlay_dirty_glyphs(overlay_layers);
+    let current_compile_fp = options_compile_fingerprint(compilation_options);
+    let cached_base_ttf = if anchors_changed_by_overlay {
+        None
+    } else {
+        lookup_patchable_ttf_base(
+            prepared_subset_key,
+            current_base_epoch,
+            current_compile_fp,
+            Some(&dirty_glyph_names),
+        )
+    };
+    if let Some((base_ttf, base_glyph_order)) = cached_base_ttf {
+        if let Some(patched) = try_fast_patch_compiled_ttf(
+            &compile_font,
+            &dirty_glyph_names,
+            compilation_options,
+            &base_ttf,
+            &base_glyph_order,
+        ) {
+            return Ok(OverlayCompileOutcome::Patched(patched));
+        }
+    }
+    let filtered = match try_build_filtered_preview_from_cache(
+        prepared_subset_key,
+        current_filter_epoch,
+        current_base_epoch,
+        compilation_options,
+        closure_subset,
+        overlay_layers,
+        skip_layers,
+    )? {
+        Some(patched_filtered) => patched_filtered,
+        None => apply_filter_pipeline_owned(compile_font, compilation_options, false)?,
+    };
+    Ok(OverlayCompileOutcome::Filtered(filtered, dirty_glyph_names))
+}
+
 /// Compile the transient live-drag preview cached font using the last primed
 /// preview layout closure subset.
 #[wasm_bindgen]
@@ -9229,15 +9278,10 @@ pub fn compile_preview_cached_font_from_last_layout_closure(
             )
         })?
     };
-    let closure_subset = LAYOUT_CLOSURE_CACHE
-        .lock()
-        .unwrap()
-        .get(&cache_key)
-        .cloned()
-        .ok_or_else(|| {
-            JsValue::from_str("Primed preview layout closure key not found in cache.")
-        })?;
-    let prepared_subset_key = canonical_subset_key_from_sorted_unique(&closure_subset);
+    let (closure_subset, prepared_subset_key) = load_primed_closure_subset(
+        &cache_key,
+        "Primed preview layout closure key not found in cache.",
+    )?;
 
     let compilation_options = parse_compilation_options(options);
 
@@ -9326,39 +9370,16 @@ pub fn compile_preview_cached_font_from_last_layout_closure(
             // P2 Fast Path: if we have a cached compiled TTF matching this subset,
             // base epoch, and compile options, try surgical glyf/gvar/hmtx/HVAR patching
             // of ONLY the dirty preview glyphs (reusing GSUB/GPOS/cmap/fvar/STAT verbatim).
-            let dirty_glyph_names = collect_overlay_dirty_glyphs(&overlay_layers);
             let anchors_changed_by_overlay = !kerning_overlay_entries.is_empty()
                 || overlay_layers_change_anchors_in_subset_cache(
                     &prepared_subset_key,
                     &overlay_layers,
                 );
-            let current_compile_fp = options_compile_fingerprint(&compilation_options);
-            let cached_base_ttf = if anchors_changed_by_overlay {
-                None
-            } else {
-                lookup_patchable_ttf_base(
-                    &prepared_subset_key,
-                    current_base_epoch,
-                    current_compile_fp,
-                    Some(&dirty_glyph_names),
-                )
-            };
             // Overlay layers are already physical; bake remaining logical autos.
             let mut compile_font = subset_font;
             bake_automatic_sidebearing_offsets_in_font(&mut compile_font, &skip_layers);
-            if let Some((base_ttf, base_glyph_order)) = cached_base_ttf {
-                if let Some(patched) = try_fast_patch_compiled_ttf(
-                    &compile_font,
-                    &dirty_glyph_names,
-                    &compilation_options,
-                    &base_ttf,
-                    &base_glyph_order,
-                ) {
-                    return Ok(patched);
-                }
-            }
-            preview_dirty_glyphs_for_cache = Some(dirty_glyph_names);
-            match try_build_filtered_preview_from_cache(
+            match try_fast_patch_or_build_filtered_overlay(
+                compile_font,
                 &prepared_subset_key,
                 current_filter_epoch,
                 current_base_epoch,
@@ -9366,9 +9387,13 @@ pub fn compile_preview_cached_font_from_last_layout_closure(
                 &closure_subset,
                 &overlay_layers,
                 &skip_layers,
+                anchors_changed_by_overlay,
             )? {
-                Some(patched_filtered) => patched_filtered,
-                None => apply_filter_pipeline_owned(compile_font, &compilation_options, false)?,
+                OverlayCompileOutcome::Patched(patched) => return Ok(patched),
+                OverlayCompileOutcome::Filtered(filtered, dirty_glyph_names) => {
+                    preview_dirty_glyphs_for_cache = Some(dirty_glyph_names);
+                    filtered
+                }
             }
         } else if !kerning_overlay_entries.is_empty() {
             // Fast kerning preview path (LTR + RTL + all group members):
@@ -9577,15 +9602,9 @@ pub fn compile_cached_font_from_last_layout_closure(options: &JsValue) -> Result
 
     let _subset_fetch_span =
         PerfSpan::start("compile_cached_font_from_last_layout_closure.fetch_closure_subset");
-    let closure_subset = LAYOUT_CLOSURE_CACHE
-        .lock()
-        .unwrap()
-        .get(&cache_key)
-        .cloned()
-        .ok_or_else(|| JsValue::from_str("Primed layout closure key not found in cache."))?;
+    let (closure_subset, prepared_subset_key) =
+        load_primed_closure_subset(&cache_key, "Primed layout closure key not found in cache.")?;
     drop(_subset_fetch_span);
-
-    let prepared_subset_key = canonical_subset_key_from_sorted_unique(&closure_subset);
 
     // Try lazy subset font cache first. Falls back to building subset from
     // the full canonical JSON + RetainGlyphs on cache miss.
@@ -9640,7 +9659,6 @@ pub fn compile_cached_font_from_last_layout_closure(options: &JsValue) -> Result
     let current_filter_epoch = FILTER_EPOCH.load(Ordering::Relaxed);
     let current_cache_epoch = FONT_CACHE_EPOCH.load(Ordering::Relaxed);
     let current_options_fp = options_filter_fingerprint(&compilation_options);
-    let current_compile_fp = options_compile_fingerprint(&compilation_options);
 
     let mut overlay_dirty_glyphs_for_cache: Option<Vec<SmolStr>> = None;
     let _filter_cache_span =
@@ -9649,35 +9667,12 @@ pub fn compile_cached_font_from_last_layout_closure(options: &JsValue) -> Result
         let anchors_changed_by_overlay =
             overlay_layers_change_anchors(&subset_font, &overlay_layers);
         let compile_font = prepare_compile_facing_font(subset_font, &overlay_layers)?;
-        let dirty_glyph_names = collect_overlay_dirty_glyphs(&overlay_layers);
-        let cached_base_ttf = if anchors_changed_by_overlay {
-            None
-        } else {
-            lookup_patchable_ttf_base(
-                &prepared_subset_key,
-                current_cache_epoch,
-                current_compile_fp,
-                Some(&dirty_glyph_names),
-            )
-        };
-        if let Some((base_ttf, base_glyph_order)) = cached_base_ttf {
-            if let Some(patched) = try_fast_patch_compiled_ttf(
-                &compile_font,
-                &dirty_glyph_names,
-                &compilation_options,
-                &base_ttf,
-                &base_glyph_order,
-            ) {
-                drop(_filter_cache_span);
-                return Ok(patched);
-            }
-        }
-        overlay_dirty_glyphs_for_cache = Some(dirty_glyph_names);
         let skip_layers: HashSet<LayerTarget> = overlay_layers
             .iter()
             .map(|(target, _)| target.clone())
             .collect();
-        let filtered_preview = match try_build_filtered_preview_from_cache(
+        match try_fast_patch_or_build_filtered_overlay(
+            compile_font,
             &prepared_subset_key,
             current_filter_epoch,
             current_cache_epoch,
@@ -9685,11 +9680,17 @@ pub fn compile_cached_font_from_last_layout_closure(options: &JsValue) -> Result
             &closure_subset,
             &overlay_layers,
             &skip_layers,
+            anchors_changed_by_overlay,
         )? {
-            Some(patched_filtered) => patched_filtered,
-            None => apply_filter_pipeline_owned(compile_font, &compilation_options, false)?,
-        };
-        Arc::new(filtered_preview)
+            OverlayCompileOutcome::Patched(patched) => {
+                drop(_filter_cache_span);
+                return Ok(patched);
+            }
+            OverlayCompileOutcome::Filtered(filtered_preview, dirty_glyph_names) => {
+                overlay_dirty_glyphs_for_cache = Some(dirty_glyph_names);
+                Arc::new(filtered_preview)
+            }
+        }
     } else {
         // Use filtered font cache: bake + apply_filters() once, then reuse.
         let mut filter_cache = FILTERED_FONT_CACHE.lock().unwrap();
@@ -9797,14 +9798,10 @@ pub fn compile_debug_cached_font_from_last_layout_closure(
             )
         })?;
 
-    let closure_subset = LAYOUT_CLOSURE_CACHE
-        .lock()
-        .unwrap()
-        .get(&cache_key)
-        .cloned()
-        .ok_or_else(|| JsValue::from_str("Primed debug layout closure key not found in cache."))?;
-
-    let prepared_subset_key = canonical_subset_key_from_sorted_unique(&closure_subset);
+    let (closure_subset, prepared_subset_key) = load_primed_closure_subset(
+        &cache_key,
+        "Primed debug layout closure key not found in cache.",
+    )?;
     let compilation_options = parse_compilation_options(options);
 
     let committed_font_fingerprint = get_committed_font_fingerprint()?;
@@ -9985,22 +9982,11 @@ pub fn compile_cached_font(options: &JsValue) -> Result<Vec<u8>, JsValue> {
     // Handle subset_glyphs option if present
     let _subset_span = PerfSpan::start("compile_cached_font.extract_subset_options");
     let mut subset_applied = false;
-    if !options.is_undefined() && !options.is_null() {
-        if let Ok(subset_val) = js_sys::Reflect::get(options, &JsValue::from_str("subset_glyphs")) {
-            if !subset_val.is_undefined() && !subset_val.is_null() {
-                if let Ok(array) = subset_val.dyn_into::<js_sys::Array>() {
-                    let subset_glyphs: Vec<String> =
-                        array.iter().filter_map(|v| v.as_string()).collect();
-
-                    if !subset_glyphs.is_empty() {
-                        let _retain_span = PerfSpan::start("compile_cached_font.retain_glyphs");
-                        subset_font_using_cached_fea(&mut font_clone, &subset_glyphs)?;
-                        subset_applied = true;
-                        drop(_retain_span);
-                    }
-                }
-            }
-        }
+    if let Some(subset_glyphs) = extract_subset_glyphs_option(options) {
+        let _retain_span = PerfSpan::start("compile_cached_font.retain_glyphs");
+        subset_font_using_cached_fea(&mut font_clone, &subset_glyphs)?;
+        subset_applied = true;
+        drop(_retain_span);
     }
     if !subset_applied {
         // Sparse hydration keeps full feature classes while only loading the

@@ -39,11 +39,15 @@ import {
     type PythonDocumentTarget
 } from './assistant/python-target';
 import {
+    categorizeFeaturesForShaper as categorizeOpenTypeFeaturesForShaper,
+    extractFontLanguageSystems as extractOpenTypeFontLanguageSystems,
     getFeatureDescription,
     getFeatureExecutionOrder,
-    isDiscretionary,
-    SCRIPT_TO_SHAPER
+    groupScriptsByShaper,
+    parseFeatureClassGlyphMembers,
+    resolveFeatureClassGlyphs
 } from './opentype-features';
+import { normalizeDocsId } from './link-navigation';
 import { userspaceToDesignspace } from './locations';
 import {
     type AssistantPromptExecutionContext,
@@ -82,13 +86,7 @@ function formatHandbookToc(nodes: HandbookManifestNode[], indent = ''): string {
 }
 
 function normalizeHandbookTopic(topic: string): string {
-    return topic
-        .replace(/^docs:\/\//i, '')
-        .replace(/^#docs=/i, '')
-        .replace(/\.\.\//g, '')
-        .replace(/^\/+/, '')
-        .replace(/#.*$/, '')
-        .trim();
+    return normalizeDocsId(topic.replace(/\.\.\//g, ''));
 }
 
 function findHandbookPath(
@@ -1654,19 +1652,7 @@ class AIAssistant {
     }
 
     parseOpenTypeClassGlyphMembers(classCode: string): Set<string> {
-        const glyphs = new Set<string>();
-        if (!classCode) {
-            return glyphs;
-        }
-
-        const codeWithoutComments = classCode.replace(/#.*/g, '');
-        const tokens = codeWithoutComments
-            .split(/\s+/)
-            .map((token) => token.trim())
-            .filter(Boolean);
-
-        tokens.forEach((token) => glyphs.add(token));
-        return glyphs;
+        return parseFeatureClassGlyphMembers(classCode);
     }
 
     getAllOpenTypeGlyphsInClass(
@@ -1674,35 +1660,7 @@ class AIAssistant {
         classGlyphMembers: Map<string, Set<string>>,
         visited: Set<string> = new Set()
     ): Set<string> {
-        const allGlyphs = new Set<string>();
-        if (visited.has(className)) {
-            return allGlyphs;
-        }
-        visited.add(className);
-
-        const cleanName = className.startsWith('@')
-            ? className.slice(1)
-            : className;
-        const members = classGlyphMembers.get(cleanName);
-        if (!members) {
-            return allGlyphs;
-        }
-
-        members.forEach((member) => {
-            if (member.startsWith('@')) {
-                const nestedGlyphs = this.getAllOpenTypeGlyphsInClass(
-                    member,
-                    classGlyphMembers,
-                    visited
-                );
-                nestedGlyphs.forEach((glyph) => allGlyphs.add(glyph));
-                return;
-            }
-
-            allGlyphs.add(member);
-        });
-
-        return allGlyphs;
+        return resolveFeatureClassGlyphs(className, classGlyphMembers, visited);
     }
 
     findOpenTypeFeatureMatchLines(
@@ -1901,60 +1859,13 @@ class AIAssistant {
     }
 
     extractFontLanguageSystems(): string[] {
-        const font = (window as any).currentFontModel;
-        if (!font?.features) {
-            return ['DFLT'];
-        }
-
-        const scripts = new Set<string>();
-        scripts.add('DFLT');
-
-        const allCode: string[] = [];
-
-        if (font.features.prefixes) {
-            Object.values(font.features.prefixes).forEach((prefix: any) => {
-                if (prefix?.code) {
-                    allCode.push(prefix.code);
-                }
-            });
-        }
-
-        if (font.features.features) {
-            font.features.features.forEach(([, codeData]: [string, any]) => {
-                if (codeData?.code) {
-                    allCode.push(codeData.code);
-                }
-            });
-        }
-
-        const languageSystemRegex = /languagesystem\s+(\w+)\s+\w+/gi;
-        allCode.forEach((code) => {
-            let match: RegExpExecArray | null;
-            while ((match = languageSystemRegex.exec(code)) !== null) {
-                scripts.add(match[1]);
-            }
-        });
-
-        return Array.from(scripts).sort();
+        return extractOpenTypeFontLanguageSystems(
+            (window as any).currentFontModel?.features
+        );
     }
 
     getShapersInUse(): Map<string, string[]> {
-        const supportedScripts = this.extractFontLanguageSystems();
-        const shaperMap = new Map<string, string[]>();
-
-        supportedScripts.forEach((script) => {
-            const shaper = SCRIPT_TO_SHAPER[script] || 'default';
-            if (!shaperMap.has(shaper)) {
-                shaperMap.set(shaper, []);
-            }
-            shaperMap.get(shaper)!.push(script);
-        });
-
-        return new Map(
-            Array.from(shaperMap.entries()).sort(([left], [right]) =>
-                left.localeCompare(right)
-            )
-        );
+        return groupScriptsByShaper(this.extractFontLanguageSystems());
     }
 
     categorizeFeaturesForShaper(
@@ -1966,74 +1877,7 @@ class AIAssistant {
         postUserFeatures: Array<{ tag: string; index: number }>;
         notUsedByShaper: Array<{ tag: string; index: number }>;
     } {
-        const userFeaturesIndex = executionOrder.indexOf(
-            '--- USER FEATURES ---'
-        );
-
-        let preUserFeatures: string[] = [];
-        let postUserFeaturesList: string[] = [];
-
-        if (userFeaturesIndex >= 0) {
-            preUserFeatures = executionOrder
-                .slice(0, userFeaturesIndex)
-                .filter((feature) => !feature.startsWith('---'));
-            postUserFeaturesList = executionOrder
-                .slice(userFeaturesIndex + 1)
-                .filter((feature) => !feature.startsWith('---'));
-        } else {
-            preUserFeatures = executionOrder.filter(
-                (feature) => !feature.startsWith('---')
-            );
-        }
-
-        const preUserFeaturesSet = new Set(preUserFeatures);
-        const postUserFeaturesSet = new Set(postUserFeaturesList);
-
-        const usedByShaper: Array<{ tag: string; index: number }> = [];
-        const discretionary: Array<{ tag: string; index: number }> = [];
-        const postUserFeatures: Array<{ tag: string; index: number }> = [];
-        const notUsedByShaper: Array<{ tag: string; index: number }> = [];
-
-        features.forEach(([tag], index) => {
-            if (isDiscretionary(tag)) {
-                discretionary.push({ tag, index });
-                return;
-            }
-
-            if (preUserFeaturesSet.has(tag)) {
-                usedByShaper.push({ tag, index });
-                return;
-            }
-
-            if (postUserFeaturesSet.has(tag)) {
-                postUserFeatures.push({ tag, index });
-                return;
-            }
-
-            notUsedByShaper.push({ tag, index });
-        });
-
-        usedByShaper.sort(
-            (left, right) =>
-                preUserFeatures.indexOf(left.tag) -
-                preUserFeatures.indexOf(right.tag)
-        );
-        discretionary.sort((left, right) => left.index - right.index);
-        postUserFeatures.sort(
-            (left, right) =>
-                postUserFeaturesList.indexOf(left.tag) -
-                postUserFeaturesList.indexOf(right.tag)
-        );
-        notUsedByShaper.sort((left, right) =>
-            left.tag.localeCompare(right.tag)
-        );
-
-        return {
-            usedByShaper,
-            discretionary,
-            postUserFeatures,
-            notUsedByShaper
-        };
+        return categorizeOpenTypeFeaturesForShaper(features, executionOrder);
     }
 
     formatFeatureSection(

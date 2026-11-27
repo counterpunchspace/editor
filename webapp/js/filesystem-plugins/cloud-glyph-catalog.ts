@@ -39,11 +39,57 @@ export type CloudOwnedFontData = {
 
 export type CatalogChangePath = Array<string | number>;
 
-function asRecord(value: unknown): Record<string, unknown> | null {
+export function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         return null;
     }
     return value as Record<string, unknown>;
+}
+
+export function normalizeGlyphCodepoints(codepoints: unknown): number[] {
+    return Array.isArray(codepoints)
+        ? codepoints.filter(
+              (value): value is number =>
+                  typeof value === 'number' && Number.isFinite(value)
+          )
+        : [];
+}
+
+export function indexGlyphCodepoints(
+    codepointIndex: Record<string, string[]>,
+    glyphId: string,
+    codepoints: readonly number[]
+): void {
+    for (const codepoint of codepoints) {
+        const key = String(codepoint);
+        const members = Array.isArray(codepointIndex[key])
+            ? codepointIndex[key]
+            : [];
+        if (!members.includes(glyphId)) {
+            members.push(glyphId);
+        }
+        codepointIndex[key] = members;
+    }
+}
+
+export function buildGlyphCatalogEntry(
+    glyphId: string,
+    glyph: Record<string, unknown>,
+    generation = 0
+): GlyphCatalogEntry {
+    return {
+        glyphId,
+        name: String(glyph.name || ''),
+        codepoints: normalizeGlyphCodepoints(glyph.codepoints),
+        productionName:
+            typeof glyph.production_name === 'string'
+                ? glyph.production_name
+                : undefined,
+        latestGlyphRevision: String(glyph.latestGlyphRevision || '0'),
+        exported: glyph.exported !== false,
+        deleted: glyph.deleted === true,
+        generation
+    };
 }
 
 function codepointIndexFromUnknown(value: unknown): Record<string, string[]> {
@@ -408,26 +454,10 @@ export function patchCloudOwnedGlyph(
         if (members.length) codepointIndex[key] = members;
         else delete codepointIndex[key];
     }
-    const entry: GlyphCatalogEntry = {
-        glyphId,
-        name: String(glyph.name || ''),
-        codepoints: Array.isArray(glyph.codepoints)
-            ? glyph.codepoints.filter(
-                  (value): value is number =>
-                      typeof value === 'number' && Number.isFinite(value)
-              )
-            : [],
-        productionName:
-            typeof glyph.production_name === 'string'
-                ? glyph.production_name
-                : undefined,
-        latestGlyphRevision: String(glyph.latestGlyphRevision || '0'),
-        exported: glyph.exported !== false,
-        deleted: glyph.deleted === true,
-        generation: previous?.deleted
-            ? (previous.generation || 0) + 1
-            : previous?.generation || 0
-    };
+    const generation = previous?.deleted
+        ? (previous.generation || 0) + 1
+        : previous?.generation || 0;
+    const entry = buildGlyphCatalogEntry(glyphId, glyph, generation);
     const idByName = new Map<string, string>();
     for (const existing of Object.values(glyphCatalog)) {
         if (existing.name && existing.deleted !== true) {
@@ -440,14 +470,7 @@ export function patchCloudOwnedGlyph(
         entry.componentIds = componentIds;
     }
     glyphCatalog[glyphId] = entry;
-    for (const codepoint of entry.codepoints) {
-        const key = String(codepoint);
-        const members = Array.isArray(codepointIndex[key])
-            ? [...codepointIndex[key]]
-            : [];
-        if (!members.includes(glyphId)) members.push(glyphId);
-        codepointIndex[key] = members;
-    }
+    indexGlyphCodepoints(codepointIndex, glyphId, entry.codepoints);
     const owned = { glyphCatalog, codepointIndex };
     writeOwnedToCoreJson(fontJson, owned);
     return owned;
@@ -464,36 +487,9 @@ export function buildLeanGlyphCatalog(fontJson: Record<string, unknown>): {
         if (entries[glyphId]) {
             throw new Error(`Duplicate immutable glyph id: ${glyphId}`);
         }
-        const name = String(glyph.name || '');
-        const codepoints = Array.isArray(glyph.codepoints)
-            ? glyph.codepoints.filter(
-                  (value): value is number =>
-                      typeof value === 'number' && Number.isFinite(value)
-              )
-            : [];
-        const productionName =
-            typeof glyph.production_name === 'string'
-                ? glyph.production_name
-                : undefined;
-        entries[glyphId] = {
-            glyphId,
-            name,
-            codepoints,
-            productionName,
-            latestGlyphRevision: String(glyph.latestGlyphRevision || '0'),
-            exported: glyph.exported !== false,
-            deleted: glyph.deleted === true,
-            generation: 0
-        };
-        for (const codepoint of codepoints) {
-            const key = String(codepoint);
-            if (!codepointIndex[key]) {
-                codepointIndex[key] = [];
-            }
-            if (!codepointIndex[key].includes(glyphId)) {
-                codepointIndex[key].push(glyphId);
-            }
-        }
+        const entry = buildGlyphCatalogEntry(glyphId, glyph, 0);
+        entries[glyphId] = entry;
+        indexGlyphCodepoints(codepointIndex, glyphId, entry.codepoints);
     }
     const idByName = new Map<string, string>();
     for (const entry of Object.values(entries)) {

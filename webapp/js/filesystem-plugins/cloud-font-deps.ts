@@ -6,11 +6,13 @@
 
 import * as Y from 'yjs';
 import {
+    asRecord,
     catalogFromCoreJson,
     ensureImmutableGlyphId,
     listGlyphRecords,
     liveCatalogGlyphIds
 } from './cloud-glyph-catalog';
+import { parseMetricsKeyText } from '../metrics-key-parser';
 
 export type FontDepEdgeKind = 'component' | 'metrics-key' | 'both';
 
@@ -27,15 +29,6 @@ function ensureChildMap(parent: Y.Map<unknown>, key: string): Y.Map<unknown> {
     const created = new Y.Map<unknown>();
     parent.set(key, created);
     return created;
-}
-
-const METRICS_KEY_SUFFIX = /^[@+\-*/]/;
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        return null;
-    }
-    return value as Record<string, unknown>;
 }
 
 function mergeEdgeKind(
@@ -135,42 +128,8 @@ export function parseMetricsKeyReferencedNames(
     rawKey: string,
     namesByLength: string[]
 ): string[] {
-    let input = rawKey.trim();
-    if (!input) {
-        return [];
-    }
-    if (input.startsWith('==')) {
-        input = input.slice(1);
-    }
-    if (isFiniteNumberText(input) || /^=[+-]?\d+(?:\.\d+)?$/.test(input)) {
-        return [];
-    }
-    let body = input.startsWith('=') ? input.slice(1) : input;
-    if (body.startsWith('|')) {
-        body = body.slice(1);
-    }
-    if (!body) {
-        return [];
-    }
-    for (const glyphName of namesByLength) {
-        if (!glyphName) {
-            continue;
-        }
-        if (body === glyphName) {
-            return [glyphName];
-        }
-        if (
-            body.startsWith(glyphName) &&
-            METRICS_KEY_SUFFIX.test(body.slice(glyphName.length))
-        ) {
-            return [glyphName];
-        }
-    }
-    return [];
-}
-
-function isFiniteNumberText(value: string): boolean {
-    return /^-?\d+(?:\.\d+)?$/.test(value);
+    const parsed = parseMetricsKeyText(rawKey, namesByLength);
+    return 'error' in parsed ? [] : parsed.referencedGlyphNames;
 }
 
 export function catalogEntriesForDepsParse(

@@ -16,9 +16,14 @@ export function resetUndoRedoContextStickyState(): void {
     lastMainUndoContext = null;
 }
 
-function isViewFocused(viewId: string): boolean {
+export function isViewFocused(viewIdOrSelector: string): boolean {
+    const id = viewIdOrSelector.startsWith('#')
+        ? viewIdOrSelector.slice(1)
+        : viewIdOrSelector;
     return (
-        document.querySelector(viewId)?.classList.contains('focused') ?? false
+        (
+            document.getElementById(id) ?? document.querySelector(`#${id}`)
+        )?.classList.contains('focused') ?? false
     );
 }
 

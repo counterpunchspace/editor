@@ -324,6 +324,40 @@ pub fn interpolate_glyph_json_cached(
     interpolate_glyph_json_cached_for_domain(font, glyph_name, location_json, extrapolate, "")
 }
 
+fn normalize_location_json(location_json: &str) -> &str {
+    if location_json.trim().is_empty() {
+        "{}"
+    } else {
+        location_json
+    }
+}
+
+fn invalidate_layer_cache_if_key_changed(current_key: &str) {
+    let mut cache_guard = LAYER_CACHE.lock().unwrap();
+    if let Some(ref cache) = *cache_guard {
+        if cache.cache_key != current_key {
+            *cache_guard = None;
+        }
+    }
+}
+
+fn get_or_interpolate_cached_layer(
+    font: &babelfont::Font,
+    glyph_name: &str,
+    design_location: &fontdrasil::coords::Location<fontdrasil::coords::DesignSpace>,
+    extrapolate: bool,
+    layer_cache: &RefCell<HashMap<String, babelfont::Layer>>,
+) -> Result<babelfont::Layer, String> {
+    if let Some(cached) = layer_cache.borrow().get(glyph_name) {
+        return Ok(cached.clone());
+    }
+    let interpolated = interpolate_glyph_layer(font, glyph_name, design_location, extrapolate)?;
+    layer_cache
+        .borrow_mut()
+        .insert(glyph_name.to_string(), interpolated.clone());
+    Ok(interpolated)
+}
+
 pub fn interpolate_glyph_json_cached_for_domain(
     font: &babelfont::Font,
     glyph_name: &str,
@@ -331,30 +365,19 @@ pub fn interpolate_glyph_json_cached_for_domain(
     extrapolate: bool,
     domain: &str,
 ) -> Result<String, JsValue> {
-    let normalized_location = if location_json.trim().is_empty() {
-        "{}"
-    } else {
-        location_json
-    };
+    let normalized_location = normalize_location_json(location_json);
     let cache_key = layer_cache_key(normalized_location, extrapolate, domain);
     let (location_map, design_location) = parse_userspace_location(font, normalized_location)?;
     let layer_cache = ensure_layer_cache_for_key(&cache_key);
 
-    let layer = {
-        let cache = layer_cache.borrow();
-        if let Some(cached) = cache.get(glyph_name) {
-            cached.clone()
-        } else {
-            drop(cache);
-            let interpolated =
-                interpolate_glyph_layer(font, glyph_name, &design_location, extrapolate)
-                    .map_err(|e| JsValue::from_str(&format!("Interpolation failed: {}", e)))?;
-            layer_cache
-                .borrow_mut()
-                .insert(glyph_name.to_string(), interpolated.clone());
-            interpolated
-        }
-    };
+    let layer = get_or_interpolate_cached_layer(
+        font,
+        glyph_name,
+        &design_location,
+        extrapolate,
+        &layer_cache,
+    )
+    .map_err(|e| JsValue::from_str(&format!("Interpolation failed: {}", e)))?;
 
     let json_cache: RefCell<HashMap<String, JsonValue>> = RefCell::new(HashMap::new());
     let mut result = serialize_layer_with_components_cached(
@@ -393,11 +416,7 @@ pub fn get_glyphs_outlines(
     flatten_components: bool,
 ) -> Result<String, JsValue> {
     // Normalize location for cache key comparison
-    let normalized_location = if location_json.trim().is_empty() {
-        "{}"
-    } else {
-        location_json
-    };
+    let normalized_location = normalize_location_json(location_json);
     let current_layer_cache_key = layer_cache_key(normalized_location, false, "");
 
     // Check if location changed - clear both caches if so
@@ -410,15 +429,7 @@ pub fn get_glyphs_outlines(
             }
         }
     }
-    {
-        let mut cache_guard = LAYER_CACHE.lock().unwrap();
-        if let Some(ref cache) = *cache_guard {
-            if cache.cache_key != current_layer_cache_key {
-                // Location changed, clear layer cache too
-                *cache_guard = None;
-            }
-        }
-    }
+    invalidate_layer_cache_if_key_changed(&current_layer_cache_key);
 
     // Check how many glyphs are already in persistent cache
     let mut cached_results: Vec<JsonValue> = Vec::new();
@@ -515,27 +526,20 @@ pub fn get_glyphs_outlines(
         };
 
         // Check cache first, then interpolate
-        let layer = {
-            let cache = layer_cache.borrow();
-            if let Some(cached) = cache.get(glyph_name) {
-                cached.clone()
-            } else {
-                drop(cache);
-                let interpolated =
-                    match interpolate_glyph_layer(font, glyph_name, &design_location, false) {
-                        Ok(layer) => layer,
-                        Err(e) => {
-                            web_sys::console::warn_1(&JsValue::from_str(&format!(
-                                "Interpolation failed for '{}': {}",
-                                glyph_name, e
-                            )));
-                            continue;
-                        }
-                    };
-                layer_cache
-                    .borrow_mut()
-                    .insert(glyph_name.clone(), interpolated.clone());
-                interpolated
+        let layer = match get_or_interpolate_cached_layer(
+            font,
+            glyph_name,
+            &design_location,
+            false,
+            &layer_cache,
+        ) {
+            Ok(layer) => layer,
+            Err(e) => {
+                web_sys::console::warn_1(&JsValue::from_str(&format!(
+                    "Interpolation failed for '{}': {}",
+                    glyph_name, e
+                )));
+                continue;
             }
         };
 
@@ -1060,11 +1064,7 @@ pub fn get_glyphs_overview_binary(
     glyph_names: &[String],
     location_json: &str,
 ) -> Result<Vec<u8>, JsValue> {
-    let normalized_location = if location_json.trim().is_empty() {
-        "{}"
-    } else {
-        location_json
-    };
+    let normalized_location = normalize_location_json(location_json);
     let current_layer_cache_key = layer_cache_key(normalized_location, false, "");
 
     {
@@ -1075,14 +1075,7 @@ pub fn get_glyphs_overview_binary(
             }
         }
     }
-    {
-        let mut cache_guard = LAYER_CACHE.lock().unwrap();
-        if let Some(ref cache) = *cache_guard {
-            if cache.cache_key != current_layer_cache_key {
-                *cache_guard = None;
-            }
-        }
-    }
+    invalidate_layer_cache_if_key_changed(&current_layer_cache_key);
 
     let mut cached_by_name: HashMap<String, Vec<u8>> = HashMap::new();
     let mut glyphs_to_process: Vec<String> = Vec::new();
@@ -1110,22 +1103,14 @@ pub fn get_glyphs_overview_binary(
             if font.glyphs.get(glyph_name).is_none() {
                 continue;
             }
-            let layer = {
-                let cache = layer_cache.borrow();
-                if let Some(cached) = cache.get(glyph_name) {
-                    cached.clone()
-                } else {
-                    drop(cache);
-                    let interpolated =
-                        match interpolate_glyph_layer(font, glyph_name, &design_location, false) {
-                            Ok(layer) => layer,
-                            Err(_) => continue,
-                        };
-                    layer_cache
-                        .borrow_mut()
-                        .insert(glyph_name.clone(), interpolated.clone());
-                    interpolated
-                }
+            let Ok(layer) = get_or_interpolate_cached_layer(
+                font,
+                glyph_name,
+                &design_location,
+                false,
+                &layer_cache,
+            ) else {
+                continue;
             };
 
             let mut builder = OverviewGlyphBuilder::new();

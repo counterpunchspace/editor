@@ -14,6 +14,8 @@ import fontManager from '../font-manager';
 import type { Babelfont } from '../babelfont';
 import { Transform } from '../basictypes';
 import { Logger } from '../logger';
+import { isViewFocused } from '../undo-redo-context';
+import { parseGlyphStackSegment } from '../rename-glyphs-ui-context';
 import { isPointerCommandModifier } from '../keyboard-shortcut-display';
 import { normalizeWorkerReplayTargets } from '../change-log';
 import { recordLiveTextDiagnostic } from '../live-text-diagnostics';
@@ -23,7 +25,11 @@ import {
     Glyph,
     Path,
     DecomposedAffineTransform,
+    formatFeatureVariationGlyphName,
     generateStableId,
+    getDrawingStationMatchPriority,
+    hasDrawingLocation,
+    parseFeatureVariationGlyphName,
     applyWorkerGeneratedYjsUpdate,
     buildInterpolationRustBatchOperations,
     withSuppressedModelRecording,
@@ -105,13 +111,20 @@ import {
 } from '../clipboard';
 import APP_SETTINGS, { interpolateOutlineChromeScreenSize } from '../settings';
 import { applyFontPointScreenLock } from './viewport';
-import { userspaceToDesignspace, designspaceToUserspace } from '../locations';
+import {
+    userspaceToDesignspace,
+    designspaceToUserspace,
+    designspaceLocationsMatch
+} from '../locations';
 import type { DesignspaceLocation, UserspaceLocation } from '../locations';
 import { SavedVariationState } from '../saved-variation-state';
 import {
     clampUnitInterval,
     invertAffine,
     invertLinearAffine,
+    isCurveNode,
+    isOffCurveNode,
+    isOnCurveNode,
     lerpPoint,
     multiplyAffineTransforms,
     normalizeAffineTransform,
@@ -198,7 +211,17 @@ type SnapCandidateCache = {
     edgeXValues: number[];
     metricsYValues: number[];
 };
-type GuideHandle = { scope: 'station' | 'drawing'; index: number };
+export type GuideHandle = { scope: 'station' | 'drawing'; index: number };
+
+export function sameGuideHandle(
+    left: GuideHandle | null,
+    right: GuideHandle | null
+): boolean {
+    if (!left || !right) {
+        return left === right;
+    }
+    return left.scope === right.scope && left.index === right.index;
+}
 type SidebearingHandle = { side: SidebearingSide; editable?: boolean };
 type DrawingSelectionState = {
     points: Point[];
@@ -401,33 +424,6 @@ const getComponentShapeData = (shape: any): any => {
 
 const DRAWING_LOCATION_MATCH_EPSILON = 0.01;
 
-function locationsMatchWithinTolerance(
-    left: DesignspaceLocation | undefined,
-    right: DesignspaceLocation | undefined,
-    axisTags: string[]
-): boolean {
-    if (!left || !right) {
-        return false;
-    }
-
-    const tags = new Set<string>([
-        ...axisTags,
-        ...Object.keys(left),
-        ...Object.keys(right)
-    ]);
-
-    for (const tag of tags) {
-        if (
-            Math.abs(Number(left[tag] ?? 0) - Number(right[tag] ?? 0)) >
-            DRAWING_LOCATION_MATCH_EPSILON
-        ) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
 const parseComponentNodes = (shapes: Babelfont.Shape[]) => {
     if (!shapes) return;
 
@@ -523,18 +519,6 @@ function projectPointOntoLine(
             point.y - projectedPoint.y
         )
     };
-}
-
-function isCurveNode(node: Babelfont.Node | null | undefined): boolean {
-    return node?.nodetype === 'Curve' || node?.nodetype === 'QCurve';
-}
-
-function isOnCurveNode(node: Babelfont.Node | null | undefined): boolean {
-    return Boolean(node) && node?.nodetype !== 'OffCurve';
-}
-
-function isOffCurveNode(node: Babelfont.Node | null | undefined): boolean {
-    return node?.nodetype === 'OffCurve';
 }
 
 function canSlideSmoothOnCurveFromContour(
@@ -2072,8 +2056,8 @@ export class OutlineEditor {
             return '';
         }
 
-        const featureVariationMatch = glyphName.match(/^(.*)\.feaVar\.\d+$/);
-        const featureVariationBaseName = featureVariationMatch?.[1];
+        const featureVariationBaseName =
+            parseFeatureVariationGlyphName(glyphName)?.baseName;
         if (
             featureVariationBaseName &&
             this.getGlyphModelByName(featureVariationBaseName)
@@ -2124,11 +2108,10 @@ export class OutlineEditor {
         }
 
         const segments = this.glyphStack.split('>');
-        const drawingIndex = segments[0].lastIndexOf('@');
-        const drawingToken =
-            drawingIndex >= 0
-                ? segments[0].substring(drawingIndex)
-                : '@undefined';
+        const parsedRoot = parseGlyphStackSegment(segments[0]);
+        const drawingToken = parsedRoot
+            ? `@${parsedRoot.drawingId}`
+            : '@undefined';
         segments[0] = `${rootGlyphName}${drawingToken}`;
         this.glyphStack = segments.join('>');
         window.dispatchEvent(
@@ -2154,7 +2137,10 @@ export class OutlineEditor {
         const rootGlyphName = this.getAuthoringRootGlyphName();
         const stackGlyphName =
             featureVariationIndex !== undefined && featureVariationIndex >= 0
-                ? `${rootGlyphName}.feaVar.${featureVariationIndex}`
+                ? formatFeatureVariationGlyphName(
+                      rootGlyphName,
+                      featureVariationIndex
+                  )
                 : rootGlyphName;
         this.rootFeatureVariationSelection =
             featureVariationId &&
@@ -2186,7 +2172,7 @@ export class OutlineEditor {
     getSelectedRootFeatureVariationId(): string | null {
         const rootStackGlyphName = this.parseGlyphStack()[0]?.glyphName;
         const rootGlyphName = this.getAuthoringRootGlyphName();
-        if (!rootStackGlyphName?.match(/^(.*)\.feaVar\.\d+$/)) {
+        if (!parseFeatureVariationGlyphName(rootStackGlyphName)) {
             if (
                 this.rootFeatureVariationSelection?.glyphName === rootGlyphName
             ) {
@@ -3250,10 +3236,7 @@ export class OutlineEditor {
             return false;
         }
 
-        const editorFocused = !!document
-            .getElementById('view-editor')
-            ?.classList.contains('focused');
-        if (!editorFocused) {
+        if (!isViewFocused('view-editor')) {
             window.alert?.(
                 'Focus the editing view to replace selected paths in place.'
             );
@@ -7176,17 +7159,6 @@ export class OutlineEditor {
         return guides;
     }
 
-    private sameGuideHandle(
-        left: GuideHandle | null,
-        right: GuideHandle | null
-    ): boolean {
-        if (!left || !right) {
-            return left === right;
-        }
-
-        return left.scope === right.scope && left.index === right.index;
-    }
-
     private getSelectedGuide(): VisibleGuide | null {
         if (!this.selectedGuideHandle) {
             return null;
@@ -7194,7 +7166,7 @@ export class OutlineEditor {
 
         return (
             this.getVisibleGuides().find((guide) =>
-                this.sameGuideHandle(guide, this.selectedGuideHandle)
+                sameGuideHandle(guide, this.selectedGuideHandle)
             ) || null
         );
     }
@@ -8204,7 +8176,7 @@ export class OutlineEditor {
             return false;
         }
 
-        return this.sameGuideHandle(
+        return sameGuideHandle(
             sanitizedState.guideHandle,
             remappedState.guideHandle
         );
@@ -10524,21 +10496,26 @@ export class OutlineEditor {
 
         for (let i = 0; i < segments.length; i++) {
             const segment = segments[i];
-            let glyphAndDrawing: string;
-            let componentIndex: number | undefined;
+            const parsed = parseGlyphStackSegment(segment);
+            if (parsed) {
+                result.push({
+                    glyphName: parsed.glyphName,
+                    layerId: parsed.drawingId,
+                    componentIndex: parsed.prefix
+                        ? parseInt(parsed.prefix.slice(0, -1), 10)
+                        : undefined
+                });
+                continue;
+            }
 
-            // Check if this segment has a component index (format: componentIndex:glyphName@drawingId)
+            let glyphAndDrawing = segment;
+            let componentIndex: number | undefined;
             if (segment.includes(':')) {
                 const parts = segment.split(':');
                 componentIndex = parseInt(parts[0], 10);
                 glyphAndDrawing = parts[1];
-            } else {
-                glyphAndDrawing = segment;
             }
-
-            // Split glyphName@drawingId
             const [glyphName, drawingId] = glyphAndDrawing.split('@');
-
             result.push({
                 glyphName,
                 layerId: drawingId,
@@ -10742,9 +10719,7 @@ export class OutlineEditor {
 
     private reconcileRootFeatureVariationSelectionAfterModelSync(): void {
         const rootStackGlyphName = this.parseGlyphStack()[0]?.glyphName;
-        const featureVariationMatch =
-            rootStackGlyphName?.match(/^(.*)\.feaVar\.\d+$/);
-        if (!featureVariationMatch) {
+        if (!parseFeatureVariationGlyphName(rootStackGlyphName)) {
             return;
         }
 
@@ -10765,7 +10740,10 @@ export class OutlineEditor {
             ) ?? -1;
         const nextRootGlyphName =
             featureVariationIndex >= 0
-                ? `${rootGlyphName}.feaVar.${featureVariationIndex}`
+                ? formatFeatureVariationGlyphName(
+                      rootGlyphName,
+                      featureVariationIndex
+                  )
                 : rootGlyphName;
 
         if (nextRootGlyphName !== rootStackGlyphName) {
@@ -11134,11 +11112,7 @@ export class OutlineEditor {
         if (!this.active) return;
 
         // Check if editor view is focused
-        const editorView = document.querySelector('#view-editor');
-        const isEditorFocused =
-            editorView && editorView.classList.contains('focused');
-
-        if (!isEditorFocused) {
+        if (!isViewFocused('view-editor')) {
             return; // Don't handle Escape if editor view is not focused
         }
 
@@ -12151,10 +12125,11 @@ export class OutlineEditor {
                 hasLayerLocation: hasDrawingLocation,
                 drawingLocation: drawing?.location || null,
                 effectiveDesignLocation: effectiveDesignLocation || null,
-                matches: locationsMatchWithinTolerance(
+                matches: designspaceLocationsMatch(
                     effectiveDesignLocation,
                     currentDesignspaceLocation,
-                    axisTags
+                    axisTags,
+                    DRAWING_LOCATION_MATCH_EPSILON
                 ),
                 excluded: !!(
                     shouldExcludeCurrentGlyphDrawing &&
@@ -12285,10 +12260,11 @@ export class OutlineEditor {
                     stations
                 );
 
-            return locationsMatchWithinTolerance(
+            return designspaceLocationsMatch(
                 effectiveDesignLocation,
                 currentDesignspaceLocation,
-                axisTags
+                axisTags,
+                DRAWING_LOCATION_MATCH_EPSILON
             );
         });
 
@@ -12297,25 +12273,8 @@ export class OutlineEditor {
         }
 
         matchingDrawings.sort((left: any, right: any) => {
-            const leftHasDrawingLocation =
-                !!left.location && Object.keys(left.location).length > 0;
-            const rightHasDrawingLocation =
-                !!right.location && Object.keys(right.location).length > 0;
-
-            const leftPriority = leftHasDrawingLocation
-                ? 0
-                : left.station?.type === 'DefaultForMaster'
-                  ? 1
-                  : left.station?.type === 'AssociatedWithMaster'
-                    ? 2
-                    : 3;
-            const rightPriority = rightHasDrawingLocation
-                ? 0
-                : right.station?.type === 'DefaultForMaster'
-                  ? 1
-                  : right.station?.type === 'AssociatedWithMaster'
-                    ? 2
-                    : 3;
+            const leftPriority = getDrawingStationMatchPriority(left);
+            const rightPriority = getDrawingStationMatchPriority(right);
 
             if (leftPriority !== rightPriority) {
                 return leftPriority - rightPriority;
@@ -15408,7 +15367,7 @@ export class OutlineEditor {
             }
         }
 
-        if (!this.sameGuideHandle(foundGuideHandle, this.hoveredGuideHandle)) {
+        if (!sameGuideHandle(foundGuideHandle, this.hoveredGuideHandle)) {
             this.hoveredGuideHandle = foundGuideHandle;
             this.glyphCanvas.render();
         }
@@ -21260,17 +21219,12 @@ export class OutlineEditor {
         const glyph = fontManager.currentFont?.fontModel?.findGlyph?.(
             this.getAuthoringRootGlyphName()
         );
-        const match = rootStackItem?.glyphName.match(/^(.*)\.feaVar\.(\d+)$/);
-        const featureVariationIndex = match ? Number(match[2]) : NaN;
-
-        if (
-            !Number.isInteger(featureVariationIndex) ||
-            featureVariationIndex < 0
-        ) {
+        const parsed = parseFeatureVariationGlyphName(rootStackItem?.glyphName);
+        if (!parsed) {
             return undefined;
         }
 
-        return glyph?.featureVariations?.[featureVariationIndex];
+        return glyph?.featureVariations?.[parsed.index];
     }
 
     private getRootFeatureVariationDrawingIds(): string[] | undefined {
@@ -21759,9 +21713,7 @@ export class OutlineEditor {
         // immediately above and below it in the sorted list. This lets
         // Cmd+Up/Down resume from the right position when switching to a glyph
         // that doesn't have the same free drawing.
-        const isFreeDrawing =
-            !!drawing.location && Object.keys(drawing.location).length > 0;
-        if (isFreeDrawing) {
+        if (hasDrawingLocation(drawing)) {
             const sortedDrawings = this.glyphCanvas.getSortedDrawings();
             const braceIndex = sortedDrawings.findIndex(
                 (l) => l.id === drawing.id

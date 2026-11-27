@@ -382,6 +382,16 @@ fn list_name_records(
     })
 }
 
+fn variation_axis_to_json(axis: &read_fonts::tables::fvar::VariationAxisRecord) -> Value {
+    json!({
+        "tag": axis.axis_tag().to_string(),
+        "minValue": axis.min_value().to_f32(),
+        "defaultValue": axis.default_value().to_f32(),
+        "maxValue": axis.max_value().to_f32(),
+        "flags": axis.flags(),
+    })
+}
+
 fn list_variation_axes(
     font: &FontRef<'_>,
     limit: usize,
@@ -404,13 +414,7 @@ fn list_variation_axes(
             path: format!("/tables/fvar/axes/index={index}"),
             label: format!("index={index} tag={}", axis.axis_tag()),
             kind: "variationAxis".to_owned(),
-            value: json!({
-                "tag": axis.axis_tag().to_string(),
-                "minValue": axis.min_value().to_f32(),
-                "defaultValue": axis.default_value().to_f32(),
-                "maxValue": axis.max_value().to_f32(),
-                "flags": axis.flags(),
-            }),
+            value: variation_axis_to_json(axis),
         });
     }
 
@@ -632,13 +636,7 @@ fn resolve_variation_axis(
     };
 
     let value = match field {
-        None => json!({
-            "tag": axis.axis_tag().to_string(),
-            "minValue": axis.min_value().to_f32(),
-            "defaultValue": axis.default_value().to_f32(),
-            "maxValue": axis.max_value().to_f32(),
-            "flags": axis.flags(),
-        }),
+        None => variation_axis_to_json(axis),
         Some(VariationAxisField::Tag) => json!(axis.axis_tag().to_string()),
         Some(VariationAxisField::MinValue) => json!(axis.min_value().to_f32()),
         Some(VariationAxisField::DefaultValue) => json!(axis.default_value().to_f32()),

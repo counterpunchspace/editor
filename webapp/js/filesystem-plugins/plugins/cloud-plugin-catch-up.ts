@@ -8,6 +8,7 @@ import {
     FONT_CORE_DOCUMENT_ID,
     FONT_DEPS_DOCUMENT_ID,
     glyphDocumentId,
+    glyphIdFromDocumentId,
     glyphIdsFromCatalogEntries,
     glyphIdsFromRevisionEntries
 } from '../cloud-document-set';
@@ -457,9 +458,7 @@ export const cloudPluginCatchUpMethods = {
         reachedTail: Set<string>,
         retryIds: string[]
     ): void {
-        const glyphId = target.documentId.startsWith('glyph:')
-            ? target.documentId.slice('glyph:'.length)
-            : '';
+        const glyphId = glyphIdFromDocumentId(target.documentId) ?? '';
         const resident =
             typeof bridge.hasResidentGlyphDocument === 'function' &&
             bridge.hasResidentGlyphDocument(target.documentId) === true;
@@ -624,9 +623,7 @@ export const cloudPluginCatchUpMethods = {
                 documentId,
                 false
             );
-            const glyphId = documentId.startsWith('glyph:')
-                ? documentId.slice('glyph:'.length)
-                : '';
+            const glyphId = glyphIdFromDocumentId(documentId) ?? '';
             if (glyphId && !retryIds.includes(glyphId)) {
                 retryIds.push(glyphId);
             }

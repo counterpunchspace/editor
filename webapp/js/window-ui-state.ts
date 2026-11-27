@@ -625,10 +625,6 @@ function viewportWidth(): number {
     return window.innerWidth || document.documentElement.clientWidth || 1;
 }
 
-function viewportHeight(): number {
-    return window.innerHeight || document.documentElement.clientHeight || 1;
-}
-
 function pxToDocsPercent(px: number): number {
     return clampOpenPercent(Math.round((px / viewportWidth()) * 100));
 }

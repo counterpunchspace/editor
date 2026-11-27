@@ -15,6 +15,7 @@ import {
     delay,
     fontRectToCutout,
     getFontStations,
+    getSelectedGlyphOutlineFontRect,
     getStationDisplayName,
     viewAnimationDelayMs
 } from './tour-utils';
@@ -551,41 +552,9 @@ function getTextRunLetterCutout(letter: string): TourCutoutRect | null {
     return fontRectToCutout(metrics);
 }
 
-function getSelectedGlyphOutlineRect(): {
-    minX: number;
-    maxX: number;
-    minY: number;
-    maxY: number;
-} | null {
-    const canvas = window.glyphCanvas;
-    if (!canvas?.outlineEditor?.active) {
-        return null;
-    }
-    const index = canvas.textRunEditor?.selectedGlyphIndex;
-    if (typeof index !== 'number' || index < 0) {
-        return null;
-    }
-    const bounds = canvas.glyphBounds?.[index];
-    if (
-        !bounds ||
-        !Number.isFinite(bounds.x1) ||
-        !Number.isFinite(bounds.x2) ||
-        !Number.isFinite(bounds.y1) ||
-        !Number.isFinite(bounds.y2)
-    ) {
-        return null;
-    }
-    return {
-        minX: bounds.x + bounds.x1,
-        maxX: bounds.x + bounds.x2,
-        minY: bounds.y + bounds.y1,
-        maxY: bounds.y + bounds.y2
-    };
-}
-
 /** Outline bounds in edit mode; text-run `m` before that. Follows interpolation. */
 function getCurrentGlyphOutlineCutout(): TourCutoutRect | null {
-    const outline = getSelectedGlyphOutlineRect();
+    const outline = getSelectedGlyphOutlineFontRect();
     if (outline) {
         return fontRectToCutout(outline);
     }

@@ -3107,8 +3107,11 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     background: var(--background-primary);
 }
 
-/* Text Field */
-.plugin-ui-textfield {
+/* Plugin UI field rows (text field, checkbox, radio group, color picker) */
+.plugin-ui-textfield,
+.plugin-ui-checkbox,
+.plugin-ui-radio-group,
+.plugin-ui-color {
     display: grid;
     grid-template-columns: 70px 1fr;
     gap: 8px;
@@ -3116,7 +3119,10 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     margin-bottom: 8px;
 }
 
-.plugin-ui-textfield:last-child {
+.plugin-ui-textfield:last-child,
+.plugin-ui-checkbox:last-child,
+.plugin-ui-radio-group:last-child,
+.plugin-ui-color:last-child {
     margin-bottom: 0;
 }
 
@@ -3141,38 +3147,12 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     background: var(--background-primary);
 }
 
-/* Checkbox */
-.plugin-ui-checkbox {
-    display: grid;
-    grid-template-columns: 70px 1fr;
-    gap: 8px;
-    align-items: center;
-    margin-bottom: 8px;
-}
-
-.plugin-ui-checkbox:last-child {
-    margin-bottom: 0;
-}
-
 .plugin-ui-checkbox-input {
     width: 14px;
     height: 14px;
     cursor: pointer;
     margin: 0;
     filter: saturate(0);
-}
-
-/* Radio Group */
-.plugin-ui-radio-group {
-    display: grid;
-    grid-template-columns: 70px 1fr;
-    gap: 8px;
-    align-items: center;
-    margin-bottom: 8px;
-}
-
-.plugin-ui-radio-group:last-child {
-    margin-bottom: 0;
 }
 
 .plugin-ui-radio-options {
@@ -3207,19 +3187,6 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     cursor: pointer;
     margin: 0;
     filter: saturate(0);
-}
-
-/* Color Picker */
-.plugin-ui-color {
-    display: grid;
-    grid-template-columns: 70px 1fr;
-    gap: 8px;
-    align-items: center;
-    margin-bottom: 8px;
-}
-
-.plugin-ui-color:last-child {
-    margin-bottom: 0;
 }
 
 .plugin-ui-color-input {
@@ -3662,7 +3629,8 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     border-bottom: 1px solid var(--border-primary);
 }
 
-.script-file-menu-item {
+.script-file-menu-item,
+.plugin-menu-item {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -3673,7 +3641,9 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
 }
 
 .script-file-menu-item:hover,
-.script-file-menu-item.focused {
+.script-file-menu-item.focused,
+.plugin-menu-item:hover,
+.plugin-menu-item.focused {
     background-color: var(--input-bg);
 }
 
@@ -3796,21 +3766,6 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     font-size: 11px;
     border-radius: 3px;
     overflow: hidden;
-}
-
-.plugin-menu-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 12px;
-    cursor: pointer;
-    transition: background-color 0.15s ease;
-    color: var(--text-primary);
-}
-
-.plugin-menu-item:hover,
-.plugin-menu-item.focused {
-    background-color: var(--input-bg);
 }
 
 .plugin-menu-item.plugin-menu-item-disabled,
@@ -4845,27 +4800,13 @@ html[data-command-modifier='ctrl'] .shortcut-option-modifier::before {
     flex: 1 1 auto;
 }
 
-/* Tippy.js Theme - Dark */
-.tippy-box[data-theme='dark'] {
-    background-color: var(--background-secondary);
-    border: 1px solid var(--border-primary);
-    border-radius: 3px;
-    color: var(--text-primary);
-}
-
-/* Tippy.js Theme - Light */
-.tippy-box[data-theme='light'] {
-    background-color: var(--background-secondary);
-    border: 1px solid var(--border-primary);
-    border-radius: 3px;
-    color: var(--text-primary);
-}
-
-/* Arrows take the box's fill and border. Tippy draws the arrow in
-   currentColor, which defaults to #333. The ::after triangle sits one pixel
-   further out, behind the box, and shows as the arrow's border. */
+/* Tippy.js Theme - Dark & Light (arrows take the box's fill and border) */
 .tippy-box[data-theme='dark'],
 .tippy-box[data-theme='light'] {
+    background-color: var(--background-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: 3px;
+    color: var(--text-primary);
     --tippy-arrow-fill: var(--background-secondary);
     --tippy-arrow-border: var(--border-primary);
 }
@@ -8094,7 +8035,8 @@ select.glyph-property-input {
 } */
 
 /* Sidebar list container (extends to edges) */
-.sidebar-list {
+.sidebar-list,
+.features-list {
     display: flex;
     flex-direction: column;
     gap: 0;
@@ -8303,13 +8245,6 @@ select.glyph-property-input {
 
 .features-sidebar .editor-section-title:first-child {
     margin-top: 0;
-}
-
-.features-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-    margin: 0 calc(var(--top-row-sidebar-list-bleed, 12px) * -1);
 }
 
 .features-list[hidden],

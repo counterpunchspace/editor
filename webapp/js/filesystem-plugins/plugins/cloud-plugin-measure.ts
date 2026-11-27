@@ -4,10 +4,9 @@
  * Installed onto CloudPlugin.prototype from cloud-plugin.ts.
  */
 import { CloudAdapter, type CloudShardIoOptions } from '../../cloud-adapter';
-import { getCloudRequestHeaders } from '../../cloud-adapter-support';
 import {
     captureCloudSaveSeedState,
-    type CloudAsset
+    createPendingCloudAsset
 } from './cloud-plugin-support';
 
 export const cloudPluginMeasureMethods = {
@@ -37,26 +36,14 @@ export const cloudPluginMeasureMethods = {
             transport: options?.transport
         };
 
-        const resp = await fetch(`${this._websiteBaseUrl}/api/cloud/assets`, {
-            method: 'POST',
-            credentials: 'include',
-            headers: getCloudRequestHeaders({
-                'Content-Type': 'application/json'
-            }),
-            body: JSON.stringify({
-                name: assetName,
-                estimatedSeedBytes: seed.byteLength,
-                estimatedGlyphCount: seed.glyphCount
-            })
+        const asset = await createPendingCloudAsset({
+            websiteBaseUrl: this._websiteBaseUrl,
+            name: assetName,
+            estimatedSeedBytes: seed.byteLength,
+            estimatedGlyphCount: seed.glyphCount
         });
-        if (!resp.ok) {
-            const err = await resp.text().catch(() => '');
-            throw new Error(
-                `Failed to create cloud asset: ${resp.status} ${err}`
-            );
-        }
-        const { asset } = (await resp.json()) as { asset: CloudAsset };
         const assetId = asset.id;
+        this._eligibility = null;
         const { token, roomUrl } = await this._fetchRoomToken(assetId);
         const seeder = new CloudAdapter({
             assetId,

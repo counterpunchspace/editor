@@ -263,21 +263,11 @@ function parseGlyphs(
         if (!isRecord(entry) || typeof entry.name !== 'string') {
             continue;
         }
-        const drawingsRaw = entry.layers;
-        if (!Array.isArray(drawingsRaw) || drawingsRaw.length === 0) {
-            continue;
-        }
-        const drawings: PasteGlyphDrawing[] = [];
-        for (const drawingEntry of drawingsRaw) {
-            const drawing = parseGlyphDrawing(
-                drawingEntry,
-                nodeOrder,
-                stationCount
-            );
-            if (drawing) {
-                drawings.push(drawing);
-            }
-        }
+        const drawings = parseGlyphDrawings(
+            entry.layers,
+            nodeOrder,
+            stationCount
+        );
         if (drawings.length === 0) {
             continue;
         }
@@ -299,6 +289,28 @@ function parseGlyphs(
     return glyphs.length > 0 ? glyphs : null;
 }
 
+function parseGlyphDrawings(
+    raw: unknown,
+    nodeOrder: CounterpunchNodeOrder,
+    stationCount: number
+): PasteGlyphDrawing[] {
+    if (!Array.isArray(raw) || raw.length === 0) {
+        return [];
+    }
+    const drawings: PasteGlyphDrawing[] = [];
+    for (const drawingEntry of raw) {
+        const drawing = parseGlyphDrawing(
+            drawingEntry,
+            nodeOrder,
+            stationCount
+        );
+        if (drawing) {
+            drawings.push(drawing);
+        }
+    }
+    return drawings;
+}
+
 function parseFeatureVariations(
     value: unknown,
     nodeOrder: CounterpunchNodeOrder,
@@ -312,20 +324,11 @@ function parseFeatureVariations(
         if (!isRecord(entry) || !Array.isArray(entry.axisRules)) {
             continue;
         }
-        if (!Array.isArray(entry.layers) || entry.layers.length === 0) {
-            continue;
-        }
-        const drawings: PasteGlyphDrawing[] = [];
-        for (const drawingEntry of entry.layers) {
-            const drawing = parseGlyphDrawing(
-                drawingEntry,
-                nodeOrder,
-                stationCount
-            );
-            if (drawing) {
-                drawings.push(drawing);
-            }
-        }
+        const drawings = parseGlyphDrawings(
+            entry.layers,
+            nodeOrder,
+            stationCount
+        );
         if (drawings.length === 0) {
             continue;
         }

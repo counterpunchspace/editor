@@ -3504,48 +3504,35 @@ export class CloudPlugin extends FilesystemPlugin {
         }
         // A failed post leaves the server's glyph count too high until the
         // next catalog change, so retry transient failures a few times.
-        for (
-            let attempt = 0;
-            attempt < GLYPH_ORPHAN_SYNC_ATTEMPTS;
-            attempt += 1
-        ) {
-            if (attempt > 0) {
-                await new Promise((resolve) =>
-                    setTimeout(
-                        resolve,
-                        this._glyphOrphanRetryDelayMs * 2 ** (attempt - 1)
-                    )
-                );
-            }
-            try {
-                const resp = await fetch(
-                    `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}/glyph-orphans`,
-                    {
-                        method: 'POST',
-                        credentials: 'include',
-                        headers: getCloudRequestHeaders({
-                            'Content-Type': 'application/json'
-                        }),
-                        body: JSON.stringify(body)
+        const ok = await this._postAssetJsonWithRetry(
+            assetId,
+            '/glyph-orphans',
+            body,
+            {
+                attempts: GLYPH_ORPHAN_SYNC_ATTEMPTS,
+                retryDelayMs: this._glyphOrphanRetryDelayMs,
+                logLabel: 'Glyph orphan sync',
+                onResponse: (resp) => {
+                    if (resp.status === 403 || resp.status === 404) {
+                        state.forbidden = true;
+                        return 'done';
                     }
-                );
-                if (resp.status === 403 || resp.status === 404) {
-                    state.forbidden = true;
-                    return;
+                    if (!resp.ok) {
+                        // `known` stays untouched, so a later sync resends the diff.
+                        console.warn(
+                            `Glyph orphan sync failed (${resp.status})`
+                        );
+                        return 'retry';
+                    }
+                    return 'done';
                 }
-                if (!resp.ok) {
-                    // `known` stays untouched, so a later sync resends the diff.
-                    console.warn(`Glyph orphan sync failed (${resp.status})`);
-                    continue;
-                }
-                if (body.live) {
-                    state.reconciled = true;
-                }
-                state.known = live;
-                return;
-            } catch (error) {
-                console.warn('Glyph orphan sync failed:', error);
             }
+        );
+        if (ok) {
+            if (body.live) {
+                state.reconciled = true;
+            }
+            state.known = live;
         }
     }
 
@@ -4049,6 +4036,56 @@ export class CloudPlugin extends FilesystemPlugin {
         }, this._retiredRoomsGraceMs);
     }
 
+    private async _postAssetJsonWithRetry(
+        assetId: string,
+        pathSuffix: string,
+        body: unknown,
+        options: {
+            attempts: number;
+            retryDelayMs: number;
+            logLabel: string;
+            onResponse?: (resp: Response) => 'done' | 'retry';
+        }
+    ): Promise<boolean> {
+        for (let attempt = 0; attempt < options.attempts; attempt += 1) {
+            if (attempt > 0) {
+                await new Promise((resolve) =>
+                    setTimeout(
+                        resolve,
+                        options.retryDelayMs * 2 ** (attempt - 1)
+                    )
+                );
+            }
+            try {
+                const resp = await fetch(
+                    `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}${pathSuffix}`,
+                    {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: getCloudRequestHeaders({
+                            'Content-Type': 'application/json'
+                        }),
+                        body: JSON.stringify(body)
+                    }
+                );
+                if (options.onResponse) {
+                    const decision = options.onResponse(resp);
+                    if (decision === 'done') {
+                        return resp.ok;
+                    }
+                    continue;
+                }
+                if (resp.ok || (resp.status >= 400 && resp.status < 500)) {
+                    return resp.ok;
+                }
+                console.warn(`${options.logLabel} failed (${resp.status})`);
+            } catch (error) {
+                console.warn(`${options.logLabel} failed:`, error);
+            }
+        }
+        return false;
+    }
+
     /** First retry delay of a failed layout room report; doubles after. */
     _layoutRoomsRetryDelayMs = 1000;
 
@@ -4075,35 +4112,16 @@ export class CloudPlugin extends FilesystemPlugin {
                 ...(bridge.layoutMovedFromRoomIds?.() ?? [])
             ])
         ];
-        for (let attempt = 0; attempt < 3; attempt += 1) {
-            if (attempt > 0) {
-                await new Promise((resolve) =>
-                    setTimeout(
-                        resolve,
-                        this._layoutRoomsRetryDelayMs * 2 ** (attempt - 1)
-                    )
-                );
+        await this._postAssetJsonWithRetry(
+            assetId,
+            '/layout-rooms',
+            { live },
+            {
+                attempts: 3,
+                retryDelayMs: this._layoutRoomsRetryDelayMs,
+                logLabel: 'Layout room report'
             }
-            try {
-                const resp = await fetch(
-                    `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(assetId)}/layout-rooms`,
-                    {
-                        method: 'POST',
-                        credentials: 'include',
-                        headers: getCloudRequestHeaders({
-                            'Content-Type': 'application/json'
-                        }),
-                        body: JSON.stringify({ live })
-                    }
-                );
-                if (resp.ok || (resp.status >= 400 && resp.status < 500)) {
-                    return;
-                }
-                console.warn(`Layout room report failed (${resp.status})`);
-            } catch (error) {
-                console.warn('Layout room report failed:', error);
-            }
-        }
+        );
     }
 
     private _liveGlyphNamesForSync(): string[] {

@@ -6,6 +6,7 @@ import {
 import { seedCompilerFromCommittedFont } from './committed-font-seed';
 import { del, get, set } from 'idb-keyval';
 import { fontDestinationPluginManager } from './font-destination-plugin-manager';
+import { postBinaryFontExportMessage } from './binary-font-export-message';
 import { prepareCompileFilters } from './compile-filter-host';
 import { Logger } from './logger';
 import { showProceedDialog } from './ui/confirm-dialog';
@@ -366,17 +367,7 @@ async function runBinaryFontExport(
             mimeType: 'font/ttf',
             timeTakenMs: compiled.timeTakenMs
         };
-        const messageBytes = compiled.bytes.slice();
-        window.postMessage(
-            {
-                type: 'counterpunch:binary-font-exported',
-                version: 1,
-                bytes: messageBytes.buffer,
-                metadata
-            },
-            window.location.origin,
-            [messageBytes.buffer]
-        );
+        postBinaryFontExportMessage(window, compiled.bytes, metadata);
         fontDestinationPluginManager.deliverExportedFont(
             compiled.bytes,
             metadata

@@ -33,6 +33,9 @@ import {
     writeNodePosition
 } from './drawing-geometry-ydoc';
 import {
+    isPlainObject,
+    isYArray,
+    isYMap,
     yArrayToArray,
     yMapForEach,
     yMapGet,
@@ -43,17 +46,6 @@ import {
 type Unsafe = ReturnType<typeof JSON.parse>;
 
 // ── helpers ──────────────────────────────────────────────────────────
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-    return (
-        v !== null &&
-        typeof v === 'object' &&
-        !Array.isArray(v) &&
-        !(v instanceof Y.Map) &&
-        !(v instanceof Y.Array) &&
-        !(v instanceof Y.Doc)
-    );
-}
 
 const MEMBERSHIP_ARRAY_KEYS = new Set(['codepoints']);
 const MEMBERSHIP_DICT_KEYS = new Set([
@@ -2091,25 +2083,6 @@ export function diffYArray(arr: Y.Array<unknown>, nextValues: unknown[]): void {
             cursor++;
         }
     }
-}
-
-function isYMap(v: unknown): v is Y.Map<unknown> {
-    return (
-        !!v &&
-        typeof (v as any).get === 'function' &&
-        typeof (v as any).forEach === 'function' &&
-        typeof (v as any).set === 'function' &&
-        typeof (v as any).insert !== 'function'
-    );
-}
-
-function isYArray(v: unknown): v is Y.Array<unknown> {
-    return (
-        !!v &&
-        typeof (v as any).insert === 'function' &&
-        typeof (v as any).push === 'function' &&
-        typeof (v as any).toArray === 'function'
-    );
 }
 
 /**

@@ -503,12 +503,42 @@ async function refreshShareDialogState(options?: {
     renderShareDialog();
 }
 
-async function handleInviteSubmit(form: HTMLFormElement): Promise<void> {
+async function runShareMutation(options: {
+    confirmMessage?: string;
+    beforeSubmit?: () => void;
+    run: (cloudPlugin: CloudPlugin) => Promise<{
+        preserveInviteUrl?: boolean;
+        preserveTransferUrl?: boolean;
+        notice: string;
+    }>;
+}): Promise<void> {
+    if (options.confirmMessage && !confirm(options.confirmMessage)) {
+        return;
+    }
+
     const cloudPlugin = getCloudPlugin();
     if (!cloudPlugin) {
         return;
     }
 
+    options.beforeSubmit?.();
+    shareDialogState.isSubmitting = true;
+    shareDialogState.error = null;
+    shareDialogState.notice = null;
+    renderShareDialog();
+
+    try {
+        const refreshOptions = await options.run(cloudPlugin);
+        shareDialogState.isSubmitting = false;
+        await refreshShareDialogState(refreshOptions);
+    } catch (error) {
+        shareDialogState.isSubmitting = false;
+        shareDialogState.error = (error as Error).message;
+        renderShareDialog();
+    }
+}
+
+async function handleInviteSubmit(form: HTMLFormElement): Promise<void> {
     const formData = new FormData(form);
     const email = String(formData.get('email') || '').trim();
     const role = String(formData.get('role') || 'editor') as ShareRole;
@@ -518,36 +548,25 @@ async function handleInviteSubmit(form: HTMLFormElement): Promise<void> {
         return;
     }
 
-    shareDialogState.inviteEmail = email;
-    shareDialogState.inviteRole = role;
-    shareDialogState.isSubmitting = true;
-    shareDialogState.error = null;
-    shareDialogState.notice = null;
-    renderShareDialog();
-
-    try {
-        const result = await cloudPlugin.inviteUser(email, role);
-        shareDialogState.inviteEmail = '';
-        shareDialogState.inviteRole = 'editor';
-        shareDialogState.latestInviteUrl = result.inviteUrl || null;
-        shareDialogState.isSubmitting = false;
-        await refreshShareDialogState({
-            preserveInviteUrl: true,
-            notice: `Invitation sent to ${email}.`
-        });
-    } catch (error) {
-        shareDialogState.isSubmitting = false;
-        shareDialogState.error = (error as Error).message;
-        renderShareDialog();
-    }
+    await runShareMutation({
+        beforeSubmit: () => {
+            shareDialogState.inviteEmail = email;
+            shareDialogState.inviteRole = role;
+        },
+        run: async (cloudPlugin) => {
+            const result = await cloudPlugin.inviteUser(email, role);
+            shareDialogState.inviteEmail = '';
+            shareDialogState.inviteRole = 'editor';
+            shareDialogState.latestInviteUrl = result.inviteUrl || null;
+            return {
+                preserveInviteUrl: true,
+                notice: `Invitation sent to ${email}.`
+            };
+        }
+    });
 }
 
 async function handleTransferSubmit(form: HTMLFormElement): Promise<void> {
-    const cloudPlugin = getCloudPlugin();
-    if (!cloudPlugin) {
-        return;
-    }
-
     const formData = new FormData(form);
     const email = String(formData.get('email') || '').trim();
     const previousOwnerRole = String(
@@ -560,106 +579,61 @@ async function handleTransferSubmit(form: HTMLFormElement): Promise<void> {
         return;
     }
 
-    if (
-        shareDialogState.shareState?.ownershipTransfer &&
-        !confirm(
-            'A pending ownership transfer already exists. Creating a new transfer will cancel it. Continue?'
-        )
-    ) {
-        return;
-    }
-
-    shareDialogState.transferEmail = email;
-    shareDialogState.previousOwnerRole = previousOwnerRole;
-    shareDialogState.isSubmitting = true;
-    shareDialogState.error = null;
-    shareDialogState.notice = null;
-    renderShareDialog();
-
-    try {
-        const result = await cloudPlugin.createOwnershipTransfer(
-            email,
-            previousOwnerRole
-        );
-        shareDialogState.transferEmail = '';
-        shareDialogState.previousOwnerRole = 'editor';
-        shareDialogState.latestTransferUrl = result.transferUrl || null;
-        shareDialogState.isSubmitting = false;
-        await refreshShareDialogState({
-            preserveInviteUrl: true,
-            preserveTransferUrl: true,
-            notice: `Ownership transfer requested for ${email}.`
-        });
-    } catch (error) {
-        shareDialogState.isSubmitting = false;
-        shareDialogState.error = (error as Error).message;
-        renderShareDialog();
-    }
+    await runShareMutation({
+        confirmMessage: shareDialogState.shareState?.ownershipTransfer
+            ? 'A pending ownership transfer already exists. Creating a new transfer will cancel it. Continue?'
+            : undefined,
+        beforeSubmit: () => {
+            shareDialogState.transferEmail = email;
+            shareDialogState.previousOwnerRole = previousOwnerRole;
+        },
+        run: async (cloudPlugin) => {
+            const result = await cloudPlugin.createOwnershipTransfer(
+                email,
+                previousOwnerRole
+            );
+            shareDialogState.transferEmail = '';
+            shareDialogState.previousOwnerRole = 'editor';
+            shareDialogState.latestTransferUrl = result.transferUrl || null;
+            return {
+                preserveInviteUrl: true,
+                preserveTransferUrl: true,
+                notice: `Ownership transfer requested for ${email}.`
+            };
+        }
+    });
 }
 
 async function handleCancelOwnershipTransfer(): Promise<void> {
-    if (!confirm('Cancel the pending ownership transfer?')) {
-        return;
-    }
-
-    const cloudPlugin = getCloudPlugin();
-    if (!cloudPlugin) {
-        return;
-    }
-
-    shareDialogState.isSubmitting = true;
-    shareDialogState.error = null;
-    renderShareDialog();
-    try {
-        await cloudPlugin.cancelOwnershipTransfer();
-        shareDialogState.isSubmitting = false;
-        await refreshShareDialogState({
-            preserveInviteUrl: true,
-            notice: 'Ownership transfer canceled.'
-        });
-    } catch (error) {
-        shareDialogState.isSubmitting = false;
-        shareDialogState.error = (error as Error).message;
-        renderShareDialog();
-    }
+    await runShareMutation({
+        confirmMessage: 'Cancel the pending ownership transfer?',
+        run: async (cloudPlugin) => {
+            await cloudPlugin.cancelOwnershipTransfer();
+            return {
+                preserveInviteUrl: true,
+                notice: 'Ownership transfer canceled.'
+            };
+        }
+    });
 }
 
 async function handleRevokeInvitation(invitationId: string): Promise<void> {
     if (!invitationId) {
         return;
     }
-    if (!confirm('Revoke this pending invitation?')) {
-        return;
-    }
-
-    const cloudPlugin = getCloudPlugin();
-    if (!cloudPlugin) {
-        return;
-    }
-
-    shareDialogState.isSubmitting = true;
-    shareDialogState.error = null;
-    renderShareDialog();
-    try {
-        await cloudPlugin.revokeInvitation(invitationId);
-        shareDialogState.isSubmitting = false;
-        await refreshShareDialogState({
-            preserveInviteUrl: true,
-            notice: 'Invitation revoked.'
-        });
-    } catch (error) {
-        shareDialogState.isSubmitting = false;
-        shareDialogState.error = (error as Error).message;
-        renderShareDialog();
-    }
+    await runShareMutation({
+        confirmMessage: 'Revoke this pending invitation?',
+        run: async (cloudPlugin) => {
+            await cloudPlugin.revokeInvitation(invitationId);
+            return {
+                preserveInviteUrl: true,
+                notice: 'Invitation revoked.'
+            };
+        }
+    });
 }
 
 async function handleMemberRoleSubmit(form: HTMLFormElement): Promise<void> {
-    const cloudPlugin = getCloudPlugin();
-    if (!cloudPlugin) {
-        return;
-    }
-
     const userId = form.dataset.userId || '';
     const roleSelect = form.querySelector('select[name="role"]');
     const role = (
@@ -670,51 +644,31 @@ async function handleMemberRoleSubmit(form: HTMLFormElement): Promise<void> {
         return;
     }
 
-    shareDialogState.isSubmitting = true;
-    shareDialogState.error = null;
-    renderShareDialog();
-    try {
-        await cloudPlugin.updateMemberRole(userId, role);
-        shareDialogState.isSubmitting = false;
-        await refreshShareDialogState({
-            preserveInviteUrl: true,
-            notice: 'Member role updated.'
-        });
-    } catch (error) {
-        shareDialogState.isSubmitting = false;
-        shareDialogState.error = (error as Error).message;
-        renderShareDialog();
-    }
+    await runShareMutation({
+        run: async (cloudPlugin) => {
+            await cloudPlugin.updateMemberRole(userId, role);
+            return {
+                preserveInviteUrl: true,
+                notice: 'Member role updated.'
+            };
+        }
+    });
 }
 
 async function handleRemoveMember(userId: string): Promise<void> {
     if (!userId) {
         return;
     }
-    if (!confirm('Remove this member from the shared font?')) {
-        return;
-    }
-
-    const cloudPlugin = getCloudPlugin();
-    if (!cloudPlugin) {
-        return;
-    }
-
-    shareDialogState.isSubmitting = true;
-    shareDialogState.error = null;
-    renderShareDialog();
-    try {
-        await cloudPlugin.removeMember(userId);
-        shareDialogState.isSubmitting = false;
-        await refreshShareDialogState({
-            preserveInviteUrl: true,
-            notice: 'Member removed.'
-        });
-    } catch (error) {
-        shareDialogState.isSubmitting = false;
-        shareDialogState.error = (error as Error).message;
-        renderShareDialog();
-    }
+    await runShareMutation({
+        confirmMessage: 'Remove this member from the shared font?',
+        run: async (cloudPlugin) => {
+            await cloudPlugin.removeMember(userId);
+            return {
+                preserveInviteUrl: true,
+                notice: 'Member removed.'
+            };
+        }
+    });
 }
 
 /**

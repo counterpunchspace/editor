@@ -417,13 +417,12 @@ export class NativeAdapter implements FileSystemAdapter {
                 let mtime = '';
 
                 if (!is_dir && childHandle instanceof FileSystemFileHandle) {
-                    try {
-                        const file = await childHandle.getFile();
-                        size = file.size;
-                        mtime = new Date(file.lastModified).toISOString();
-                    } catch (e) {
+                    const stats = await this._readFileStats(childHandle);
+                    if (!stats) {
                         continue;
                     }
+                    size = stats.size;
+                    mtime = stats.mtime;
                 }
 
                 items[name] = {
@@ -457,6 +456,37 @@ export class NativeAdapter implements FileSystemAdapter {
         return new Uint8Array(arrayBuffer);
     }
 
+    private async _readFileStats(
+        handle: FileSystemFileHandle
+    ): Promise<{ size: number; mtime: string } | null> {
+        try {
+            const file = await handle.getFile();
+            return {
+                size: file.size,
+                mtime: new Date(file.lastModified).toISOString()
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    private async _resolveDirectoryParts(
+        parts: string[],
+        create: boolean
+    ): Promise<FileSystemDirectoryHandle> {
+        if (!this.directoryHandle) {
+            throw new Error('No directory selected');
+        }
+        let currentHandle: FileSystemDirectoryHandle = this.directoryHandle;
+        for (const part of parts) {
+            currentHandle = await currentHandle.getDirectoryHandle(
+                part,
+                create ? { create: true } : undefined
+            );
+        }
+        return currentHandle;
+    }
+
     async writeFile(path: string, content: string | Uint8Array): Promise<void> {
         if (!this.directoryHandle) {
             throw new Error('No directory selected');
@@ -473,12 +503,7 @@ export class NativeAdapter implements FileSystemAdapter {
             throw new Error('Invalid file path');
         }
 
-        let parentHandle: FileSystemDirectoryHandle = this.directoryHandle;
-        for (const part of parts) {
-            parentHandle = await parentHandle.getDirectoryHandle(part, {
-                create: true
-            });
-        }
+        const parentHandle = await this._resolveDirectoryParts(parts, true);
 
         const fileHandle = await parentHandle.getFileHandle(fileName, {
             create: true
@@ -494,34 +519,15 @@ export class NativeAdapter implements FileSystemAdapter {
     }
 
     async createFolder(path: string): Promise<void> {
-        if (!this.directoryHandle) {
-            throw new Error('No directory selected');
-        }
-
         const normalizedPath = path.replace(/^\/+/, '');
-        const parts = normalizedPath.split('/');
-        let currentHandle: FileSystemDirectoryHandle = this.directoryHandle;
-
-        for (const part of parts) {
-            currentHandle = await currentHandle.getDirectoryHandle(part, {
-                create: true
-            });
-        }
+        await this._resolveDirectoryParts(normalizedPath.split('/'), true);
     }
 
     async deleteItem(path: string, isDir: boolean): Promise<void> {
-        if (!this.directoryHandle) {
-            throw new Error('No directory selected');
-        }
-
         const normalizedPath = path.replace(/^\/+/, '');
         const parts = normalizedPath.split('/');
         const fileName = parts.pop()!;
-
-        let currentHandle: FileSystemDirectoryHandle = this.directoryHandle;
-        for (const part of parts) {
-            currentHandle = await currentHandle.getDirectoryHandle(part);
-        }
+        const currentHandle = await this._resolveDirectoryParts(parts, false);
 
         await currentHandle.removeEntry(fileName, { recursive: isDir });
     }
@@ -531,19 +537,12 @@ export class NativeAdapter implements FileSystemAdapter {
         newName: string,
         isDir: boolean
     ): Promise<void> {
-        if (!this.directoryHandle) {
-            throw new Error('No directory selected');
-        }
-
         const normalizedPath = oldPath.replace(/^\/+/, '');
         const parts = normalizedPath.split('/');
         const oldName = parts.pop()!;
 
         // Get parent directory handle
-        let parentHandle: FileSystemDirectoryHandle = this.directoryHandle;
-        for (const part of parts) {
-            parentHandle = await parentHandle.getDirectoryHandle(part);
-        }
+        const parentHandle = await this._resolveDirectoryParts(parts, false);
 
         // File System Access API doesn't have a rename method
         // We need to use move() which is available in modern browsers
@@ -624,20 +623,15 @@ export class NativeAdapter implements FileSystemAdapter {
                     if (isDir) {
                         await scanDir(itemPath, depth + 1);
                     } else {
-                        let size = 0;
-                        let mtime = '';
-                        try {
-                            const file = await childHandle.getFile();
-                            size = file.size;
-                            mtime = new Date(file.lastModified).toISOString();
-                        } catch (e) {
+                        const stats = await this._readFileStats(childHandle);
+                        if (!stats) {
                             continue;
                         }
                         results.push({
                             path: itemPath,
                             is_dir: false,
-                            size,
-                            mtime,
+                            size: stats.size,
+                            mtime: stats.mtime,
                             handle: childHandle
                         });
                     }

@@ -12,7 +12,11 @@ import {
     viewportFrameBottom,
     viewportFrameRight
 } from './glyph-canvas/viewport';
-import { delay, fontRectToCutout } from './tour-utils';
+import {
+    delay,
+    fontRectToCutout,
+    getSelectedGlyphWorldOrigin
+} from './tour-utils';
 
 type TourCutoutRect = {
     left: number;
@@ -48,24 +52,6 @@ export function componentReferenceMatches(
         return false;
     }
     return actual === wanted || actual.startsWith(`${wanted}.`);
-}
-
-function getSelectedGlyphOrigin(): { x: number; y: number } {
-    const textRun = window.glyphCanvas?.textRunEditor;
-    const index = textRun?.selectedGlyphIndex ?? -1;
-    const glyphs = textRun?.shapedGlyphs || [];
-    if (index < 0 || index >= glyphs.length) {
-        return { x: 0, y: 0 };
-    }
-    let xPosition = 0;
-    for (let i = 0; i < index; i++) {
-        xPosition += glyphs[i].ax || 0;
-    }
-    const glyph = glyphs[index];
-    return {
-        x: xPosition + (glyph.dx || 0),
-        y: glyph.dy || 0
-    };
 }
 
 export function findShapedGlyphIndexForLetter(letter: string): number {
@@ -322,7 +308,7 @@ export function getTourComponentCutout(
     if (!bounds) {
         return null;
     }
-    const origin = getSelectedGlyphOrigin();
+    const origin = getSelectedGlyphWorldOrigin();
     return fontRectToCutout({
         minX: origin.x + bounds.minX,
         maxX: origin.x + bounds.maxX,
@@ -378,7 +364,7 @@ export function getTourCurrentEditingGlyphCutout(): TourCutoutRect | null {
     ) {
         rect = applyAffineToRect(rect, editor.getAccumulatedTransform());
     }
-    const origin = getSelectedGlyphOrigin();
+    const origin = getSelectedGlyphWorldOrigin();
     return fontRectToCutout({
         minX: origin.x + rect.minX,
         maxX: origin.x + rect.maxX,

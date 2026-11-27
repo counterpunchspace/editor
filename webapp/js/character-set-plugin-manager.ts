@@ -225,11 +225,12 @@ export class CharacterSetPluginManager {
         return [...this.providers.values()];
     }
 
-    async getCharacters(
+    private async callProviderMethod(
         providerId: string,
+        method: 'characters' | 'members_by_set',
         setIds: readonly string[],
         levels: readonly CharacterSetCoverageLevel[]
-    ): Promise<CharacterSetEntry[]> {
+    ): Promise<unknown> {
         await this.ensureReady();
         await waitForPyodide(
             30_000,
@@ -256,9 +257,22 @@ if provider is None:
             break
 if provider is None:
     raise RuntimeError(f'Character Set provider not installed: {provider_id}')
-json.dumps(provider.characters(set_ids, levels))
+json.dumps(provider.${method}(set_ids, levels))
 `);
-        return JSON.parse(String(result)) as CharacterSetEntry[];
+        return JSON.parse(String(result));
+    }
+
+    async getCharacters(
+        providerId: string,
+        setIds: readonly string[],
+        levels: readonly CharacterSetCoverageLevel[]
+    ): Promise<CharacterSetEntry[]> {
+        return (await this.callProviderMethod(
+            providerId,
+            'characters',
+            setIds,
+            levels
+        )) as CharacterSetEntry[];
     }
 
     async getMembersBySet(
@@ -266,35 +280,14 @@ json.dumps(provider.characters(set_ids, levels))
         setIds: readonly string[],
         levels: readonly CharacterSetCoverageLevel[]
     ): Promise<Record<string, CharacterSetMembers>> {
-        await this.ensureReady();
-        await waitForPyodide(
-            30_000,
-            'Timed out waiting for Python to initialize.'
+        return parseMembersBySet(
+            await this.callProviderMethod(
+                providerId,
+                'members_by_set',
+                setIds,
+                levels
+            )
         );
-        const result = await runHostPythonAsync(`
-import builtins, json
-from importlib.metadata import entry_points
-
-provider_id = ${JSON.stringify(providerId)}
-set_ids = ${JSON.stringify(setIds)}
-levels = ${JSON.stringify(levels)}
-cache = getattr(builtins, '_cp_charset_providers', None)
-provider = cache.get(provider_id) if isinstance(cache, dict) else None
-if provider is None:
-    if not isinstance(cache, dict):
-        cache = {}
-        builtins._cp_charset_providers = cache
-    for entry in entry_points(group='counterpunch_character_set_plugins'):
-        candidate = entry.load()()
-        cache[candidate.provider_id] = candidate
-        if candidate.provider_id == provider_id:
-            provider = candidate
-            break
-if provider is None:
-    raise RuntimeError(f'Character Set provider not installed: {provider_id}')
-json.dumps(provider.members_by_set(set_ids, levels))
-`);
-        return parseMembersBySet(JSON.parse(String(result)));
     }
 
     private async load(): Promise<void> {

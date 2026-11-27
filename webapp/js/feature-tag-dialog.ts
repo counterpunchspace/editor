@@ -8,7 +8,7 @@ import {
     getFeatureName,
     validateFeatureTag
 } from './opentype-features';
-import { bindModalEscape } from './ui/modal-escape';
+import { mountModalOverlay } from './ui/confirm-dialog';
 
 export type FeatureTagDialogOptions = {
     title: string;
@@ -87,11 +87,11 @@ export function showFeatureTagDialog(
     options: FeatureTagDialogOptions
 ): Promise<string | null> {
     return new Promise((resolve) => {
-        const overlay = document.createElement('div');
-        overlay.className = 'info-popup-overlay';
-        overlay.style.display = 'flex';
-        overlay.style.zIndex = '10002';
-        overlay.innerHTML = `
+        const { overlay, close } = mountModalOverlay({
+            zIndex: '10002',
+            closeSelector: '[data-role="close"]',
+            onDismiss: () => resolve(null),
+            innerHTML: `
             <div class="info-popup feature-tag-dialog" role="dialog" aria-modal="true" aria-labelledby="feature-tag-dialog-title">
                 <div class="info-popup-header">
                     <h3 id="feature-tag-dialog-title">${esc(options.title)}</h3>
@@ -109,8 +109,8 @@ export function showFeatureTagDialog(
                         <button type="button" class="dialog-button dialog-button-primary" data-role="confirm"></button>
                     </div>
                 </div>
-            </div>`;
-        document.body.appendChild(overlay);
+            </div>`
+        });
 
         const input = overlay.querySelector(
             '#feature-tag-input'
@@ -196,11 +196,8 @@ export function showFeatureTagDialog(
             input.focus();
         };
 
-        let escapeBinding: ReturnType<typeof bindModalEscape> | null = null;
         const finish = (tag: string | null) => {
-            escapeBinding?.release();
-            escapeBinding = null;
-            overlay.remove();
+            close();
             resolve(tag);
         };
         const submit = () => {
@@ -209,15 +206,8 @@ export function showFeatureTagDialog(
             }
         };
 
-        escapeBinding = bindModalEscape(() => finish(null), {
-            isOpen: () => overlay.isConnected
-        });
         overlay.addEventListener('click', (event) => {
             const target = event.target as HTMLElement;
-            if (target === overlay) {
-                finish(null);
-                return;
-            }
             const suggestion = target.closest(
                 '.feature-tag-option, .feature-tag-suggestion'
             ) as HTMLElement | null;
@@ -228,7 +218,7 @@ export function showFeatureTagDialog(
             const role = target
                 .closest('[data-role]')
                 ?.getAttribute('data-role');
-            if (role === 'close' || role === 'cancel') finish(null);
+            if (role === 'cancel') finish(null);
             if (role === 'confirm') submit();
         });
         input.addEventListener('input', () => {

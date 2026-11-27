@@ -57,9 +57,12 @@ import {
 } from './collaboration-message';
 import { Logger } from './logger';
 import { pushCollabIntegrityEvent } from './cloud-collab-integrity-debug';
+import { mapPool } from './filesystem-plugins/cloud-bounded-io';
 import {
     CloudRefusalError,
     CloudRoomHttpError,
+    decodeBase64UrlJson,
+    extractRoleFromRoomToken,
     isTerminalDocumentError,
     isTransientRoomHttpAnswer,
     OUTBOUND_ACK_TIMEOUT_MS,
@@ -139,18 +142,6 @@ export type CloudLiveSessionOptions = {
     onReadOnly?: () => void;
 };
 
-function roleFromRoomToken(token: string): string | null {
-    try {
-        const part = String(token || '').split('.')[1] || '';
-        const padded = part.replace(/-/g, '+').replace(/_/g, '/');
-        const json = atob(padded + '='.repeat((4 - (padded.length % 4)) % 4));
-        const role = (JSON.parse(json) as { role?: unknown }).role;
-        return typeof role === 'string' ? role : null;
-    } catch {
-        return null;
-    }
-}
-
 export type GlyphCatchUpTarget = {
     documentId: string;
     expectedRevision?: string;
@@ -216,18 +207,7 @@ export function liveGlyphDocumentIdsFromSubset(
 }
 
 export function stickyLiveGlyphDocumentIds(documentIds: string[]): string[] {
-    const glyphIds = [
-        ...new Set(
-            documentIds.filter(
-                (id) =>
-                    !!id &&
-                    id !== FONT_CORE_DOCUMENT_ID &&
-                    id !== FONT_DEPS_DOCUMENT_ID &&
-                    id.startsWith('glyph:')
-            )
-        )
-    ];
-    return glyphIds.length ? [glyphIds[glyphIds.length - 1]] : [];
+    return requestedLiveGlyphDocumentIds(documentIds, false);
 }
 
 export function requestedLiveGlyphDocumentIds(
@@ -249,26 +229,6 @@ export function requestedLiveGlyphDocumentIds(
         return glyphIds;
     }
     return glyphIds.length ? [glyphIds[glyphIds.length - 1]] : [];
-}
-
-async function runWithConcurrency<T>(
-    items: T[],
-    limit: number,
-    worker: (item: T) => Promise<void>
-): Promise<void> {
-    const executing = new Set<Promise<void>>();
-    for (const item of items) {
-        while (executing.size >= limit) {
-            await Promise.race(executing);
-        }
-        const task = Promise.resolve()
-            .then(() => worker(item))
-            .finally(() => {
-                executing.delete(task);
-            });
-        executing.add(task);
-    }
-    await Promise.all(executing);
 }
 
 /**
@@ -295,17 +255,14 @@ export function roomTokenExpiresAt(token: string | null | undefined): number {
     if (!payload) {
         return 0;
     }
-    try {
-        const json = JSON.parse(
-            atob(payload.replace(/-/g, '+').replace(/_/g, '/'))
-        ) as { exp?: unknown };
-        const exp = Number(json.exp);
-        // Room tokens carry milliseconds; a JWT-style seconds value is
-        // read as such.
-        return Number.isFinite(exp) ? (exp < 1e12 ? exp * 1000 : exp) : 0;
-    } catch {
+    const json = decodeBase64UrlJson<{ exp?: unknown }>(payload);
+    if (!json) {
         return 0;
     }
+    const exp = Number(json.exp);
+    // Room tokens carry milliseconds; a JWT-style seconds value is
+    // read as such.
+    return Number.isFinite(exp) ? (exp < 1e12 ? exp * 1000 : exp) : 0;
 }
 
 /**
@@ -629,7 +586,8 @@ export class CloudLiveSession {
     /** True while this window may not send edits. */
     private _isReadOnly(): boolean {
         return (
-            this._writeAccessLost || roleFromRoomToken(this._token) === 'viewer'
+            this._writeAccessLost ||
+            extractRoleFromRoomToken(this._token) === 'viewer'
         );
     }
 
@@ -839,7 +797,7 @@ export class CloudLiveSession {
             const succeeded: string[] = [];
             const failures: Error[] = [];
             const failed: CatchUpBatchFailure[] = [];
-            await runWithConcurrency(
+            await mapPool(
                 pending,
                 CLOUD_GLYPH_CATCH_UP_CONCURRENCY,
                 async (target) => {
@@ -2113,7 +2071,7 @@ export class CloudLiveSession {
             if (
                 status === 403 &&
                 outbox.refreshed &&
-                roleFromRoomToken(this._token) === 'viewer'
+                extractRoleFromRoomToken(this._token) === 'viewer'
             ) {
                 // A fresh token says viewer: the room will refuse this edit
                 // every time. It stays in the write-ahead log.

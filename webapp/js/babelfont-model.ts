@@ -176,6 +176,7 @@ export function ensureStableIds(
 }
 import {
     affineToDecomposedAffine,
+    boundsFromMinMax,
     calculateGlyphPathBounds,
     calculateGlyphShapeBounds,
     clampUnitInterval,
@@ -183,13 +184,23 @@ import {
     createIdentityDecomposedAffine,
     decomposedAffineToAffine,
     flattenShapesToPaths,
+    isOffCurveNodeType,
     lerpPoint,
     normalizeAffineTransform,
     transformPointWithAffine,
     type ComponentShapeResolver
 } from './glyph-path-geometry';
-import { extendAxesForDesignspaceLocation } from './locations';
+import {
+    designspaceLocationsMatch,
+    extendAxesForDesignspaceLocation
+} from './locations';
 import type { DesignspaceLocation, UserspaceLocation } from './locations';
+import {
+    isPlainNumericText,
+    matchGlyphNamePrefix,
+    parseMetricsKeyText,
+    type ParsedMetricsKey
+} from './metrics-key-parser';
 import { Bezier } from 'bezier-js';
 import { Logger } from './logger';
 import { beginLoadingCursor, endLoadingCursor } from './loading-cursor';
@@ -301,26 +312,6 @@ type MetricsKeyResolution = {
     rejected?: boolean;
 };
 
-type ParsedMetricsKey =
-    | {
-          kind: 'constant';
-          value: number;
-          referencedGlyphNames: string[];
-      }
-    | {
-          kind: 'automatic-offset';
-          delta: number;
-          referencedGlyphNames: string[];
-      }
-    | {
-          kind: 'reference';
-          glyphName: string | null;
-          mirror: boolean;
-          offsetY: number | null;
-          operation: { operator: '+' | '-' | '*' | '/'; value: number } | null;
-          referencedGlyphNames: string[];
-      };
-
 type MetricsKeyDependencyEntry = {
     drawing: Drawing;
     drawingId: string;
@@ -424,6 +415,67 @@ export type FeatureVariationAxisRule = {
 };
 
 /** Format-specific key whose `axisRules` make a drawing a variation drawing. */
+export function parseFeatureVariationGlyphName(
+    name: string | null | undefined
+): { baseName: string; index: number } | null {
+    if (!name) {
+        return null;
+    }
+    const match = name.match(/^(.*)\.feaVar\.(\d+)$/);
+    if (!match) {
+        return null;
+    }
+    const index = Number(match[2]);
+    if (!Number.isInteger(index) || index < 0) {
+        return null;
+    }
+    return { baseName: match[1], index };
+}
+
+export function formatFeatureVariationGlyphName(
+    baseName: string,
+    index: number
+): string {
+    return `${baseName}.feaVar.${index}`;
+}
+
+export function hasDrawingLocation(
+    drawing: { location?: Record<string, unknown> | null } | null | undefined
+): boolean {
+    return !!drawing?.location && Object.keys(drawing.location).length > 0;
+}
+
+export function isAssociatedFreeDrawing(
+    drawing:
+        | {
+              station?: { type?: string } | null;
+              location?: Record<string, unknown> | null;
+          }
+        | null
+        | undefined
+): boolean {
+    return (
+        drawing?.station?.type === 'AssociatedWithMaster' &&
+        hasDrawingLocation(drawing)
+    );
+}
+
+export function getDrawingStationMatchPriority(drawing: {
+    station?: { type?: string } | null;
+    location?: Record<string, unknown> | null;
+}): number {
+    if (hasDrawingLocation(drawing)) {
+        return 0;
+    }
+    if (drawing.station?.type === 'DefaultForMaster') {
+        return 1;
+    }
+    if (drawing.station?.type === 'AssociatedWithMaster') {
+        return 2;
+    }
+    return 3;
+}
+
 export const FEATURE_VARIATION_ATTRIBUTES_KEY =
     'com.schriftgestalt.Glyphs.attr';
 
@@ -2171,11 +2223,6 @@ function findNextOnCurveNodeIndex(
     return null;
 }
 
-function isOffCurveNodeType(type: string | undefined): boolean {
-    const normalizedType = (type || '').toString().toLowerCase();
-    return normalizedType === 'offcurve' || normalizedType === 'o';
-}
-
 const ONE_SIDED_SMOOTH_MAX_ANGLE_ERROR_RADIANS = (6 * Math.PI) / 180;
 
 /**
@@ -3247,29 +3294,6 @@ function assertOutlineEditorSelectionMutationAllowed(
     return outlineEditor;
 }
 
-function locationsMatch(
-    left: DesignspaceLocation | undefined,
-    right: DesignspaceLocation | undefined,
-    axes: Axis[] | undefined
-): boolean {
-    if (!left || !right) {
-        return false;
-    }
-
-    const tags = new Set<string>([
-        ...(axes || []).map((axis) => axis.tag),
-        ...Object.keys(left),
-        ...Object.keys(right)
-    ]);
-    for (const tag of tags) {
-        if ((left[tag] ?? 0) !== (right[tag] ?? 0)) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
 export function buildInterpolationRustBatchOperations(
     metadata: InterpolationRustBatchMetadata
 ): TransactionBufferedOperation[] {
@@ -4302,17 +4326,16 @@ function localMetricsKeyPublicToStorage(
     }
 
     if (font) {
-        const glyphMatch = getGlyphNamePrefixMatch(font, localBody);
+        const glyphMatch = matchGlyphNamePrefix(
+            font.getGlyphNamesByLengthDesc(),
+            localBody
+        );
         if (glyphMatch && glyphMatch.rest === '') {
             return localBody;
         }
     }
 
     return `=${localBody}`;
-}
-
-function isPlainNumericText(value: string): boolean {
-    return /^[+-]?\d+(?:\.\d+)?$/.test(value.trim());
 }
 
 function roundMetricValue(value: number): number {
@@ -4421,29 +4444,6 @@ function setFormatSpecificKey(
     );
 }
 
-function getGlyphNamePrefixMatch(
-    font: Font,
-    text: string
-): { glyphName: string; rest: string } | null {
-    const glyphNames = font.getGlyphNamesByLengthDesc();
-
-    for (const glyphName of glyphNames) {
-        if (text === glyphName) {
-            return { glyphName, rest: '' };
-        }
-
-        const nextChar = text[glyphName.length];
-        if (
-            text.startsWith(glyphName) &&
-            ['@', '+', '-', '*', '/'].includes(nextChar)
-        ) {
-            return { glyphName, rest: text.slice(glyphName.length) };
-        }
-    }
-
-    return null;
-}
-
 /**
  * Why a typed metrics key must not be stored, or null when it may be.
  * A key must name a glyph that exists in the font (loaded or not), so it can
@@ -4476,103 +4476,7 @@ function parseMetricsKey(
     font: Font,
     rawKey: string
 ): ParsedMetricsKey | { error: string } {
-    let input = rawKey.trim();
-    if (!input) {
-        return { error: 'Empty metrics key' };
-    }
-
-    if (input.startsWith('==')) {
-        input = input.slice(1);
-    }
-
-    if (isPlainNumericText(input)) {
-        return {
-            kind: 'constant',
-            value: Number(input),
-            referencedGlyphNames: []
-        };
-    }
-
-    if (/^=\d+(?:\.\d+)?$/.test(input)) {
-        return {
-            kind: 'constant',
-            value: Number(input.slice(1)),
-            referencedGlyphNames: []
-        };
-    }
-
-    if (/^=[+-]\d+(?:\.\d+)?$/.test(input)) {
-        return {
-            kind: 'automatic-offset',
-            delta: Number(input.slice(1)),
-            referencedGlyphNames: []
-        };
-    }
-
-    let body = input;
-    if (body.startsWith('=')) {
-        body = body.slice(1);
-    }
-
-    let mirror = false;
-    if (body.startsWith('|')) {
-        mirror = true;
-        body = body.slice(1);
-    }
-
-    if (!body) {
-        return {
-            kind: 'reference',
-            glyphName: null,
-            mirror,
-            offsetY: null,
-            operation: null,
-            referencedGlyphNames: []
-        };
-    }
-
-    const prefixMatch = getGlyphNamePrefixMatch(font, body);
-    if (!prefixMatch) {
-        return { error: `Unknown glyph reference in metrics key: ${rawKey}` };
-    }
-
-    let rest = prefixMatch.rest;
-    let offsetY: number | null = null;
-    let operation: { operator: '+' | '-' | '*' | '/'; value: number } | null =
-        null;
-
-    if (rest.startsWith('@')) {
-        const offsetMatch = rest.match(/^@([+-]?\d+(?:\.\d+)?)(.*)$/);
-        if (!offsetMatch) {
-            return {
-                error: `Invalid baseline offset in metrics key: ${rawKey}`
-            };
-        }
-        offsetY = Number(offsetMatch[1]);
-        rest = offsetMatch[2] || '';
-    }
-
-    if (rest) {
-        const operationMatch = rest.match(/^([+\-*/])([+-]?\d+(?:\.\d+)?)$/);
-        if (!operationMatch) {
-            return {
-                error: `Invalid calculation suffix in metrics key: ${rawKey}`
-            };
-        }
-        operation = {
-            operator: operationMatch[1] as '+' | '-' | '*' | '/',
-            value: Number(operationMatch[2])
-        };
-    }
-
-    return {
-        kind: 'reference',
-        glyphName: prefixMatch.glyphName,
-        mirror,
-        offsetY,
-        operation,
-        referencedGlyphNames: [prefixMatch.glyphName]
-    };
+    return parseMetricsKeyText(rawKey, font.getGlyphNamesByLengthDesc());
 }
 
 function applyMetricOperation(
@@ -9417,12 +9321,7 @@ export class Drawing extends ArrayElementBase {
     }
 
     getComputedName(): string {
-        const isFreeDrawing =
-            this.station?.type === 'AssociatedWithMaster' &&
-            !!this.location &&
-            Object.keys(this.location).length > 0;
-
-        if (isFreeDrawing) {
+        if (isAssociatedFreeDrawing(this)) {
             return 'Free drawing';
         }
 
@@ -10665,38 +10564,6 @@ export class Drawing extends ArrayElementBase {
         }));
     }
 
-    private static boundsFromMinMax(
-        minX: number,
-        minY: number,
-        maxX: number,
-        maxY: number
-    ): {
-        minX: number;
-        minY: number;
-        maxX: number;
-        maxY: number;
-        width: number;
-        height: number;
-    } | null {
-        if (
-            !Number.isFinite(minX) ||
-            !Number.isFinite(minY) ||
-            !Number.isFinite(maxX) ||
-            !Number.isFinite(maxY)
-        ) {
-            return null;
-        }
-
-        return {
-            minX,
-            minY,
-            maxX,
-            maxY,
-            width: maxX - minX,
-            height: maxY - minY
-        };
-    }
-
     private static boundsFromSegments(
         segments: Array<{
             points: Array<{ x: number; y: number }>;
@@ -10749,7 +10616,7 @@ export class Drawing extends ArrayElementBase {
             }
         }
 
-        return Drawing.boundsFromMinMax(minX, minY, maxX, maxY);
+        return boundsFromMinMax(minX, minY, maxX, maxY);
     }
 
     static calculatePathBounds(pathData: {
@@ -11454,10 +11321,10 @@ export class Drawing extends ArrayElementBase {
 
         for (const drawing of targetGlyph.drawings) {
             if (
-                locationsMatch(
+                designspaceLocationsMatch(
                     designspaceLocation,
                     drawing.getEffectiveDesignspaceLocation(),
-                    font.axes
+                    (font.axes || []).map((axis) => axis.tag)
                 )
             ) {
                 return drawing;
@@ -15511,22 +15378,12 @@ export class Font extends ModelBase {
             return literalGlyph;
         }
 
-        const featureVariationMatch = name.match(/^(.*)\.feaVar\.(\d+)$/);
-        if (!featureVariationMatch) {
+        const parsed = parseFeatureVariationGlyphName(name);
+        if (!parsed) {
             return undefined;
         }
 
-        const featureVariationIndex = Number(featureVariationMatch[2]);
-        if (
-            !Number.isInteger(featureVariationIndex) ||
-            featureVariationIndex < 0
-        ) {
-            return undefined;
-        }
-
-        return this.findGlyph(featureVariationMatch[1])?.featureVariations[
-            featureVariationIndex
-        ];
+        return this.findGlyph(parsed.baseName)?.featureVariations[parsed.index];
     }
 
     /**

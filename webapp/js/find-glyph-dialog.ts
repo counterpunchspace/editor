@@ -493,11 +493,21 @@ export class FindGlyphDialog {
             selectedIndices.length > 0
                 ? selectedIndices[selectedIndices.length - 1]!
                 : targetIndex;
-        const [from, to] =
-            fromIndex < targetIndex
-                ? [fromIndex, targetIndex]
-                : [targetIndex, fromIndex];
+        this.selectVisibleRange(fromIndex, targetIndex, false);
+    }
 
+    private selectVisibleRange(
+        startIndex: number,
+        endIndex: number,
+        replace: boolean
+    ): void {
+        const [from, to] =
+            startIndex < endIndex
+                ? [startIndex, endIndex]
+                : [endIndex, startIndex];
+        if (replace) {
+            this.selectedGlyphNames = new Set();
+        }
         for (let index = from; index <= to; index += 1) {
             this.selectedGlyphNames.add(this.visibleGlyphs[index]!.name);
         }
@@ -525,14 +535,7 @@ export class FindGlyphDialog {
             return;
         }
 
-        const [from, to] =
-            anchorIndex < targetIndex
-                ? [anchorIndex, targetIndex]
-                : [targetIndex, anchorIndex];
-        this.selectedGlyphNames = new Set();
-        for (let index = from; index <= to; index += 1) {
-            this.selectedGlyphNames.add(this.visibleGlyphs[index]!.name);
-        }
+        this.selectVisibleRange(anchorIndex, targetIndex, true);
     }
 
     /**

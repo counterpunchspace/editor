@@ -818,7 +818,7 @@ export class GlyphOverviewFilterManager {
         };
 
         // Build tree from path definitions
-        for (const [pathKey, displayName] of Object.entries(FILTER_PATHS)) {
+        for (const pathKey of Object.keys(FILTER_PATHS)) {
             const parts = pathKey.split('/');
             let currentNode = root;
 
@@ -2494,7 +2494,7 @@ export class GlyphOverviewFilterManager {
             ([keyA], [keyB]) =>
                 keyA.localeCompare(keyB, undefined, { sensitivity: 'base' })
         );
-        for (const [key, childNode] of sortedChildren) {
+        for (const [, childNode] of sortedChildren) {
             const nodeElement = document.createElement('div');
             nodeElement.className = 'glyph-filter-node';
             nodeElement.style.setProperty(
@@ -4956,7 +4956,6 @@ export class GlyphOverviewFilterManager {
         ) as HTMLElement;
         if (!labelElement) return;
 
-        const originalName = plugin.display_name;
         const fileName = filePath.split('/').pop() || '';
 
         // Strip .py extension for display

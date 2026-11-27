@@ -10,6 +10,8 @@
 import * as Y from 'yjs';
 import { recordCollabTrace } from './collab-trace';
 import {
+    isPlainObject,
+    isYMap,
     yArrayToArray,
     yMapForEach,
     yMapGet,
@@ -131,10 +133,6 @@ export type ComponentGeometryShape = {
 export type GeometryShape = PathGeometryShape | ComponentGeometryShape;
 
 type Unsafe = Record<string, unknown>;
-
-function isPlainObject(value: unknown): value is Unsafe {
-    return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
 
 function innerShape(shape: unknown): Unsafe | null {
     if (!isPlainObject(shape)) {
@@ -420,10 +418,6 @@ export function reconstructShapesFromGeometry(
         }
     }
     return shapes;
-}
-
-function isYMap(value: unknown): value is Y.Map<unknown> {
-    return value instanceof Y.Map;
 }
 
 function yValueToJson(value: unknown): unknown {

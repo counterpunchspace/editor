@@ -51,18 +51,10 @@
                         message: `Cleared ${registrations.length} service worker(s)`
                     };
                 } catch (error) {
-                    const message =
-                        error instanceof Error ? error.message : String(error);
-                    console.error(
-                        '[CacheManager]',
+                    return this.cacheOpError(
                         'Failed to clear service workers:',
                         error
                     );
-                    return {
-                        success: false,
-                        count: 0,
-                        error: message
-                    };
                 }
             } else {
                 return {
@@ -104,18 +96,7 @@
                         message: `Cleared ${cacheNames.length} cache(s)`
                     };
                 } catch (error) {
-                    const message =
-                        error instanceof Error ? error.message : String(error);
-                    console.error(
-                        '[CacheManager]',
-                        'Failed to clear caches:',
-                        error
-                    );
-                    return {
-                        success: false,
-                        count: 0,
-                        error: message
-                    };
+                    return this.cacheOpError('Failed to clear caches:', error);
                 }
             } else {
                 return {
@@ -124,6 +105,17 @@
                     message: 'Cache API not supported'
                 };
             }
+        }
+
+        private cacheOpError(label: string, error: unknown): CacheOpResult {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            console.error('[CacheManager]', label, error);
+            return {
+                success: false,
+                count: 0,
+                error: message
+            };
         }
 
         async clearIndexedDB(): Promise<CacheOpResult> {

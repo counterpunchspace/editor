@@ -55,3 +55,33 @@ export function yArrayToArray(arr: Y.Array<unknown>): unknown[] {
     }
     return [...(prelimArray(arr) ?? [])];
 }
+
+export function isYMap(v: unknown): v is Y.Map<unknown> {
+    return (
+        !!v &&
+        typeof (v as { get?: unknown }).get === 'function' &&
+        typeof (v as { forEach?: unknown }).forEach === 'function' &&
+        typeof (v as { set?: unknown }).set === 'function' &&
+        typeof (v as { insert?: unknown }).insert !== 'function'
+    );
+}
+
+export function isYArray(v: unknown): v is Y.Array<unknown> {
+    return (
+        !!v &&
+        typeof (v as { insert?: unknown }).insert === 'function' &&
+        typeof (v as { push?: unknown }).push === 'function' &&
+        typeof (v as { toArray?: unknown }).toArray === 'function'
+    );
+}
+
+export function isPlainObject(v: unknown): v is Record<string, unknown> {
+    return (
+        v !== null &&
+        typeof v === 'object' &&
+        !Array.isArray(v) &&
+        !(v instanceof Y.Map) &&
+        !(v instanceof Y.Array) &&
+        !(v instanceof Y.Doc)
+    );
+}
