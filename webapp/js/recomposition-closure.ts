@@ -507,12 +507,6 @@ let visibleTopologyCacheResult: {
     visibleMetricsPrerequisites: Set<string>;
 } | null = null;
 
-export function resetVisibleRecompositionTopologyCache(): void {
-    visibleTopologyCacheKey = '';
-    visibleTopologyCacheModel = null;
-    visibleTopologyCacheResult = null;
-}
-
 export function computeDrawingRecompositionClosure(options: {
     sourceTargets: RecompositionSourceTarget[];
     editKinds: Set<RecompositionEditKind>;

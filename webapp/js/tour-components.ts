@@ -12,6 +12,7 @@ import {
     viewportFrameBottom,
     viewportFrameRight
 } from './glyph-canvas/viewport';
+import { delay, fontRectToCutout } from './tour-utils';
 
 type TourCutoutRect = {
     left: number;
@@ -49,12 +50,6 @@ export function componentReferenceMatches(
     return actual === wanted || actual.startsWith(`${wanted}.`);
 }
 
-function delay(ms: number): Promise<void> {
-    return new Promise((resolve) => {
-        window.setTimeout(resolve, ms);
-    });
-}
-
 function getSelectedGlyphOrigin(): { x: number; y: number } {
     const textRun = window.glyphCanvas?.textRunEditor;
     const index = textRun?.selectedGlyphIndex ?? -1;
@@ -70,34 +65,6 @@ function getSelectedGlyphOrigin(): { x: number; y: number } {
     return {
         x: xPosition + (glyph.dx || 0),
         y: glyph.dy || 0
-    };
-}
-
-function fontRectToCutout(rect: FontRect): TourCutoutRect | null {
-    const canvas = window.glyphCanvas;
-    const viewport = canvas?.viewportManager;
-    const canvasEl = canvas?.canvas;
-    if (!canvas || !viewport || !canvasEl) {
-        return null;
-    }
-    const corners = [
-        viewport.fontToScreenCoordinates(rect.minX, rect.minY),
-        viewport.fontToScreenCoordinates(rect.maxX, rect.minY),
-        viewport.fontToScreenCoordinates(rect.minX, rect.maxY),
-        viewport.fontToScreenCoordinates(rect.maxX, rect.maxY)
-    ];
-    const canvasRect = canvasEl.getBoundingClientRect();
-    const left = canvasRect.left + Math.min(...corners.map((point) => point.x));
-    const top = canvasRect.top + Math.min(...corners.map((point) => point.y));
-    const right =
-        canvasRect.left + Math.max(...corners.map((point) => point.x));
-    const bottom =
-        canvasRect.top + Math.max(...corners.map((point) => point.y));
-    return {
-        left,
-        top,
-        width: Math.max(8, right - left),
-        height: Math.max(8, bottom - top)
     };
 }
 

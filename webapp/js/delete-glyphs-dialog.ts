@@ -10,7 +10,8 @@ import type { Instance as TippyInstance } from 'tippy.js';
 import { Logger } from './logger';
 import { attachOutcomePreviewTippy } from './tippy-utils';
 import type { GlyphDeletePreflight } from './delete-glyphs-preflight';
-import { bindModalEscape } from './ui/modal-escape';
+import { mountModalOverlay } from './ui/confirm-dialog';
+import { escapeHtml } from './ui/escape-html';
 
 const console = new Logger('DeleteGlyphsDialog');
 
@@ -25,13 +26,6 @@ const FEA_LOOKUPFLAG_VALUES = new Set(
         '|'
     )
 );
-
-function escapeHtml(value: string): string {
-    return value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-}
 
 /**
  * Lightweight FEA highlighter approximating the Ace fea mode token colors.
@@ -311,11 +305,6 @@ export class DeleteGlyphsDialog {
         preflight: GlyphDeletePreflight
     ): Promise<boolean> {
         return new Promise((resolve) => {
-            const overlay = document.createElement('div');
-            overlay.className = 'info-popup-overlay';
-            overlay.style.display = 'flex';
-            overlay.style.zIndex = '10002';
-
             const title =
                 names.length === 1
                     ? `Delete glyph “${names[0]}”?`
@@ -375,7 +364,10 @@ export class DeleteGlyphsDialog {
                         </ul>
                     </div>`;
 
-            overlay.innerHTML = `
+            const previewTippyInstances: TippyInstance[] = [];
+            const { overlay, close } = mountModalOverlay({
+                zIndex: '10002',
+                innerHTML: `
                 <div class="info-popup confirm-dialog">
                     <div class="info-popup-header">
                         <h3>Delete Glyph(s)</h3>
@@ -392,12 +384,17 @@ export class DeleteGlyphsDialog {
                         </div>
                     </div>
                 </div>
-            `;
-
-            document.body.appendChild(overlay);
+            `,
+                focusSelector: '[data-action="delete"]',
+                onCleanup: () => {
+                    for (const instance of previewTippyInstances) {
+                        instance.destroy();
+                    }
+                },
+                onDismiss: () => resolve(false)
+            });
 
             const deletedNameSet = new Set(names);
-            const previewTippyInstances: TippyInstance[] = [];
             overlay
                 .querySelectorAll<HTMLButtonElement>('[data-preview]')
                 .forEach((button) => {
@@ -417,48 +414,18 @@ export class DeleteGlyphsDialog {
                     );
                 });
 
-            let escapeBinding: ReturnType<typeof bindModalEscape> | null = null;
-
-            const cleanup = () => {
-                for (const instance of previewTippyInstances) {
-                    instance.destroy();
-                }
-                escapeBinding?.release();
-                escapeBinding = null;
-                overlay.remove();
-            };
-
-            const finish = (confirmed: boolean) => {
-                cleanup();
-                resolve(confirmed);
-            };
-
-            escapeBinding = bindModalEscape(() => finish(false), {
-                isOpen: () => overlay.isConnected
-            });
-
-            overlay.addEventListener('click', (event) => {
-                if (event.target === overlay) {
-                    finish(false);
-                }
-            });
-            overlay
-                .querySelector('.confirm-dialog-close-btn')
-                ?.addEventListener('click', () => finish(false));
             overlay
                 .querySelector('[data-action="cancel"]')
-                ?.addEventListener('click', () => finish(false));
+                ?.addEventListener('click', () => {
+                    close();
+                    resolve(false);
+                });
             overlay
                 .querySelector('[data-action="delete"]')
-                ?.addEventListener('click', () => finish(true));
-
-            queueMicrotask(() => {
-                (
-                    overlay.querySelector(
-                        '[data-action="delete"]'
-                    ) as HTMLElement | null
-                )?.focus();
-            });
+                ?.addEventListener('click', () => {
+                    close();
+                    resolve(true);
+                });
         });
     }
 }

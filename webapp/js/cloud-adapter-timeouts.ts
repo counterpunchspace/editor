@@ -12,6 +12,23 @@ import {
     OUTBOUND_ACK_TIMEOUT_MS
 } from './cloud-adapter-support';
 
+function isInitialSyncStillPending(adapter): boolean {
+    if (
+        adapter._destroyed ||
+        adapter._status !== 'syncing' ||
+        !adapter._ws ||
+        adapter._ws.readyState !== WebSocket.OPEN
+    ) {
+        return false;
+    }
+
+    return !(
+        adapter._hasSynced &&
+        adapter._initialServerStateApplied &&
+        adapter._initialSyncDurable
+    );
+}
+
 export const cloudAdapterTimeoutMethods = {
     _armInitialSyncTimeout(
         startedAt = Date.now(),
@@ -21,20 +38,7 @@ export const cloudAdapterTimeoutMethods = {
         this._initialSyncTimer = setTimeout(() => {
             this._initialSyncTimer = null;
 
-            if (
-                this._destroyed ||
-                this._status !== 'syncing' ||
-                !this._ws ||
-                this._ws.readyState !== WebSocket.OPEN
-            ) {
-                return;
-            }
-
-            if (
-                this._hasSynced &&
-                this._initialServerStateApplied &&
-                this._initialSyncDurable
-            ) {
+            if (!isInitialSyncStillPending(this)) {
                 return;
             }
 
@@ -93,20 +97,7 @@ export const cloudAdapterTimeoutMethods = {
     },
 
     _handleInitialSyncTimeout(): void {
-        if (
-            this._destroyed ||
-            this._status !== 'syncing' ||
-            !this._ws ||
-            this._ws.readyState !== WebSocket.OPEN
-        ) {
-            return;
-        }
-
-        if (
-            this._hasSynced &&
-            this._initialServerStateApplied &&
-            this._initialSyncDurable
-        ) {
+        if (!isInitialSyncStillPending(this)) {
             return;
         }
 

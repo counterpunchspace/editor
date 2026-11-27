@@ -1,6 +1,6 @@
 /** Arabic form rules and family roots. */
 
-import type { Font, Glyph } from '../babelfont-model';
+import type { Font } from '../babelfont-model';
 import {
     glyphIdentity,
     glyphsByNameMap,
@@ -12,7 +12,6 @@ import { generatorStamp, type FeaturesDocument } from './managed-features';
 
 export const ARABIC_GENERATOR = 'space.counterpunch.arabic';
 const FORM_SUFFIXES = new Set(['.init', '.medi', '.fina']);
-const LAM_ALEF_ALEFS = ['uni0622', 'uni0623', 'uni0625', 'uni0671'];
 
 export function arabicFormRules(
     features: FeaturesDocument | null | undefined
@@ -86,25 +85,6 @@ export function arabicIsolShells(
     return new Set(arabicFormRules(features).get('isol')?.keys() || []);
 }
 
-export function discoverAlefComposites(font: Font): Array<{
-    identity: string;
-    components: string[];
-}> {
-    const glyphs = glyphsByNameMap(font);
-    const names = localNamesByIdentity(glyphs);
-    const found = [];
-    for (const identity of LAM_ALEF_ALEFS) {
-        const form = `${identity}.fina`;
-        const glyphName = names.get(form);
-        const glyph = glyphName ? glyphs.get(glyphName) : undefined;
-        const components = componentNames(glyph);
-        if (components.length >= 2) {
-            found.push({ identity: form, components });
-        }
-    }
-    return found;
-}
-
 export function designerLanguageSystems(
     features: FeaturesDocument | null | undefined
 ): string {
@@ -122,11 +102,4 @@ export function designerLanguageSystems(
         }
     }
     return parts.join('\n');
-}
-
-function componentNames(glyph: Glyph | undefined): string[] {
-    const drawing = (glyph?.drawings || []).find((item) => !item.is_background);
-    return (drawing?.components || [])
-        .map((component) => component.reference)
-        .filter((name): name is string => Boolean(name));
 }

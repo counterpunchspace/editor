@@ -2,21 +2,10 @@
 // Dialogs use the editor's `.info-popup` structure with the
 // `font-window-dialog` look (css/ui/font-windows.css).
 
+import { escapeHtml } from '../ui/escape-html';
 import { bindModalEscape } from '../ui/modal-escape';
 
-export function escapeHtml(value: unknown): string {
-    return String(value ?? '').replace(
-        /[&<>"']/g,
-        (c) =>
-            ({
-                '&': '&amp;',
-                '<': '&lt;',
-                '>': '&gt;',
-                '"': '&quot;',
-                "'": '&#39;'
-            })[c] ?? c
-    );
-}
+export { escapeHtml };
 
 export const icon = (name: string) =>
     `<span class="material-symbols-outlined" aria-hidden="true">${name}</span>`;

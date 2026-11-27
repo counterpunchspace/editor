@@ -44,7 +44,7 @@ import {
     isDiscretionary,
     SCRIPT_TO_SHAPER
 } from './opentype-features';
-import { designspaceToUserspace, userspaceToDesignspace } from './locations';
+import { userspaceToDesignspace } from './locations';
 import {
     type AssistantPromptExecutionContext,
     awaitActiveAssistantPythonExecutionSettled,
@@ -54,10 +54,7 @@ import {
 import { awaitStableWorkerState } from './font-compilation';
 import { seedCompilerFromCommittedFont } from './committed-font-seed';
 import { SETTINGS_FOLDER_PATHS, settingsFolder } from './settings-folder';
-import {
-    getPythonDocumentKindInfo,
-    type PythonDocumentKindInfo
-} from './python-document-kind';
+import { getPythonDocumentKindInfo } from './python-document-kind';
 import { getGlyphFilterEventAssistantView } from './glyph-filter-events';
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 
@@ -179,12 +176,6 @@ type BinaryFontAnalysisWorkerState = BinaryFontWorkerState & {
         fontHash: string,
         request: { fontIndex?: number; paths: string[] }
     ) => Promise<{ values: unknown[] }>;
-};
-
-type BinaryFontChildrenRequest = {
-    fontIndex?: number;
-    path: string;
-    limit?: number;
 };
 
 type BinaryFontChildEntry = {
@@ -2140,23 +2131,6 @@ class AIAssistant {
         }
 
         return lines.join('\n');
-    }
-
-    addMessage(role: 'user' | 'assistant' | 'error', content: string) {
-        if (role === 'user') {
-            this.session.appendEntry({
-                kind: 'user',
-                text: content,
-                automatic: false
-            });
-        } else if (role === 'assistant') {
-            this.session.appendEntry({
-                kind: 'assistant',
-                items: [{ kind: 'text', round: 0, text: content }]
-            });
-        } else {
-            this.session.appendEntry({ kind: 'error', text: content });
-        }
     }
 
     private requireDocumentEditPermission(session: AssistantChatSession): void {

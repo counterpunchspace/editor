@@ -556,12 +556,15 @@ function characterForCodepoint(codepoint: number): string {
         : '';
 }
 
-async function decompressGzipResponse(response: Response): Promise<string> {
+export async function decompressGzipResponse(
+    response: Response,
+    label = 'Glyph Data'
+): Promise<string> {
     if (typeof DecompressionStream === 'undefined') {
         throw new Error('Gzip DecompressionStream is not available.');
     }
     if (!response.body) {
-        throw new Error('Glyph Data response has no body.');
+        throw new Error(`${label} response has no body.`);
     }
     const stream = response.body.pipeThrough(new DecompressionStream('gzip'));
     return new Response(stream).text();

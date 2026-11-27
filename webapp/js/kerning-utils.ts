@@ -34,25 +34,15 @@ function getFlatKerningPairValue(
     return typeof value === 'number' ? value : null;
 }
 
-export function usesFlatKerningPairs(
-    kerning: KerningContainer | undefined
-): boolean {
-    if (!kerning) {
-        return false;
+function readKerningRowValue(
+    row: number | KerningRow | null | undefined,
+    secondKey: string
+): number | null {
+    if (!isKerningRow(row)) {
+        return null;
     }
-
-    if (kerning instanceof Map) {
-        for (const [key, value] of kerning.entries()) {
-            if (typeof value === 'number' || key.includes(':')) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    return Object.entries(kerning).some(
-        ([key, value]) => typeof value === 'number' || key.includes(':')
-    );
+    const value = row instanceof Map ? row.get(secondKey) : row[secondKey];
+    return typeof value === 'number' ? value : null;
 }
 
 export function getKerningPairValue(
@@ -69,31 +59,9 @@ export function getKerningPairValue(
         return flatValue;
     }
 
-    if (kerning instanceof Map) {
-        const row = kerning.get(firstKey);
-        if (!isKerningRow(row)) {
-            return null;
-        }
-        if (row instanceof Map) {
-            const value = row.get(secondKey);
-            return typeof value === 'number' ? value : null;
-        }
-        const value = row[secondKey];
-        return typeof value === 'number' ? value : null;
-    }
-
-    const row = kerning[firstKey];
-    if (!isKerningRow(row)) {
-        return null;
-    }
-
-    if (row instanceof Map) {
-        const value = row.get(secondKey);
-        return typeof value === 'number' ? value : null;
-    }
-
-    const value = row[secondKey];
-    return typeof value === 'number' ? value : null;
+    const row =
+        kerning instanceof Map ? kerning.get(firstKey) : kerning[firstKey];
+    return readKerningRowValue(row, secondKey);
 }
 
 export type OrderedKerningPair = {

@@ -116,30 +116,6 @@ export function buildGroupKerningChips(
     }));
 }
 
-export function buildGlyphKerningGroupChips(
-    pairSide: KerningPairSide,
-    glyphName: string,
-    groupNames: string[],
-    includeGlyphName: boolean = true
-): KerningGroupChip[] {
-    const groupChips = buildGroupKerningChips(pairSide, groupNames);
-    if (!includeGlyphName) {
-        return groupChips;
-    }
-
-    return [
-        {
-            pairSide,
-            kind: 'glyph',
-            name: glyphName,
-            key: glyphName,
-            label: formatKerningOperandLabel('glyph', glyphName),
-            removable: false
-        },
-        ...groupChips
-    ];
-}
-
 export function buildEditViewKerningGroupSide(
     pairSide: KerningPairSide,
     glyphNames: string[],

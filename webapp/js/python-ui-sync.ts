@@ -114,18 +114,8 @@ export async function ensureLocalGlyphsHydratedForPython(
     }
 }
 
-export function serializeFontCoreWithoutGlyphs(
-    fontData: Record<string, unknown>
-): string {
-    const core: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(fontData)) {
-        if (key === 'glyphs') {
-            continue;
-        }
-        core[key] = value;
-    }
-    return JSON.stringify(core);
-}
+import { serializeFontCoreWithoutGlyphs } from './python-utils';
+export { serializeFontCoreWithoutGlyphs };
 
 export function snapshotResidentGlyphsByName(
     glyphs: unknown

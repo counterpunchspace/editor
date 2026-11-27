@@ -258,10 +258,7 @@ function showPluginRemovedToast(names: string[]): void {
 let lastRevocationCheck = 0;
 let revocationWatchStarted = false;
 
-export async function enforcePluginRevocation(force = false): Promise<void> {
-    if (!force && Date.now() - lastRevocationCheck < 60000) return;
-    lastRevocationCheck = Date.now();
-    const catalog = await fetchPluginCatalog();
+async function applyCatalogRevocation(catalog: CatalogResponse): Promise<void> {
     const { rememberPluginIdAliases } = await import('./compile-filter-host');
     rememberPluginIdAliases(catalog.plugins);
     const { fontDestinationPluginManager } =
@@ -272,6 +269,12 @@ export async function enforcePluginRevocation(force = false): Promise<void> {
         catalog,
         installed.map((file) => file.path)
     );
+}
+
+export async function enforcePluginRevocation(force = false): Promise<void> {
+    if (!force && Date.now() - lastRevocationCheck < 60000) return;
+    lastRevocationCheck = Date.now();
+    await applyCatalogRevocation(await fetchPluginCatalog());
 }
 
 export function startPluginRevocationWatch(): void {
@@ -297,16 +300,7 @@ export async function revokeBeforeReinstall(): Promise<void> {
             window.setTimeout(() => reject(new Error('catalog timeout')), 4000);
         })
     ]);
-    const { rememberPluginIdAliases } = await import('./compile-filter-host');
-    rememberPluginIdAliases(catalog.plugins);
-    const { fontDestinationPluginManager } =
-        await import('./font-destination-plugin-manager');
-    const installed =
-        await fontDestinationPluginManager.getInstalledWheelFiles();
-    await removeRevokedPlugins(
-        catalog,
-        installed.map((file) => file.path)
-    );
+    await applyCatalogRevocation(catalog);
 }
 
 export function dismissedUpdates(): Record<string, string> {
@@ -317,12 +311,6 @@ export function dismissedUpdates(): Record<string, string> {
     } catch {
         return {};
     }
-}
-
-export function dismissUpdate(packageName: string, version: string): void {
-    const current = dismissedUpdates();
-    current[packageName] = version;
-    localStorage.setItem(DISMISSED_KEY, JSON.stringify(current));
 }
 
 export function countUpdates(

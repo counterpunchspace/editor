@@ -25,7 +25,11 @@ import {
     type GeneratedBlock
 } from './managed-features';
 import { designerLanguageSystems } from './arabic-forms';
-import { runHostPython, runHostPythonAsync } from './host-python';
+import {
+    runHostPython,
+    runHostPythonAsync,
+    waitForPyodide
+} from './host-python';
 import { ENSURE_SKILLS } from './skill-registry';
 
 const console = new Logger('FeatureGenerators');
@@ -639,19 +643,7 @@ json.dumps({'needsRebuild': needs, 'blocks': produced.get('blocks') or [], 'clas
     }
 
     private async load(): Promise<void> {
-        if (
-            !window.pyodide &&
-            typeof window.ensurePyodideReady === 'function'
-        ) {
-            await window.ensurePyodideReady();
-        }
-        const started = performance.now();
-        while (!window.pyodide) {
-            if (performance.now() - started > 30_000) {
-                throw new Error('Timed out waiting for Python.');
-            }
-            await new Promise((resolve) => window.setTimeout(resolve, 50));
-        }
+        await waitForPyodide();
         const result = await runHostPythonAsync(`
 import json, builtins
 ${ENSURE_FEATURE_GENERATORS}

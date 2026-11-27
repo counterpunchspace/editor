@@ -8,11 +8,7 @@
 
 use std::collections::HashMap;
 
-use read_fonts::{
-    tables::variations::DeltaSetIndex,
-    types::Tag,
-    FontRef, TableProvider,
-};
+use read_fonts::{tables::variations::DeltaSetIndex, types::Tag, FontRef, TableProvider};
 use smol_str::SmolStr;
 use write_fonts::{
     tables::{
@@ -616,11 +612,7 @@ fn convert_variation_regions(
             .region_axes()
             .iter()
             .map(|axis| {
-                RegionAxisCoordinates::new(
-                    axis.start_coord(),
-                    axis.peak_coord(),
-                    axis.end_coord(),
-                )
+                RegionAxisCoordinates::new(axis.start_coord(), axis.peak_coord(), axis.end_coord())
             })
             .collect();
         out.push(VariationRegion::new(coords));

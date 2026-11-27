@@ -291,7 +291,6 @@ async function fetchLocalSparseInitialGlyphs(
 let diskFontReloadDebounceTimer: number | null = null;
 const pendingDiskChangePaths = new Set<string>();
 let memoryFilesystemReadyPromise: Promise<void> | null = null;
-const PYTHON_READY_POLL_INTERVAL_MS = 100;
 
 async function ensureMemoryFilesystemReady(): Promise<void> {
     if (!memoryFilesystemReadyPromise) {

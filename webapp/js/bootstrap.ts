@@ -1,7 +1,7 @@
 import './wasm-init'; // Initialize WASM module
 import './tab-lifecycle';
 import './critical-error-handler';
-import './state-manager'; // Initialize state manager early
+import { isSafariUserAgent } from './state-manager'; // Initialize state manager early
 import { Logger } from './logger';
 import {
     timelineMark,
@@ -117,34 +117,15 @@ function isSupportedBrowser(): boolean {
         };
     };
     const brands = navWithUAData.userAgentData?.brands || [];
-
-    const hasEdgeBrand = brands.some((entry) =>
-        entry.brand.toLowerCase().includes('edge')
-    );
-    const hasChromiumBrand = brands.some((entry) => {
-        const brand = entry.brand.toLowerCase();
-        return brand.includes('chromium') || brand.includes('chrome');
-    });
-
-    const isEdgeUA = /Edg\//.test(ua);
-    const isChromiumUA = /Chrome\//.test(ua) || /Chromium\//.test(ua);
-    const isSafariUA =
-        /Safari\//.test(ua) &&
-        !/Chrome\//.test(ua) &&
-        !/Chromium\//.test(ua) &&
-        !/CriOS\//.test(ua) &&
-        !/Edg\//.test(ua) &&
-        !/OPR\//.test(ua) &&
-        !/FxiOS\//.test(ua) &&
-        !/Firefox\//.test(ua) &&
-        !/Android/.test(ua);
+    const hasBrand = (needle: string) =>
+        brands.some((entry) => entry.brand.toLowerCase().includes(needle));
 
     return (
-        hasEdgeBrand ||
-        hasChromiumBrand ||
-        isEdgeUA ||
-        isChromiumUA ||
-        isSafariUA
+        hasBrand('edge') ||
+        hasBrand('chromium') ||
+        hasBrand('chrome') ||
+        /Edg\/|Chrom(?:e|ium)\//.test(ua) ||
+        isSafariUserAgent(ua)
     );
 }
 
@@ -174,17 +155,7 @@ function getBrowserMatrixKey():
         return 'edge';
     }
 
-    const isSafari =
-        /Safari\//.test(ua) &&
-        !/Chrome\//.test(ua) &&
-        !/Chromium\//.test(ua) &&
-        !/CriOS\//.test(ua) &&
-        !/Edg\//.test(ua) &&
-        !/OPR\//.test(ua) &&
-        !/FxiOS\//.test(ua) &&
-        !/Firefox\//.test(ua) &&
-        !/Android/.test(ua);
-    if (isSafari) {
+    if (isSafariUserAgent(ua)) {
         return 'safari';
     }
 

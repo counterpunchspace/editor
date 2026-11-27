@@ -6,18 +6,7 @@
  * focused on a deleted glyph, exit back to text mode.
  */
 
-function segmentGlyphName(segment: string): string | null {
-    let rest = segment;
-    const colonIndex = segment.indexOf(':');
-    if (colonIndex > 0 && !segment.slice(0, colonIndex).includes('@')) {
-        rest = segment.slice(colonIndex + 1);
-    }
-    const atIndex = rest.lastIndexOf('@');
-    if (atIndex <= 0) {
-        return null;
-    }
-    return rest.slice(0, atIndex);
-}
+import { parseGlyphStackSegment } from './rename-glyphs-ui-context';
 
 /** True when any glyph_stack segment names a deleted glyph. */
 export function glyphStackReferencesDeletedGlyph(
@@ -28,8 +17,8 @@ export function glyphStackReferencesDeletedGlyph(
         return false;
     }
     return stack.split('>').some((segment) => {
-        const glyphName = segmentGlyphName(segment);
-        return !!glyphName && deletedNames.has(glyphName);
+        const parsed = parseGlyphStackSegment(segment);
+        return !!parsed && deletedNames.has(parsed.glyphName);
     });
 }
 

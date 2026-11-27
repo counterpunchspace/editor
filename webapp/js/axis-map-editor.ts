@@ -139,17 +139,6 @@ export class AxisMapEditor {
         this.render();
     }
 
-    setAxis(
-        axis: Pick<Babelfont.Axis, 'tag' | 'min' | 'max' | 'default' | 'map'>
-    ) {
-        this.axis = axis;
-        this.points = this.normalizeMap(axis.map);
-        if (!this.points.some((point) => point.id === this.selectedPointId)) {
-            this.selectedPointId = this.points[0]?.id ?? null;
-        }
-        this.render();
-    }
-
     private normalizeMap(map: Babelfont.Axis['map']): AxisMapPoint[] {
         const tuples = Array.isArray(map) ? map : [];
         return [...tuples]

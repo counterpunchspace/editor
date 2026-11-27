@@ -2,6 +2,7 @@ import tippy, { type Instance } from 'tippy.js';
 import type { QaLabel } from './auto-qa-matcher';
 import { formatQaLabel, isCorpusQaLabel } from './auto-qa-matcher';
 import { getTheme } from '../tippy-utils';
+import { escapeHtml } from '../ui/escape-html';
 
 let autoQaTippy: Instance | null = null;
 
@@ -79,14 +80,6 @@ export function buildAutoQaPopup(labels: QaLabel[]): HTMLElement {
     explainer.innerHTML = renderQaMarkdown(AUTO_QA_EXPLAINER);
     root.appendChild(explainer);
     return root;
-}
-
-function escapeHtml(value: string): string {
-    return value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
 }
 
 function renderInlineCodeAsPre(text: string): string {

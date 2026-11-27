@@ -28,3 +28,19 @@ export function runHostPythonAsync(code: string): Promise<unknown> {
     const run = pyodide._originalRunPythonAsync ?? pyodide.runPythonAsync;
     return run.call(pyodide, code);
 }
+
+export async function waitForPyodide(
+    timeoutMs = 30_000,
+    timeoutMessage = 'Timed out waiting for Python.'
+): Promise<void> {
+    if (!window.pyodide && typeof window.ensurePyodideReady === 'function') {
+        await window.ensurePyodideReady();
+    }
+    const started = performance.now();
+    while (!window.pyodide) {
+        if (performance.now() - started > timeoutMs) {
+            throw new Error(timeoutMessage);
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 50));
+    }
+}

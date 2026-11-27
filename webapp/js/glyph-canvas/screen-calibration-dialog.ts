@@ -1,4 +1,4 @@
-import { bindModalEscape } from '../ui/modal-escape';
+import { mountModalOverlay } from '../ui/confirm-dialog';
 import {
     CALIBRATION_CSS_CM,
     CM_PER_INCH,
@@ -21,11 +21,10 @@ function impliedMeasurement(
 }
 
 export function showScreenCalibrationDialog(): void {
-    const overlay = document.createElement('div');
-    overlay.className = 'info-popup-overlay';
-    overlay.style.display = 'flex';
-
-    overlay.innerHTML = `
+    const { overlay, close } = mountModalOverlay({
+        closeSelector: '.info-popup-close',
+        onDismiss: () => {},
+        innerHTML: `
         <div class="info-popup screen-calibration-popup">
             <div class="info-popup-header">
                 <h3>Calibrate screen</h3>
@@ -104,9 +103,8 @@ export function showScreenCalibrationDialog(): void {
                 </div>
             </div>
         </div>
-    `;
-
-    document.body.appendChild(overlay);
+    `
+    });
 
     const measuredInput = overlay.querySelector(
         '#screen-calibration-measured'
@@ -149,28 +147,6 @@ export function showScreenCalibrationDialog(): void {
             syncUnitButtons();
         });
     });
-
-    let escapeBinding: ReturnType<typeof bindModalEscape> | null = null;
-
-    function close() {
-        escapeBinding?.release();
-        escapeBinding = null;
-        overlay.remove();
-    }
-
-    escapeBinding = bindModalEscape(close, {
-        isOpen: () => overlay.isConnected
-    });
-
-    overlay.addEventListener('click', (event) => {
-        if (event.target === overlay) {
-            close();
-        }
-    });
-
-    overlay
-        .querySelector('.info-popup-close')
-        ?.addEventListener('click', close);
 
     function applyCalibration(): void {
         const next = computeUnitScaleFromMeasurement(

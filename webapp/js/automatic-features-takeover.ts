@@ -5,19 +5,15 @@
 
 import { attachOutcomePreviewTippy } from './tippy-utils';
 import { highlightFeaSource } from './delete-glyphs-dialog';
-import { bindModalEscape } from './ui/modal-escape';
+import { mountModalOverlay } from './ui/confirm-dialog';
+import { escapeHtml } from './ui/escape-html';
 import {
     featureGeneratorEngine,
     type TakeoverPreview
 } from './skills/feature-generator-engine';
 import type { FeatureBlockSummary } from './skills/managed-features';
 
-export function escapeHtml(value: string): string {
-    return value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-}
+export { escapeHtml };
 
 function blockTitle(block: FeatureBlockSummary): string {
     if (block.kind === 'class') {
@@ -100,12 +96,11 @@ export async function confirmAutomaticFeaturesTakeover(): Promise<boolean> {
         return false;
     }
     return new Promise((resolve) => {
-        const overlay = document.createElement('div');
-        overlay.className = 'info-popup-overlay';
-        overlay.style.display = 'flex';
-        overlay.style.zIndex = '10002';
         const counts = takeoverCounts(preview);
-        overlay.innerHTML = `
+        let tip: ReturnType<typeof attachOutcomePreviewTippy> | null = null;
+        const { overlay, close } = mountModalOverlay({
+            zIndex: '10002',
+            innerHTML: `
             <div class="info-popup confirm-dialog">
                 <div class="info-popup-header">
                     <h3>Counterpunch manages automatic features</h3>
@@ -129,37 +124,26 @@ export async function confirmAutomaticFeaturesTakeover(): Promise<boolean> {
                     </div>
                 </div>
             </div>
-        `;
-        document.body.appendChild(overlay);
-        const tip = attachOutcomePreviewTippy(
+        `,
+            onCleanup: () => tip?.destroy(),
+            onDismiss: () => resolve(false)
+        });
+        tip = attachOutcomePreviewTippy(
             overlay.querySelector('.confirm-dialog-info-btn') as HTMLElement,
             buildTakeoverPreviewHtml(preview)
         );
-        let escapeBinding: ReturnType<typeof bindModalEscape> | null = null;
-        const finish = (confirmed: boolean) => {
-            tip.destroy();
-            escapeBinding?.release();
-            escapeBinding = null;
-            overlay.remove();
-            resolve(confirmed);
-        };
-        escapeBinding = bindModalEscape(() => finish(false), {
-            isOpen: () => overlay.isConnected
-        });
-        overlay.addEventListener('click', (event) => {
-            if (event.target === overlay) {
-                finish(false);
-            }
-        });
-        overlay
-            .querySelector('.confirm-dialog-close-btn')
-            ?.addEventListener('click', () => finish(false));
         overlay
             .querySelector('[data-action="cancel"]')
-            ?.addEventListener('click', () => finish(false));
+            ?.addEventListener('click', () => {
+                close();
+                resolve(false);
+            });
         overlay
             .querySelector('[data-action="confirm"]')
-            ?.addEventListener('click', () => finish(true));
+            ?.addEventListener('click', () => {
+                close();
+                resolve(true);
+            });
     });
 }
 

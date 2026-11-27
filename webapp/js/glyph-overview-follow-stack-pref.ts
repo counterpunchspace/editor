@@ -8,9 +8,7 @@ import {
     setOverviewFollowEnabled
 } from './window-ui-state';
 
-export function isOverviewFollowStackScrollEnabled(): boolean {
-    return isOverviewFollowEnabled();
-}
+export { isOverviewFollowEnabled as isOverviewFollowStackScrollEnabled };
 
 export function setOverviewFollowStackScrollEnabled(enabled: boolean): void {
     setOverviewFollowEnabled(enabled);
@@ -22,7 +20,7 @@ export function setOverviewFollowStackScrollEnabled(enabled: boolean): void {
 }
 
 export function toggleOverviewFollowStackScrollEnabled(): boolean {
-    const next = !isOverviewFollowStackScrollEnabled();
+    const next = !isOverviewFollowEnabled();
     setOverviewFollowStackScrollEnabled(next);
     return next;
 }

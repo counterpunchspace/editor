@@ -71,7 +71,6 @@ import {
     endStartupInteractionLock
 } from '../startup-interaction-lock';
 import type { PatchSyncEngine } from '../patch-sync-engine';
-import { sidebarErrorDisplay } from '../sidebar-error-display';
 import {
     getHighestVisibleVerticalMetricValue,
     getLowestVisibleVerticalMetricValue,
@@ -90,7 +89,6 @@ import {
     applyPasteFragment,
     applyReplaceSelectedPaths,
     buildSelectionClipboardDocument,
-    collectClipboardPayloads,
     describePasteResult,
     parseClipboardPayloads,
     readClipboardPayloadsAsync,
@@ -111,8 +109,10 @@ import { userspaceToDesignspace, designspaceToUserspace } from '../locations';
 import type { DesignspaceLocation, UserspaceLocation } from '../locations';
 import { SavedVariationState } from '../saved-variation-state';
 import {
+    clampUnitInterval,
     invertAffine,
     invertLinearAffine,
+    lerpPoint,
     multiplyAffineTransforms,
     normalizeAffineTransform,
     transformPointWithAffine
@@ -133,10 +133,7 @@ import {
     resolveDrawingSyncTargetsFromClosure
 } from '../recomposition-closure';
 import { translateDrawingContentsX } from '../x-translation-utils';
-import {
-    queueCanvasRefreshFromCommittedModel,
-    refreshGlyphOverviewFromGlyphNames
-} from '../change-bridge-init';
+import { queueCanvasRefreshFromCommittedModel } from '../change-bridge-init';
 import { Bezier } from 'bezier-js';
 import tippy, { type Instance as TippyInstance } from 'tippy.js';
 import {
@@ -463,25 +460,6 @@ function getEditableContour(
     return {
         nodes: pathData.nodes as Babelfont.Node[],
         closed: Boolean(pathData.closed)
-    };
-}
-
-function clampUnitInterval(value: number): number {
-    if (!Number.isFinite(value)) {
-        return 0;
-    }
-
-    return Math.max(0, Math.min(1, value));
-}
-
-function lerpPoint(
-    start: { x: number; y: number },
-    end: { x: number; y: number },
-    t: number
-): { x: number; y: number } {
-    return {
-        x: start.x + (end.x - start.x) * t,
-        y: start.y + (end.y - start.y) * t
     };
 }
 
@@ -1400,19 +1378,6 @@ function snapSmoothHandlePairToAxis(
 }
 
 export class OutlineEditor {
-    /**
-     * How long the tick path defers painting to an in-flight preview compile
-     * before painting anyway. Bounds worst-case perceived latency if the worker
-     * is slow, at the cost of one possibly-torn frame.
-     */
-    private static readonly SIDEBEARING_PREVIEW_PAINT_BUDGET_MS = 50;
-
-    /**
-     * Pointer-idle threshold (two frames) above which a returning preview owns
-     * its own paint. Below it, the imminent drag tick paints the swapped blob.
-     */
-    private static readonly SIDEBEARING_IDLE_PAINT_MS = 32;
-
     active: boolean = false;
     isPreviewMode: boolean = false;
     previewModeBeforeSlider: boolean = false;
@@ -1449,8 +1414,6 @@ export class OutlineEditor {
         new Set();
     private _adjacentSnapInterpolationSessionId: number = 0;
     private _lastDragSaveTime: number = 0;
-    private _lastLiveAnchorRefreshTime: number = 0;
-    private _lastLiveSidebearingRefreshTime: number = 0;
     /** One mutate→anchor→paint frame for mouse sidebearing drag. */
     private _sidebearingDragFrame: number | null = null;
     /** First pointer sample seeds lastGlyphX without mutating. */
@@ -1510,10 +1473,6 @@ export class OutlineEditor {
     private _sidebearingPaintFrame: number | null = null;
     /** True while a live preview stage/compile is in flight for this drag. */
     private _sidebearingPreviewPending: boolean = false;
-    /** When the in-flight preview was requested, for the staleness valve. */
-    private _sidebearingPreviewRequestedAt: number = 0;
-    /** True when the active sidebearing drag has visible dependent glyphs. */
-    private _sidebearingDragHasCascadeDependents: boolean = false;
     /** True when a pointer sample arrived while a sidebearing cascade compile was in flight. */
     private _sidebearingDragDirtyWhilePending: boolean = false;
     /** Safety fallback timer so a failed/dropped sidebearing compile never stalls paint. */
@@ -1547,8 +1506,6 @@ export class OutlineEditor {
     private _outlineDragLatestEvent: MouseEvent | null = null;
     private _outlinePreviewFallbackTimer: number | null = null;
     private static readonly CASCADE_PREVIEW_FALLBACK_TIMEOUT_MS = 150;
-    /** Timestamp of the last pointer-driven drag tick, for idle detection. */
-    private _lastSidebearingTickAt: number = 0;
     /** Glyphs whose stored width changed (source ∪ recompose) for live advances. */
     private _lastLiveSidebearingWidthGlyphNames: Set<string> = new Set();
     /**
@@ -1578,7 +1535,6 @@ export class OutlineEditor {
     }> = [];
     private _liveAnchorPreviewGeneration: number = 0;
     private _anchorAffectedGlyphNames: Set<string> = new Set();
-    private _committedOutlineAffectedGlyphNames: Set<string> = new Set();
     private livePreviewEditFunnel = new LiveDragEditFunnel();
     private get liveDragEditFunnel(): LiveDragEditFunnel {
         return this.livePreviewEditFunnel;
@@ -1617,7 +1573,6 @@ export class OutlineEditor {
     private _cachedAnchorDragScopeVisibleKey: string = '';
     private _cachedAnchorDragScopeGlyphNames: Set<string> | null = null;
     private _liveOutlineRefreshGlyphNames: Set<string> = new Set();
-    private _liveOutlineRefreshChangeSource: string | null = null;
     private _pointDragPreserveHandlePositions: boolean = false;
     private _offCurveAltDragConstraint: {
         contourIndex: number;
@@ -3158,20 +3113,6 @@ export class OutlineEditor {
         });
     }
 
-    /**
-     * Paste Counterpunch / Fontra / SVG clipboard data into the active glyph.
-     * Prefer {@link pasteFromParsedClipboard} when payloads were already resolved
-     * (including async ClipboardItem reads for Fontra tagged MIME).
-     */
-    pasteFromClipboardEvent(event: ClipboardEvent): boolean {
-        const payloads = collectClipboardPayloads(event.clipboardData);
-        const parsed = parseClipboardPayloads(payloads);
-        if (!parsed) {
-            return false;
-        }
-        return this.pasteFromParsedClipboard(parsed, event);
-    }
-
     pasteFromParsedClipboard(
         parsed: ParsedClipboard,
         event: ClipboardEvent | null = null
@@ -4182,10 +4123,6 @@ export class OutlineEditor {
             }
         }
 
-        this._committedOutlineAffectedGlyphNames = new Set(
-            metricsUpdate?.affectedGlyphNames || []
-        );
-
         if (persistDrawingData) {
             return this.saveDrawingData(changeSource);
         }
@@ -4209,7 +4146,6 @@ export class OutlineEditor {
     private resetLiveOutlineRefreshState(): void {
         this.liveDragEditFunnel.clearQueued();
         this._liveOutlineRefreshGlyphNames = new Set();
-        this._liveOutlineRefreshChangeSource = null;
         this._outlinePreviewPending = false;
         this._pendingLiveOutlineAdvanceSync = null;
         this._outlineDragHasCascadeDependents = null;
@@ -4435,7 +4371,6 @@ export class OutlineEditor {
                 this._liveOutlineRefreshGlyphNames.add(glyphName);
             }
         }
-        this._liveOutlineRefreshChangeSource = changeSource;
 
         this.liveDragEditFunnel.queue({
             kind: 'outline',
@@ -4452,7 +4387,6 @@ export class OutlineEditor {
                 );
 
                 this._liveOutlineRefreshGlyphNames = new Set();
-                this._liveOutlineRefreshChangeSource = null;
 
                 if (!currentFont || glyphNames.length === 0) {
                     return false;
@@ -6219,7 +6153,6 @@ export class OutlineEditor {
             return;
         }
 
-        this._lastLiveAnchorRefreshTime = now;
         this.queueLiveVisibleAnchorDependentRefresh();
     }
 
@@ -6257,14 +6190,11 @@ export class OutlineEditor {
             this._sidebearingPaintFrame = null;
         }
         this._sidebearingPreviewPending = false;
-        this._sidebearingPreviewRequestedAt = 0;
-        this._sidebearingDragHasCascadeDependents = false;
         this._sidebearingDragDirtyWhilePending = false;
         if (this._sidebearingPreviewFallbackTimer !== null) {
             window.clearTimeout(this._sidebearingPreviewFallbackTimer);
             this._sidebearingPreviewFallbackTimer = null;
         }
-        this._lastSidebearingTickAt = 0;
     }
 
     /**
@@ -6504,7 +6434,6 @@ export class OutlineEditor {
             return;
         }
         this._sidebearingPreviewPending = true;
-        this._sidebearingPreviewRequestedAt = performance.now();
         this.armSidebearingPreviewFallbackTimer();
 
         this.liveDragEditFunnel.queue({
@@ -6555,12 +6484,11 @@ export class OutlineEditor {
         });
     }
 
-    private refreshLiveVisibleSidebearingDependents(now: number): void {
+    private refreshLiveVisibleSidebearingDependents(_now: number): void {
         if (!this._hasMoved) {
             return;
         }
 
-        this._lastLiveSidebearingRefreshTime = now;
         this.queueLiveVisibleSidebearingDependentRefresh();
     }
 
@@ -6700,7 +6628,6 @@ export class OutlineEditor {
         if (deltaX !== 0) {
             this._hasMoved = true;
         }
-        this._lastSidebearingTickAt = performance.now();
         this._updateDraggedSidebearing(deltaX);
 
         const now = performance.now();
@@ -9464,19 +9391,6 @@ export class OutlineEditor {
         };
     }
 
-    private getUserspaceLocationForStation(
-        stationId: string,
-        fontModel: any
-    ): UserspaceLocation | null {
-        const station = (fontModel?.stations || []).find(
-            (candidate: any) => candidate?.id === stationId
-        );
-        if (!station?.location) {
-            return null;
-        }
-        return designspaceToUserspace(station.location, fontModel.axes || []);
-    }
-
     findClosestStationId(userspaceLocation: UserspaceLocation): string | null {
         const fontModel = fontManager.currentFont?.fontModel;
         if (!fontModel?.stations?.length) {
@@ -10889,8 +10803,6 @@ export class OutlineEditor {
         this._snapDragStartNodePos = null;
         this._snapCandidateCache = null;
         this._lastDragSaveTime = 0;
-        this._lastLiveAnchorRefreshTime = 0;
-        this._lastLiveSidebearingRefreshTime = 0;
         this._lastPropertyPanelUpdateTime = 0;
         this.cancelPendingDragMetricsUpdate();
         this.resetLiveOutlineRefreshState();
@@ -14846,7 +14758,6 @@ export class OutlineEditor {
 
         this.resetDragGestureState();
         this._lastDragSaveTime = 0;
-        this._lastLiveAnchorRefreshTime = 0;
         this._lastPropertyPanelUpdateTime = 0;
         this.cancelPendingDragMetricsUpdate();
 
@@ -15274,7 +15185,6 @@ export class OutlineEditor {
                 this._componentDragDeltaX = 0;
                 this._sidebearingAffectedGlyphNames = new Set();
                 this._anchorAffectedGlyphNames = new Set();
-                this._committedOutlineAffectedGlyphNames = new Set();
                 // End sessions only after drain/Yjs/overlay clear.
                 this.isDraggingAnchor = false;
                 this.resetLiveAnchorRefreshState();
@@ -20164,8 +20074,6 @@ export class OutlineEditor {
                 scope: this.isDraggingSidebearing ? 'visible' : 'all'
             });
             affectedGlyphNames = closure.affectedGlyphNames;
-            this._sidebearingDragHasCascadeDependents =
-                closure.dependentTargets.length > 0;
 
             // Keyboard and property-panel edits persist immediately after this
             // method. Replace their working copy with the authoritative
@@ -22036,47 +21944,6 @@ export class OutlineEditor {
             skipAutoSelectMatchingDrawing: true
         });
         this.syncAddDrawingButtonForExplicitSelection();
-    }
-
-    async onAnimationComplete() {
-        // Don't clear isDrawingSwitchAnimating here - it's cleared in glyph-canvas.ts
-        // after calling restoreTargetDrawingDataAfterAnimating()
-
-        // Don't handle interpolation slider resets here when drawing switching
-        // The drawing switch logic in glyph-canvas.ts will handle everything
-        if (!this.isDrawingSwitchAnimating) {
-            this.clearQueuedInterpolationRequest();
-            fontInterpolation.resetRequestTracking();
-        }
-
-        // Only handle interpolation mode here, not drawing switches
-        // Drawing switches are handled in restoreTargetDrawingDataAfterAnimating()
-        if (this.isDrawingSwitchAnimating) {
-            // Drawing switch animation - don't handle here
-            return;
-        }
-
-        // Check if new variation settings match any drawing (interpolation mode only)
-        if (this.active && this.glyphCanvas.fontData) {
-            await this.autoSelectMatchingDrawing();
-
-            // If no exact drawing match, keep interpolated data visible
-            if (
-                this.selectedDrawingId === null &&
-                this.drawingData &&
-                this.drawingData.isInterpolated
-            ) {
-                // Keep showing interpolated data
-                console.log('Animation complete: showing interpolated glyph');
-            }
-        }
-
-        if (
-            !this.glyphCanvas.axesManager?.isSliderActive &&
-            !this.glyphCanvas.axesManager?.isLoopAnimating
-        ) {
-            this.isInterpolating = false;
-        }
     }
 
     findMatchingDrawing(

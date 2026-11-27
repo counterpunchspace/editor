@@ -199,51 +199,6 @@ export const DISCRETIONARY_FEATURES = new Set([
     ...DEFAULT_OFF_FEATURES
 ]);
 
-// Features that are required (not subject to user control, always applied)
-export const REQUIRED_FEATURES = new Set([
-    'abvf', // Above-base Forms
-    'abvm', // Above-base Mark Positioning
-    'abvs', // Above-base Substitutions
-    'akhn', // Akhand
-    'blwf', // Below-base Forms
-    'blwm', // Below-base Mark Positioning
-    'blws', // Below-base Substitutions
-    'ccmp', // Glyph Composition/Decomposition - "This feature should always be applied"
-    'cfar', // Conjunct Form After Ro
-    'cjct', // Conjunct Forms
-    'curs', // Cursive Positioning
-    'dist', // Distances
-    'dtls', // Dotless Forms
-    'fin2', // Terminal Forms #2
-    'fin3', // Terminal Forms #3
-    'fina', // Terminal Forms
-    'flac', // Flattened Accent Forms
-    'half', // Half Forms
-    'haln', // Halant Forms
-    'init', // Initial Forms
-    'isol', // Isolated Forms
-    'jalt', // Justification Alternates
-    'ljmo', // Leading Jamo Forms
-    'mark', // Mark Positioning
-    'med2', // Medial Forms #2
-    'medi', // Medial Forms
-    'mkmk', // Mark to Mark Positioning
-    'mset', // Mark Positioning via Substitution (deprecated)
-    'nukt', // Nukta Forms
-    'pref', // Pre-base Forms
-    'pres', // Pre-base Substitutions
-    'pstf', // Post-base Forms
-    'psts', // Post-base Substitutions
-    'rclt', // Required Contextual Alternates
-    'rlig', // Required Ligatures
-    'rphf', // Reph Form
-    'rkrf', // Rakar Forms
-    'rvrn', // Required Variation Alternates
-    'tjmo', // Trailing Jamo Forms
-    'vjmo', // Vowel Jamo Forms
-    'vatu' // Vattu Variants
-]);
-
 /**
  * OpenType feature execution order per writing script.
  *

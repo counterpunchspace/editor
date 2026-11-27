@@ -78,6 +78,17 @@ export function extractHexUnicodeSearchText(term: string): string | null {
     return hex;
 }
 
+function getCodepointHexForms(
+    codepoint: number
+): { bare: string; padded: string } | null {
+    if (!Number.isInteger(codepoint) || codepoint < 0 || codepoint > 0x10ffff) {
+        return null;
+    }
+
+    const bare = codepoint.toString(16).toLowerCase();
+    return { bare, padded: bare.padStart(4, '0') };
+}
+
 /**
  * Return whether a codepoint's hex form contains the typed hex fragment.
  * Matches both bare (`4c`) and padded (`004c`) spellings, so `004` hits `004C`.
@@ -86,18 +97,14 @@ export function codepointMatchesHexUnicodeSearch(
     codepoint: number,
     hexTerm: string
 ): boolean {
-    if (
-        !Number.isInteger(codepoint) ||
-        codepoint < 0 ||
-        codepoint > 0x10ffff ||
-        !hexTerm
-    ) {
+    if (!hexTerm) {
         return false;
     }
 
-    const bare = codepoint.toString(16).toLowerCase();
-    const padded = bare.padStart(4, '0');
-    return padded.includes(hexTerm) || bare.includes(hexTerm);
+    const forms = getCodepointHexForms(codepoint);
+    return forms
+        ? forms.padded.includes(hexTerm) || forms.bare.includes(hexTerm)
+        : false;
 }
 
 /**
@@ -108,18 +115,12 @@ export function codepointExactHexUnicodeSearch(
     codepoint: number,
     hexTerm: string
 ): boolean {
-    if (
-        !Number.isInteger(codepoint) ||
-        codepoint < 0 ||
-        codepoint > 0x10ffff ||
-        !hexTerm
-    ) {
+    if (!hexTerm) {
         return false;
     }
 
-    const bare = codepoint.toString(16).toLowerCase();
-    const padded = bare.padStart(4, '0');
-    return hexTerm === bare || hexTerm === padded;
+    const forms = getCodepointHexForms(codepoint);
+    return forms ? hexTerm === forms.bare || hexTerm === forms.padded : false;
 }
 
 /**

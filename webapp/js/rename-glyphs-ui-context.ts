@@ -70,6 +70,27 @@ export function rewriteTextBufferForGlyphRenames(
  * Rewrite glyph names inside a glyph_stack string.
  * Segments look like `glyph@drawing` or `compIndex:glyph@drawing`.
  */
+export function parseGlyphStackSegment(
+    segment: string
+): { prefix: string; glyphName: string; drawingId: string } | null {
+    let prefix = '';
+    let rest = segment;
+    const colonIndex = segment.indexOf(':');
+    if (colonIndex > 0 && !segment.slice(0, colonIndex).includes('@')) {
+        prefix = segment.slice(0, colonIndex + 1);
+        rest = segment.slice(colonIndex + 1);
+    }
+    const atIndex = rest.lastIndexOf('@');
+    if (atIndex <= 0) {
+        return null;
+    }
+    return {
+        prefix,
+        glyphName: rest.slice(0, atIndex),
+        drawingId: rest.slice(atIndex + 1)
+    };
+}
+
 export function rewriteGlyphStackForGlyphRenames(
     stack: string,
     renames: ReadonlyMap<string, string>
@@ -81,20 +102,11 @@ export function rewriteGlyphStackForGlyphRenames(
     return stack
         .split('>')
         .map((segment) => {
-            let prefix = '';
-            let rest = segment;
-            const colonIndex = segment.indexOf(':');
-            if (colonIndex > 0 && !segment.slice(0, colonIndex).includes('@')) {
-                prefix = segment.slice(0, colonIndex + 1);
-                rest = segment.slice(colonIndex + 1);
-            }
-            const atIndex = rest.lastIndexOf('@');
-            if (atIndex <= 0) {
+            const parsed = parseGlyphStackSegment(segment);
+            if (!parsed) {
                 return segment;
             }
-            const glyphName = rest.slice(0, atIndex);
-            const drawingId = rest.slice(atIndex + 1);
-            return `${prefix}${renames.get(glyphName) || glyphName}@${drawingId}`;
+            return `${parsed.prefix}${renames.get(parsed.glyphName) || parsed.glyphName}@${parsed.drawingId}`;
         })
         .join('>');
 }

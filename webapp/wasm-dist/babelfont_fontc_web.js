@@ -901,22 +901,6 @@ export function get_layout_closure_cached(font_revision, glyph_names_json) {
 }
 
 /**
- * Get stylistic set names from compiled font bytes
- *
- * Returns a JSON string with structure:
- * ```json
- * {
- *   "ss01": "Alternate a",
- *   "ss02": "Swash capitals",
- *   ...
- * }
- * ```
- *
- * # Arguments
- * * `font_bytes` - Compiled TTF/OTF font bytes
- *
- * # Returns
- * * `String` - JSON object mapping feature tags to their UI names
  * @param {Uint8Array} font_bytes
  * @returns {string}
  */

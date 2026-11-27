@@ -32,33 +32,10 @@ import { Logger } from './logger';
 import { isProduction } from './settings';
 import type { FileInfo, FileSystemAdapter } from './file-system-adapter';
 import type { EncodedShard } from './filesystem-plugins/cloud-document-set';
-import {
-    FONT_CORE_DOCUMENT_ID,
-    FONT_DEPS_DOCUMENT_ID
-} from './filesystem-plugins/cloud-document-set';
-import {
-    mapPool,
-    HYDRATE_SHARD_CONCURRENCY,
-    SEED_SHARD_CONCURRENCY
-} from './filesystem-plugins/cloud-bounded-io';
-import {
-    assertSafeRebaseline,
-    assertHydrateBatchBudget,
-    HYDRATE_BATCH_MAX_BYTES,
-    HYDRATE_BATCH_MAX_REQUESTS,
-    SPARSE_ESTIMATED_BYTES_PER_GLYPH
-} from './filesystem-plugins/cloud-shard-limits';
-import {
-    createPackParser,
-    encodePackBody,
-    encodePackShardFrame,
-    PACK_FRAME_TYPE,
-    partitionPackItems,
-    type PackFrame
-} from './filesystem-plugins/cloud-shard-pack';
+import { FONT_CORE_DOCUMENT_ID } from './filesystem-plugins/cloud-document-set';
+import { assertSafeRebaseline } from './filesystem-plugins/cloud-shard-limits';
 import { missingRequiredCloudCapabilities } from './filesystem-plugins/cloud-collab-capabilities';
 import { COLLAB_PROTOCOL_VERSION as YDOC_SCHEMA_VERSION } from './generated/collab-protocol-limits';
-import { throwIfAborted, yieldToUi } from './yield-to-ui';
 import {
     collaborationMessageKey,
     type CollaborationMessageEnvelope
@@ -69,7 +46,6 @@ import {
     type CloudWalHealth,
     type CloudWalRecord
 } from './cloud-durable-wal';
-import { allocateClientTransactionId } from './generated/collab-protocol-durability-contract';
 import {
     decodeCollabLiveFrames,
     decodeCheckpointMeta,
@@ -79,10 +55,8 @@ import {
 } from './cloud-adapter-frames';
 import {
     type CloudOutboundUpdatePacket,
-    getCloudClientTransactionId,
     enqueueOutboundPacket as enqueueOutboundPacketShared,
-    sendableOutboxPrefix,
-    walRecordsReadyToRestore
+    sendableOutboxPrefix
 } from './cloud-adapter-outbox';
 import {
     assertEncodableDocumentState,
@@ -171,7 +145,6 @@ export type {
 } from './cloud-adapter-support';
 
 import {
-    AUTHENTICATION_MAX_WAIT_MS,
     subscriptionLapsedCredentialDetail as subscriptionLapsedDetail,
     AUTHENTICATION_TIMEOUT_MS,
     CLIENT_RECONNECT_CLOSE_CODE,
@@ -179,48 +152,25 @@ import {
     CLOUD_COLLAB_FORMAT_CHANGED_MESSAGE,
     CLOUD_COLLAB_RELOAD_MESSAGE,
     CLOUD_COLLAB_SERVICE_UPDATING_MESSAGE,
-    CLOUD_GLYPH_CATCH_UP_CONCURRENCY,
-    CLOUD_GLYPH_CATCH_UP_MAX_ATTEMPTS,
-    CLOUD_GLYPH_CATCH_UP_RETRY_MS,
-    CLOUD_GLYPH_PUBLISH_CONCURRENCY,
-    CLOUD_LIVENESS_STALE_MS,
-    CLOUD_PING_INTERVAL_MS,
-    CLOUD_RECONNECT_BASE_MS,
-    CLOUD_RECONNECT_MAX_MS,
     DEFAULT_WEBSITE_BASE_URL,
-    HYDRATE_PACK_FETCH_TIMEOUT_MS,
-    INITIAL_SYNC_MAX_WAIT_MS,
     INITIAL_SYNC_TIMEOUT_MS,
-    OUTBOUND_ACK_MAX_WAIT_MS,
-    OUTBOUND_ACK_TIMEOUT_MS,
     TRANSFER_ACTIVITY_HOLD_MS,
-    abortSignalWithTimeout,
     ackIsDurable,
     base64ToU8,
-    catchUpCloudDocument,
     cloudReconnectDelayMs,
     CLOUD_RECONNECT_IDLE_AFTER_ATTEMPTS,
     dedupeCollaborationMessages,
-    emitShardIoProgress,
-    formatPackHttpError,
     getCloudRequestHeaders,
     getDefaultRoomWorkerUrl,
-    getLiveUpdateChunkKey,
     importCollaborationMessageHistory,
     isSignedOutCloudCredentialError,
     CLOUD_SIGNED_OUT_MESSAGE,
     isForbiddenCloudCredentialError,
-    isPackUnsupportedStatus,
     parseRequiredJsonResponse,
-    publishCloudDocumentUpdate,
     refreshEditorAfterGlyphDocumentCatchUp,
     relayGlyphStateToLinkedWindows,
     runCloudVisibleReconnectRebaseline,
-    sha256Digest,
     sha256Hex,
-    shardIoConcurrency,
-    shardIoTotals,
-    u8ToBase64,
     type CloudAccessCloseEvent,
     type CloudAccessServerError,
     type CloudAdapterAccessSnapshot,
@@ -228,12 +178,9 @@ import {
     type CloudAssetRole,
     type CloudConnectionHealth,
     type CloudConnectionStatus,
-    type CloudLiveDocumentState,
     type CloudLiveUpdateMessage,
     type CloudSeedDocumentSetResult,
-    type CloudSeededShardAttestation,
     type CloudShardIoOptions,
-    type CloudShardIoProgress,
     type CloudTransferActivity
 } from './cloud-adapter-support';
 import { assertContiguousTailFrames } from './cloud-adapter-support';
@@ -3087,40 +3034,6 @@ export class CloudAdapter implements FileSystemAdapter {
         );
     }
 
-    /** Single inbound apply for WS replay, /live, and packs. */
-    applyShardState(
-        documentId: string,
-        bytes: Uint8Array,
-        logIds?: {
-            checkpointLogId?: number | null;
-            appliedLogId?: number | null;
-        }
-    ): boolean {
-        if (documentId && documentId !== this._documentId) {
-            return false;
-        }
-        if (
-            logIds &&
-            typeof logIds.checkpointLogId === 'number' &&
-            Number.isInteger(logIds.checkpointLogId)
-        ) {
-            this._checkpointLogId = logIds.checkpointLogId;
-        }
-        const applied = this._applyServerState(bytes);
-        if (
-            applied &&
-            logIds &&
-            typeof logIds.appliedLogId === 'number' &&
-            Number.isInteger(logIds.appliedLogId)
-        ) {
-            this._appliedLogId = Math.max(
-                this._appliedLogId ?? 0,
-                logIds.appliedLogId
-            );
-        }
-        return applied;
-    }
-
     /**
      * Apply a room state to the bridge. False when the bridge refused it
      * (`applyDocumentCatchUp` returned false: a released layout room, a
@@ -3648,18 +3561,6 @@ export class CloudAdapter implements FileSystemAdapter {
             this._failDocument(failure, 'remote-update-rejected');
             return false;
         }
-    }
-
-    /** Concatenate an ordered array of Uint8Array chunks into one buffer. */
-    private _mergeChunks(chunks: Uint8Array[]): Uint8Array {
-        const totalLen = chunks.reduce((a, c) => a + c.length, 0);
-        const result = new Uint8Array(totalLen);
-        let offset = 0;
-        for (const chunk of chunks) {
-            result.set(chunk, offset);
-            offset += chunk.length;
-        }
-        return result;
     }
 
     private _ackIsDurable(

@@ -191,8 +191,7 @@
 .plugin-settings-form .plugin-ui-checkbox,
 .plugin-settings-form .plugin-ui-textfield,
 .plugin-settings-form .plugin-ui-slider,
-.plugin-settings-form .plugin-ui-color,
-.plugin-settings-form .plugin-ui-select {
+.plugin-settings-form .plugin-ui-color {
     display: flex;
     flex-direction: column;
     align-items: stretch;

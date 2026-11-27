@@ -109,14 +109,11 @@ function parseRustResultJson<T>(resultJson: unknown, operation: string): T {
 
 let initialized = false;
 let cachedBabelfontJson: string | null = null; // Cache babelfont JSON for re-use
-let cachedFontRevisionKey: string | null = null;
 let cachedBaseSubsetKey: string | null = null;
 let cachedClosureGlyphCount: number | null = null;
 let cachedPreviewBaseSubsetKey: string | null = null;
 let cachedPreviewClosureGlyphCount: number | null = null;
 let fontCacheEpoch = 0;
-let lastStoreFontAtMs = 0;
-let dragCompilesSinceStore = 0;
 const PERF_TRACE_CONTEXT_GLOBAL_KEY = '__cpPerfTraceContext';
 const MAX_DUMP_DRAWING_TARGETS = 256;
 
@@ -558,213 +555,6 @@ export function sanitizeDumpLayerTargets(
 
         return { glyphName, layerId: drawingId };
     });
-}
-
-/**
- * Strip layerData fields from components in the font JSON,
- * ensure all drawings have a shapes array,
- * and filter out AssociatedWithMaster drawings that aren't free drawings
- *
- * layerData is a runtime-only field used for rendering nested components
- * and must not be saved to files or passed to fontc compilation.
- *
- * LayerType uses tagged format:
- *   {type: "DefaultForMaster", master: "id"}
- *   {type: "AssociatedWithMaster", master: "id"}
- *   {type: "FreeFloating"}
- *
- * AssociatedWithMaster drawings without location data are old backup layers (Glyphs)
- * that should not be compiled.
- */
-
-function stripLayerData(fontData: any): any {
-    if (!fontData || typeof fontData !== 'object') return fontData;
-
-    // Deep clone to avoid mutating original
-    const cleaned = JSON.parse(JSON.stringify(fontData));
-
-    // Temporarily remove guides from stations to avoid serialization issues
-    // TODO: Fix guide format conversion
-    if (cleaned.masters && Array.isArray(cleaned.masters)) {
-        cleaned.masters.forEach((station: any) => {
-            if (station.guides) {
-                delete station.guides;
-            }
-        });
-    }
-
-    // Process all glyphs (handle both array and object formats)
-    if (cleaned.glyphs) {
-        const isArray = Array.isArray(cleaned.glyphs);
-        const glyphs = isArray ? cleaned.glyphs : Object.values(cleaned.glyphs);
-
-        glyphs.forEach((glyph: any) => {
-            if (!glyph || !glyph.layers) return;
-
-            // Shapes are already in correct format from babelfont-rs (serde untagged)
-            // No transformation needed
-
-            // Validate dotaccentcomb before filtering
-            if (glyph.name === 'dotaccentcomb') {
-                glyph.layers.forEach((drawing: any, i: number) => {
-                    const stationType =
-                        drawing.master && typeof drawing.master === 'object'
-                            ? 'type' in drawing.master
-                                ? drawing.master.type
-                                : Object.keys(drawing.master)[0]
-                            : 'none';
-                });
-            }
-
-            // Filter out AssociatedWithMaster drawings without location data
-            // (these are old backup layers from Glyphs, not free drawings)
-            glyph.layers = glyph.layers.filter((drawing: any) => {
-                if (!drawing || !drawing.master) return true;
-
-                const station = drawing.master;
-
-                if (station.type === 'DefaultForMaster') return true;
-                if (station.type === 'FreeFloating') return true;
-                if (station.type === 'AssociatedWithMaster') {
-                    // Only keep if it has location data (free drawing)
-                    return (
-                        drawing.location &&
-                        Object.keys(drawing.location).length > 0
-                    );
-                }
-
-                return false;
-            });
-
-            // Validate dotaccentcomb AFTER filtering
-            if (glyph.name === 'dotaccentcomb') {
-                glyph.layers.forEach((drawing: any, i: number) => {
-                    const stationType =
-                        drawing.master && typeof drawing.master === 'object'
-                            ? 'type' in drawing.master
-                                ? `{type: ${drawing.master.type}}`
-                                : Object.keys(drawing.master)[0]
-                            : 'none';
-                });
-            }
-
-            // Process remaining drawings
-            for (const drawing of glyph.layers) {
-                if (!drawing) {
-                    continue;
-                }
-                // Ensure drawing has a shapes array (even if empty)
-                if (!drawing.shapes) {
-                    drawing.shapes = [];
-                }
-
-                // Clean component layerData (runtime-only field)
-                if (Array.isArray(drawing.shapes)) {
-                    for (const shape of drawing.shapes) {
-                        if (!shape || typeof shape !== 'object') continue;
-
-                        // Components have 'reference' field (unwrapped format from babelfont-rs)
-                        if ('reference' in shape) {
-                            if ('layerData' in shape) {
-                                delete shape.layerData;
-                            }
-
-                            // Don't add transform if it doesn't exist
-                            // The Rust compiler will handle missing transforms as identity
-                            if (shape.transform) {
-                                const t = shape.transform;
-                                // Only add missing fields if transform exists, preserve order field
-                                if (!t.scale) t.scale = [1, 1];
-                                if (t.rotation === undefined) t.rotation = 0;
-                                if (!t.skew) t.skew = [0, 0];
-                                if (!t.translation) t.translation = [0, 0];
-                                if (!t.order) t.order = 'RestOfTheWorld';
-                            }
-                        }
-                    }
-                }
-
-                // Temporarily remove guides to avoid serialization issues
-                // TODO: Fix guide format conversion
-                if (drawing.guides) {
-                    delete drawing.guides;
-                }
-            }
-        });
-    }
-
-    return cleaned;
-}
-
-/**
- * Validate font data and report any issues
- * Also filters out glyphs with empty shapes to prevent compilation errors
- */
-function validateFontData(fontData: any): void {
-    if (!fontData.glyphs) {
-        return;
-    }
-
-    const issues: string[] = [];
-    const glyphIndicesToRemove: number[] = [];
-
-    // Handle both array and object formats
-    const isArray = Array.isArray(fontData.glyphs);
-    const glyphs = isArray ? fontData.glyphs : Object.values(fontData.glyphs);
-
-    glyphs.forEach((glyph: any, index: number) => {
-        if (!glyph) return; // Skip null/undefined entries
-
-        const glyphName = glyph.name || `index ${index}`;
-
-        if (!glyph.layers || glyph.layers.length === 0) {
-            issues.push(`Glyph "${glyphName}" has no drawings`);
-            if (isArray) glyphIndicesToRemove.push(index);
-            return;
-        }
-
-        // Check if ALL drawings are empty
-        let allDrawingsEmpty = true;
-        for (let i = 0; i < glyph.layers.length; i++) {
-            const drawing = glyph.layers[i];
-            if (!drawing) {
-                continue;
-            }
-
-            if (!drawing.shapes) {
-                const presentFields = Object.keys(drawing).join(', ');
-                issues.push(
-                    `Glyph "${glyphName}" drawing ${i} has no shapes array (has: ${presentFields})`
-                );
-            } else if (drawing.shapes.length === 0) {
-                issues.push(
-                    `Glyph "${glyphName}" drawing ${i} has empty shapes array`
-                );
-            } else {
-                allDrawingsEmpty = false;
-            }
-        }
-
-        // If all drawings are empty, mark glyph for removal
-        if (allDrawingsEmpty && isArray) {
-            glyphIndicesToRemove.push(index);
-        }
-    });
-
-    if (issues.length > 0) {
-        issues.slice(0, 5).forEach((issue) => console.warn(`  - ${issue}`));
-        if (issues.length > 5) {
-            console.warn(`  ... and ${issues.length - 5} more issues`);
-        }
-    }
-
-    // Remove glyphs with all empty drawings to prevent compilation errors
-    if (isArray && glyphIndicesToRemove.length > 0) {
-        // Filter out the glyphs by creating a new array without them
-        fontData.glyphs = fontData.glyphs.filter(
-            (_: any, idx: number) => !glyphIndicesToRemove.includes(idx)
-        );
-    }
 }
 
 async function initializeWasm(traceContext?: TimelineTraceContext) {
@@ -1953,11 +1743,6 @@ self.onmessage = async (event) => {
                     workerCacheStatus?: unknown;
                 } | null>(resultJson, 'apply_yjs_update');
                 const wasSkipped = parsedResult?.skipped != null;
-                const changedGlyphCount = Array.isArray(
-                    parsedResult?.changedGlyphs
-                )
-                    ? parsedResult.changedGlyphs.length
-                    : null;
                 cachedBabelfontJson = null;
                 cachedPreviewBaseSubsetKey = null;
                 cachedPreviewClosureGlyphCount = null;
@@ -2498,13 +2283,11 @@ self.onmessage = async (event) => {
                     clear_font_cache();
                 }
                 cachedBabelfontJson = null;
-                cachedFontRevisionKey = null;
                 cachedBaseSubsetKey = null;
                 cachedClosureGlyphCount = null;
                 cachedPreviewBaseSubsetKey = null;
                 cachedPreviewClosureGlyphCount = null;
                 fontCacheEpoch = 0;
-                dragCompilesSinceStore = 0;
                 self.postMessage({
                     id,
                     type: 'clearCache',
@@ -2549,14 +2332,11 @@ self.onmessage = async (event) => {
                 // the first editing compile cannot reuse stale priming keys.
                 clear_font_cache();
                 cachedBabelfontJson = null;
-                cachedFontRevisionKey = null;
                 cachedBaseSubsetKey = null;
                 cachedClosureGlyphCount = null;
                 cachedPreviewBaseSubsetKey = null;
                 cachedPreviewClosureGlyphCount = null;
                 fontCacheEpoch += 1;
-                dragCompilesSinceStore = 0;
-                lastStoreFontAtMs = 0;
 
                 let payload: string | Uint8Array;
 
@@ -2632,14 +2412,11 @@ self.onmessage = async (event) => {
                 }
                 timelineMark('font.worker.openFontSparse.started');
                 cachedBabelfontJson = null;
-                cachedFontRevisionKey = null;
                 cachedBaseSubsetKey = null;
                 cachedClosureGlyphCount = null;
                 cachedPreviewBaseSubsetKey = null;
                 cachedPreviewClosureGlyphCount = null;
                 fontCacheEpoch += 1;
-                dragCompilesSinceStore = 0;
-                lastStoreFontAtMs = 0;
 
                 const payload =
                     entryMap && typeof entryMap === 'object'

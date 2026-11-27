@@ -134,15 +134,6 @@ export function isGlyphRevisionPath(path: string | undefined | null): boolean {
     );
 }
 
-export function areGlyphRevisionOnlyEntries(
-    entries: Array<{ path?: string | null }>
-): boolean {
-    return (
-        entries.length > 0 &&
-        entries.every((entry) => isGlyphRevisionPath(entry.path))
-    );
-}
-
 export function shardRoomId(assetId: string, documentId: string): string {
     return `${assetId}:${documentId}`;
 }

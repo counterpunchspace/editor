@@ -84,10 +84,6 @@ export function walUpdateBytes(record: CloudWalRecord): Uint8Array {
     return new Uint8Array();
 }
 
-export function serializeWalOperations(operations: unknown[]): unknown[] {
-    return JSON.parse(JSON.stringify(operations ?? []));
-}
-
 export type CloudWalHealth = 'initializing' | 'ready' | 'unavailable';
 
 const WRITE_ATTEMPTS = 3;

@@ -1,6 +1,7 @@
 // Title-bar health chip: delayed warnings for wedged editing, not slow compiles.
 
 import { Logger } from './logger';
+import { escapeHtml } from './ui/escape-html';
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 
 const console = new Logger('EditorHealth');
@@ -165,14 +166,6 @@ export function evaluateEditorHealth(
     return issues;
 }
 
-function escapeHtml(value: string): string {
-    return value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-}
-
 class EditorHealthMonitor {
     propertiesUpdateStartedAt: number | null = null;
     propertiesUpdateSkipCount = 0;
@@ -184,7 +177,6 @@ class EditorHealthMonitor {
 
     private lastGlyphKey = '';
     private glyphSelectedAt: number | null = null;
-    private pollTimer: ReturnType<typeof setInterval> | null = null;
     private button: HTMLButtonElement | null = null;
     private overlay: HTMLElement | null = null;
     private escapeBinding: ModalEscapeBinding | null = null;
@@ -198,7 +190,7 @@ class EditorHealthMonitor {
         this.started = true;
         this.priorSessionWasUnhealthy = this.readSessionFlag();
         this.installChrome();
-        this.pollTimer = setInterval(() => this.tick(), POLL_MS);
+        setInterval(() => this.tick(), POLL_MS);
         window.addEventListener('beforeunload', () => {
             this.writeSessionFlag(this.visibleIssues.length > 0);
         });

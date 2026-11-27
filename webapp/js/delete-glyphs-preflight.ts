@@ -166,16 +166,6 @@ export function kerningPairIsAffected(
     return leftKeys.has(left) || rightKeys.has(right);
 }
 
-/** True when the map stores flat "left:right" → number pairs. */
-export function isFlatKerningMap(kerning: unknown): boolean {
-    if (!kerning || typeof kerning !== 'object') {
-        return false;
-    }
-    return Object.entries(kerning as Record<string, unknown>).some(
-        ([key, value]) => typeof value === 'number' || key.includes(':')
-    );
-}
-
 /** Convert nested `{left: {right: n}}` maps to `"left:right"` pair keys. */
 export function flattenKerningMap(kerning: unknown): Record<string, number> {
     const next: Record<string, number> = {};
@@ -420,17 +410,6 @@ export function stripDeletedGlyphTokensFromClassCode(
                 .replace(/[ \t]+$/g, '')
         )
         .join('\n');
-}
-
-/**
- * @deprecated Use stripDeletedGlyphTokensFromClassCode or
- * commentOutFeatureLinesReferencingDeletedGlyphs.
- */
-export function stripDeletedGlyphTokensFromFeatureCode(
-    code: string,
-    deletedNames: ReadonlySet<string>
-): string {
-    return stripDeletedGlyphTokensFromClassCode(code, deletedNames);
 }
 
 /**

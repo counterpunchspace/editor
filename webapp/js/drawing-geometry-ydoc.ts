@@ -69,7 +69,7 @@ export function recordLateDrawingChildMap(
     );
 }
 
-function generateStableId(): string {
+export function generateStableId(): string {
     if (
         typeof crypto !== 'undefined' &&
         typeof crypto.randomUUID === 'function'

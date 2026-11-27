@@ -26,3 +26,15 @@ export function throwIfAborted(signal?: AbortSignal | null): void {
     }
     throw new DOMException('The operation was aborted.', 'AbortError');
 }
+
+export function waitForNextAnimationFrame(): Promise<void> {
+    return new Promise((resolve) => {
+        const nextFrame =
+            (typeof window !== 'undefined' && window.requestAnimationFrame) ||
+            globalThis.requestAnimationFrame ||
+            ((callback: FrameRequestCallback) =>
+                setTimeout(() => callback(performance.now()), 0));
+
+        nextFrame(() => resolve());
+    });
+}

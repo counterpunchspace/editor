@@ -1,11 +1,7 @@
 // Measurement tool for measuring distances in glyph canvas
 // Activated immediately by holding Tab in text mode or editing mode
 
-import APP_SETTINGS from '../settings';
 import type { GlyphCanvas } from '../glyph-canvas';
-import { Logger } from '../logger';
-
-const console = new Logger('MeasurementTool');
 
 export class MeasurementTool {
     private glyphCanvas: GlyphCanvas;
@@ -17,7 +13,6 @@ export class MeasurementTool {
 
     // Visibility state
     visible: boolean = false;
-    private cancelledByZoom: boolean = false;
     private disabledForTyping: boolean = false;
 
     constructor(glyphCanvas: GlyphCanvas) {
@@ -28,7 +23,6 @@ export class MeasurementTool {
      * Handle the measurement key press and show the tool immediately.
      */
     handleMeasurementKeyPress(): void {
-        this.cancelledByZoom = false;
         this.showImmediately();
         this.glyphCanvas.updateCursorStyle();
     }
@@ -39,21 +33,11 @@ export class MeasurementTool {
     handleMeasurementKeyRelease(): void {
         const wasVisible = this.visible;
         this.visible = false;
-        this.cancelledByZoom = false;
         this.isDragging = false;
         this.disabledForTyping = false;
 
-        // Perform hit-testing when measurement tool turns off
         if (wasVisible) {
-            if (
-                this.glyphCanvas.outlineEditor.active &&
-                document.activeElement === this.glyphCanvas.canvas
-            ) {
-                this.glyphCanvas.outlineEditor.performHitDetection(null);
-            }
-            this.glyphCanvas.updateHoveredGlyph();
-            this.glyphCanvas.updateCursorStyle();
-            this.glyphCanvas.render();
+            this.resetAfterHide(true);
         }
     }
 
@@ -63,18 +47,23 @@ export class MeasurementTool {
     handleWheel(): void {
         const wasVisible = this.visible;
         this.visible = false;
-        this.cancelledByZoom = true;
 
-        // Perform hit-testing when measurement tool turns off
         if (wasVisible) {
-            if (
-                this.glyphCanvas.outlineEditor.active &&
-                document.activeElement === this.glyphCanvas.canvas
-            ) {
-                this.glyphCanvas.outlineEditor.performHitDetection(null);
-            }
-            this.glyphCanvas.updateHoveredGlyph();
-            this.glyphCanvas.updateCursorStyle();
+            this.resetAfterHide(false);
+        }
+    }
+
+    private resetAfterHide(shouldRender: boolean): void {
+        if (
+            this.glyphCanvas.outlineEditor.active &&
+            document.activeElement === this.glyphCanvas.canvas
+        ) {
+            this.glyphCanvas.outlineEditor.performHitDetection(null);
+        }
+        this.glyphCanvas.updateHoveredGlyph();
+        this.glyphCanvas.updateCursorStyle();
+        if (shouldRender) {
+            this.glyphCanvas.render();
         }
     }
 

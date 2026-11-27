@@ -183,23 +183,29 @@ fn clone_glyph_doc(glyph_id: &str, glyph_name: &str, src: &Doc) -> Result<Cloned
     })
 }
 
+fn clone_glyph_doc_by_id(glyph_id: &str, name: &str) -> Result<Option<ClonedGlyphDoc>, JsValue> {
+    let live_clone = {
+        let docs = GLYPH_DOCS.lock().unwrap();
+        docs.get(glyph_id)
+            .map(|src| clone_glyph_doc(glyph_id, name, src))
+    };
+    if let Some(res) = live_clone {
+        return res.map(Some);
+    }
+    let dormant_bytes = DORMANT_GLYPH_STATES.lock().unwrap().get(glyph_id).cloned();
+    if let Some(bytes) = dormant_bytes {
+        let temp_doc = decode_glyph_doc_from_bytes(glyph_id, &bytes)?;
+        return clone_glyph_doc(glyph_id, name, &temp_doc).map(Some);
+    }
+    Ok(None)
+}
+
 fn clone_all_glyph_docs() -> Result<Vec<ClonedGlyphDoc>, JsValue> {
     let ids = GLYPH_ID_BY_NAME.lock().unwrap().clone();
     let mut clones = Vec::new();
     for (name, glyph_id) in ids.iter() {
-        let live_clone = {
-            let docs = GLYPH_DOCS.lock().unwrap();
-            docs.get(glyph_id)
-                .map(|src| clone_glyph_doc(glyph_id, name, src))
-        };
-        if let Some(res) = live_clone {
-            clones.push(res?);
-            continue;
-        }
-        let dormant_bytes = DORMANT_GLYPH_STATES.lock().unwrap().get(glyph_id).cloned();
-        if let Some(bytes) = dormant_bytes {
-            let temp_doc = decode_glyph_doc_from_bytes(glyph_id, &bytes)?;
-            clones.push(clone_glyph_doc(glyph_id, name, &temp_doc)?);
+        if let Some(cloned) = clone_glyph_doc_by_id(glyph_id, name)? {
+            clones.push(cloned);
         }
     }
     Ok(clones)
@@ -212,19 +218,8 @@ fn clone_named_glyph_docs(names: &HashSet<String>) -> Result<Vec<ClonedGlyphDoc>
         let Some(glyph_id) = ids.get(name) else {
             continue;
         };
-        let live_clone = {
-            let docs = GLYPH_DOCS.lock().unwrap();
-            docs.get(glyph_id)
-                .map(|src| clone_glyph_doc(glyph_id, name, src))
-        };
-        if let Some(res) = live_clone {
-            clones.push(res?);
-            continue;
-        }
-        let dormant_bytes = DORMANT_GLYPH_STATES.lock().unwrap().get(glyph_id).cloned();
-        if let Some(bytes) = dormant_bytes {
-            let temp_doc = decode_glyph_doc_from_bytes(glyph_id, &bytes)?;
-            clones.push(clone_glyph_doc(glyph_id, name, &temp_doc)?);
+        if let Some(cloned) = clone_glyph_doc_by_id(glyph_id, name)? {
+            clones.push(cloned);
         }
     }
     Ok(clones)
@@ -319,26 +314,13 @@ fn invalid_width_write(key: &str, value: &JsonValue) -> Option<String> {
     })
 }
 
-fn merge_json_map_entry(
+fn write_non_object_json_map_entry(
     txn: &mut yrs::TransactionMut,
     map: &yrs::MapRef,
     key: &str,
     value: &JsonValue,
 ) -> Result<(), JsValue> {
-    if let Some(error) = invalid_width_write(key, value) {
-        return Err(JsValue::from_str(&error));
-    }
-    if !value.is_object() && map_entry_equals(txn, map, key, value)? {
-        return Ok(());
-    }
     match value {
-        JsonValue::Object(object) => {
-            if let Some(yrs::types::Value::YMap(existing)) = map.get(txn, key) {
-                merge_json_map(txn, &existing, object)?;
-            } else {
-                set_json_map_entry(txn, map, key, value)?;
-            }
-        }
         JsonValue::Array(items) => {
             write_json_array_entry(txn, map, key, items)?;
         }
@@ -354,8 +336,32 @@ fn merge_json_map_entry(
         JsonValue::Null => {
             map.insert(txn, key, Any::Null);
         }
+        JsonValue::Object(_) => unreachable!("objects handled by caller"),
     }
     Ok(())
+}
+
+fn merge_json_map_entry(
+    txn: &mut yrs::TransactionMut,
+    map: &yrs::MapRef,
+    key: &str,
+    value: &JsonValue,
+) -> Result<(), JsValue> {
+    if let Some(error) = invalid_width_write(key, value) {
+        return Err(JsValue::from_str(&error));
+    }
+    if !value.is_object() && map_entry_equals(txn, map, key, value)? {
+        return Ok(());
+    }
+    if let JsonValue::Object(object) = value {
+        if let Some(yrs::types::Value::YMap(existing)) = map.get(txn, key) {
+            merge_json_map(txn, &existing, object)?;
+        } else {
+            set_json_map_entry(txn, map, key, value)?;
+        }
+        return Ok(());
+    }
+    write_non_object_json_map_entry(txn, map, key, value)
 }
 
 /// Write `items` as `map[key]`. A stored Y.Array is edited in place, never
@@ -730,14 +736,18 @@ fn stored_collection_items<T: ReadTxn>(
     ) {
         (None, None) => {}
         (Some(by_id), Some(order)) => {
-            let JsonValue::Object(by_id) = crate::yrs_value_to_json(by_id, txn).map_err(&damaged)? else {
+            let JsonValue::Object(by_id) =
+                crate::yrs_value_to_json(by_id, txn).map_err(&damaged)?
+            else {
                 return Err(damaged(format!("{} is not a map", collection.by_id_key)));
             };
-            let JsonValue::Array(order) = crate::yrs_value_to_json(order, txn).map_err(&damaged)? else {
+            let JsonValue::Array(order) = crate::yrs_value_to_json(order, txn).map_err(&damaged)?
+            else {
                 return Err(damaged(format!("{} is not a list", collection.order_key)));
             };
-            let ids = crate::ids_in_order(&by_id, &order, collection.by_id_key, collection.order_key)
-                .map_err(&damaged)?;
+            let ids =
+                crate::ids_in_order(&by_id, &order, collection.by_id_key, collection.order_key)
+                    .map_err(&damaged)?;
             for id in ids {
                 let item = &by_id[id];
                 if item.get("id").and_then(JsonValue::as_str) != Some(id) {
@@ -764,7 +774,10 @@ fn stored_collection_items<T: ReadTxn>(
     }
     if let Some(flat) = layer_map.get(txn, collection.array_key) {
         let JsonValue::Array(flat) = crate::yrs_value_to_json(flat, txn).map_err(&damaged)? else {
-            return Err(damaged(format!("the flat {} entry is not a list", collection.array_key)));
+            return Err(damaged(format!(
+                "the flat {} entry is not a list",
+                collection.array_key
+            )));
         };
         items.extend(flat.iter().filter_map(|item| {
             let id = item.get("id").and_then(JsonValue::as_str)?;
@@ -1149,8 +1162,13 @@ fn write_drawing_geometry(
         layer_map.insert(txn, DRAWING_GEOMETRY_TOPOLOGY_KEY, encoded);
     }
     let may_create = stored.is_none();
-    let positions =
-        geometry_child_map(txn, layer_map, layer_id, DRAWING_NODE_POSITIONS_KEY, may_create)?;
+    let positions = geometry_child_map(
+        txn,
+        layer_map,
+        layer_id,
+        DRAWING_NODE_POSITIONS_KEY,
+        may_create,
+    )?;
     for (node_id, packed) in split.positions {
         // An equal position is not written again: each rewrite deletes the
         // stored item, and a receiver that misses this packet would lose
@@ -1293,30 +1311,13 @@ fn set_json_map_entry(
     if map_entry_equals(txn, map, key, value)? {
         return Ok(());
     }
-    match value {
-        JsonValue::Object(object) => {
-            map.remove(txn, key);
-            let child: yrs::MapRef = map.insert(txn, key, MapPrelim::<Any>::new());
-            fill_json_map(txn, &child, object)?;
-        }
-        JsonValue::Array(items) => {
-            write_json_array_entry(txn, map, key, items)?;
-        }
-        JsonValue::String(text) => {
-            map.insert(txn, key, text.clone());
-        }
-        JsonValue::Number(number) => {
-            map.insert(txn, key, json_number_to_any(number)?);
-        }
-        JsonValue::Bool(flag) => {
-            map.insert(txn, key, *flag);
-        }
-        JsonValue::Null => {
-            map.insert(txn, key, Any::Null);
-        }
+    if let JsonValue::Object(object) = value {
+        map.remove(txn, key);
+        let child: yrs::MapRef = map.insert(txn, key, MapPrelim::<Any>::new());
+        fill_json_map(txn, &child, object)?;
+        return Ok(());
     }
-
-    Ok(())
+    write_non_object_json_map_entry(txn, map, key, value)
 }
 
 fn fill_json_map(
@@ -1708,10 +1709,7 @@ fn font_with_variation_as_glyph(
             .layers
             .iter()
             .filter(|layer| layer.feature_variation_rules().map(Vec::as_slice) == Some(rules))
-            .filter(|layer| {
-                excluded_layer_id.is_none()
-                    || layer.id.as_deref() != excluded_layer_id
-            })
+            .filter(|layer| excluded_layer_id.is_none() || layer.id.as_deref() != excluded_layer_id)
             .cloned()
             .map(|mut layer| {
                 layer
@@ -1999,22 +1997,55 @@ fn encode_result_packets(
     Ok(result.into())
 }
 
+#[derive(Default)]
+struct BatchChangeRecorder {
+    changed_glyphs: HashSet<String>,
+    layer_targets: Vec<BatchLayerTarget>,
+    layer_operations: Vec<BatchLayerOperation>,
+}
+
+impl BatchChangeRecorder {
+    fn record(
+        &mut self,
+        glyph_name: String,
+        layer_id: String,
+        old_value: Option<JsonValue>,
+        new_value: Option<JsonValue>,
+    ) {
+        self.changed_glyphs.insert(glyph_name.clone());
+        self.layer_targets.push(BatchLayerTarget {
+            glyph_name: glyph_name.clone(),
+            layer_id: layer_id.clone(),
+        });
+        self.layer_operations.push(BatchLayerOperation {
+            glyph_name,
+            layer_id,
+            old_value,
+            new_value,
+        });
+    }
+
+    fn into_metadata(self, masters_operation: Option<BatchMastersOperation>) -> BatchMetadata {
+        BatchMetadata {
+            changed_glyphs: self.changed_glyphs.into_iter().collect(),
+            layer_targets: self.layer_targets,
+            layer_operations: self.layer_operations,
+            masters_operation,
+            axes_operation: None,
+            instances_operation: None,
+        }
+    }
+}
+
 #[wasm_bindgen]
 pub fn reinterpolate_master_layers_yjs(master_id: &str) -> Result<JsValue, JsValue> {
     let font = get_or_rebuild_font_cache()?;
-    let targets =
-        collect_reinterpolation_targets(&font, master_id).map_err(|error| JsValue::from_str(&error))?;
+    let targets = collect_reinterpolation_targets(&font, master_id)
+        .map_err(|error| JsValue::from_str(&error))?;
     if targets.is_empty() {
         return encode_result(
             Vec::new(),
-            &BatchMetadata {
-                changed_glyphs: Vec::new(),
-                layer_targets: Vec::new(),
-                layer_operations: Vec::new(),
-                masters_operation: None,
-                axes_operation: None,
-                instances_operation: None,
-            },
+            &BatchChangeRecorder::default().into_metadata(None),
         );
     }
 
@@ -2035,15 +2066,14 @@ pub fn reinterpolate_master_layers_yjs(master_id: &str) -> Result<JsValue, JsVal
     })
     .map_err(|error| JsValue::from_str(&format!("reinterpolate_master_layers_yjs: {}", error)))?;
 
+    let mut recorder = BatchChangeRecorder::default();
+
     if glyph_shards_active() {
         let names: HashSet<String> = regenerated
             .iter()
             .map(|(target, _)| target.glyph_name.clone())
             .collect();
         let mut clones = clone_named_glyph_docs(&names)?;
-        let mut changed_glyphs = HashSet::new();
-        let mut layer_targets = Vec::new();
-        let mut layer_operations = Vec::new();
         for (target, regenerated_value) in regenerated {
             let clone = require_cloned_glyph_mut(
                 &mut clones,
@@ -2068,36 +2098,17 @@ pub fn reinterpolate_master_layers_yjs(master_id: &str) -> Result<JsValue, JsVal
                 let mut txn = clone.doc.transact_mut();
                 upsert_layer_on_glyph_root(&mut txn, &target.layer_id, &new_value)?;
             }
-            changed_glyphs.insert(target.glyph_name.clone());
-            layer_targets.push(BatchLayerTarget {
-                glyph_name: target.glyph_name.clone(),
-                layer_id: target.layer_id.clone(),
-            });
-            layer_operations.push(BatchLayerOperation {
-                glyph_name: target.glyph_name,
-                layer_id: target.layer_id,
-                old_value: Some(old_value),
-                new_value: Some(new_value),
-            });
+            recorder.record(
+                target.glyph_name,
+                target.layer_id,
+                Some(old_value),
+                Some(new_value),
+            );
         }
-        return encode_result_packets(
-            encode_glyph_edits(&clones)?,
-            &BatchMetadata {
-                changed_glyphs: changed_glyphs.into_iter().collect(),
-                layer_targets,
-                layer_operations,
-                masters_operation: None,
-                axes_operation: None,
-                instances_operation: None,
-            },
-        );
+        return encode_result_packets(encode_glyph_edits(&clones)?, &recorder.into_metadata(None));
     }
 
     let (clone_doc, edits) = clone_current_ydoc()?;
-    let mut changed_glyphs = HashSet::new();
-    let mut layer_targets = Vec::new();
-    let mut layer_operations = Vec::new();
-
     {
         let mut txn = clone_doc.transact_mut();
         let font_map = txn
@@ -2122,32 +2133,17 @@ pub fn reinterpolate_master_layers_yjs(master_id: &str) -> Result<JsValue, JsVal
                 &new_value,
             )?;
 
-            changed_glyphs.insert(target.glyph_name.clone());
-            layer_targets.push(BatchLayerTarget {
-                glyph_name: target.glyph_name.clone(),
-                layer_id: target.layer_id.clone(),
-            });
-            layer_operations.push(BatchLayerOperation {
-                glyph_name: target.glyph_name,
-                layer_id: target.layer_id,
-                old_value: Some(old_value),
-                new_value: Some(new_value),
-            });
+            recorder.record(
+                target.glyph_name,
+                target.layer_id,
+                Some(old_value),
+                Some(new_value),
+            );
         }
     }
 
     let update = edits.packet()?;
-    encode_result(
-        update,
-        &BatchMetadata {
-            changed_glyphs: changed_glyphs.into_iter().collect(),
-            layer_targets,
-            layer_operations,
-            masters_operation: None,
-            axes_operation: None,
-            instances_operation: None,
-        },
-    )
+    encode_result(update, &recorder.into_metadata(None))
 }
 
 /// The rebuilt drawing as `(document id, update, metadata)`. The document id
@@ -2174,11 +2170,8 @@ fn build_reinterpolate_layer_batch(
     if glyph_shards_active() {
         let names = HashSet::from([target.glyph_name.clone()]);
         let mut clones = clone_named_glyph_docs(&names)?;
-        let clone = require_cloned_glyph_mut(
-            &mut clones,
-            &target.glyph_name,
-            "reinterpolate_layer_yjs",
-        )?;
+        let clone =
+            require_cloned_glyph_mut(&mut clones, &target.glyph_name, "reinterpolate_layer_yjs")?;
         let (old_value, new_value) = {
             let txn = clone.doc.transact();
             let old_value =
@@ -2200,26 +2193,14 @@ fn build_reinterpolate_layer_batch(
         // document, never a refusal.
         let document_id = glyph_document_id(&clone.glyph_id);
         let update = clone.edits.packet()?;
-        return Ok((
-            document_id,
-            update,
-            BatchMetadata {
-                changed_glyphs: vec![target.glyph_name.clone()],
-                layer_targets: vec![BatchLayerTarget {
-                    glyph_name: target.glyph_name.clone(),
-                    layer_id: target.layer_id.clone(),
-                }],
-                layer_operations: vec![BatchLayerOperation {
-                    glyph_name: target.glyph_name,
-                    layer_id: target.layer_id,
-                    old_value: Some(old_value),
-                    new_value: Some(new_value),
-                }],
-                masters_operation: None,
-                axes_operation: None,
-                instances_operation: None,
-            },
-        ));
+        let mut recorder = BatchChangeRecorder::default();
+        recorder.record(
+            target.glyph_name,
+            target.layer_id,
+            Some(old_value),
+            Some(new_value),
+        );
+        return Ok((document_id, update, recorder.into_metadata(None)));
     }
 
     let (clone_doc, edits) = clone_current_ydoc()?;
@@ -2250,25 +2231,17 @@ fn build_reinterpolate_layer_batch(
     }
 
     let update = edits.packet()?;
+    let mut recorder = BatchChangeRecorder::default();
+    recorder.record(
+        target.glyph_name,
+        target.layer_id,
+        Some(old_value),
+        Some(new_value),
+    );
     Ok((
         FONT_CORE_DOCUMENT_ID.to_string(),
         update,
-        BatchMetadata {
-            changed_glyphs: vec![target.glyph_name.clone()],
-            layer_targets: vec![BatchLayerTarget {
-                glyph_name: target.glyph_name.clone(),
-                layer_id: target.layer_id.clone(),
-            }],
-            layer_operations: vec![BatchLayerOperation {
-                glyph_name: target.glyph_name,
-                layer_id: target.layer_id,
-                old_value: Some(old_value),
-                new_value: Some(new_value),
-            }],
-            masters_operation: None,
-            axes_operation: None,
-            instances_operation: None,
-        },
+        recorder.into_metadata(None),
     ))
 }
 
@@ -2281,23 +2254,35 @@ pub fn reinterpolate_layer_yjs(glyph_name: &str, layer_id: &str) -> Result<JsVal
 /// The stations the document stores, in order. A document without them, or
 /// with them in any other shape, is refused.
 fn stored_stations<T: ReadTxn>(txn: &T) -> Result<Vec<JsonValue>, JsValue> {
-    match ydoc_get_top_level_json_with_txn("masters", txn).map_err(|error| JsValue::from_str(&error))? {
+    match ydoc_get_top_level_json_with_txn("masters", txn)
+        .map_err(|error| JsValue::from_str(&error))?
+    {
         Some(JsonValue::Array(stations)) => Ok(stations),
-        Some(_) => Err(JsValue::from_str("Refusing to edit stations: they are not stored as a list")),
-        None => Err(JsValue::from_str("Refusing to edit stations: the document stores none")),
+        Some(_) => Err(JsValue::from_str(
+            "Refusing to edit stations: they are not stored as a list",
+        )),
+        None => Err(JsValue::from_str(
+            "Refusing to edit stations: the document stores none",
+        )),
     }
 }
 
 /// The stored stations with `new_station` appended. A station without an
 /// id, or one whose id is already stored, is refused.
-fn stations_after_adding(stations: &[JsonValue], new_station: JsonValue) -> Result<JsonValue, String> {
+fn stations_after_adding(
+    stations: &[JsonValue],
+    new_station: JsonValue,
+) -> Result<JsonValue, String> {
     let new_id = keyed_entry_id(&new_station, "id")
         .ok_or_else(|| "Refusing to add a station without an id".to_string())?;
     for station in stations {
         let id = keyed_entry_id(station, "id")
             .ok_or_else(|| "Refusing to edit stations: a stored station has no id".to_string())?;
         if id == new_id {
-            return Err(format!("Refusing to add station {}: it is already stored", new_id));
+            return Err(format!(
+                "Refusing to add station {}: it is already stored",
+                new_id
+            ));
         }
     }
     let mut next = stations.to_vec();
@@ -2346,7 +2331,8 @@ pub fn add_master_with_interpolated_layers_yjs(master_json: &str) -> Result<JsVa
             .map_err(|error| JsValue::from_str(&error))?;
         (
             Some(JsonValue::Array(stations)),
-            ydoc_get_top_level_json_with_txn("axes", &txn).map_err(|error| JsValue::from_str(&error))?,
+            ydoc_get_top_level_json_with_txn("axes", &txn)
+                .map_err(|error| JsValue::from_str(&error))?,
             next,
         )
     };
@@ -2383,7 +2369,9 @@ pub fn add_master_with_interpolated_layers_yjs(master_json: &str) -> Result<JsVa
             }
         }
         let JsonValue::Array(next_masters_items) = &next_masters_json else {
-            return Err(JsValue::from_str("Refusing to write stations: they are not a list"));
+            return Err(JsValue::from_str(
+                "Refusing to write stations: they are not a list",
+            ));
         };
         sync_keyed_array_membership(&mut txn, &font_map, "masters", next_masters_items)?;
 
@@ -2858,7 +2846,9 @@ fn background_action(
     restored: &HashMap<(String, String), Option<JsonValue>>,
 ) -> Result<BackgroundAction, String> {
     if !entry.surviving_owners.is_empty() {
-        return Ok(BackgroundAction::FollowOwners(entry.surviving_owners.clone()));
+        return Ok(BackgroundAction::FollowOwners(
+            entry.surviving_owners.clone(),
+        ));
     }
     let mut locations = Vec::new();
     for owner in &entry.owners {
@@ -3084,9 +3074,7 @@ pub fn remove_masters_yjs(master_ids_json: &str) -> Result<JsValue, JsValue> {
     // `None` when it was removed. Its background follows it.
     let mut restored_locations: HashMap<(String, String), Option<JsonValue>> = HashMap::new();
 
-    let mut changed_glyphs = HashSet::new();
-    let mut layer_targets = Vec::new();
-    let mut layer_operations = Vec::new();
+    let mut recorder = BatchChangeRecorder::default();
 
     {
         let mut txn = clone_doc.transact_mut();
@@ -3095,7 +3083,9 @@ pub fn remove_masters_yjs(master_ids_json: &str) -> Result<JsValue, JsValue> {
             .ok_or_else(|| JsValue::from_str("Missing font map in cloned Y.Doc"))?;
 
         let JsonValue::Array(next_masters_items) = &next_masters_json else {
-            return Err(JsValue::from_str("Refusing to write stations: they are not a list"));
+            return Err(JsValue::from_str(
+                "Refusing to write stations: they are not a list",
+            ));
         };
         sync_keyed_array_membership(&mut txn, &font_map, "masters", next_masters_items)?;
 
@@ -3122,19 +3112,16 @@ pub fn remove_masters_yjs(master_ids_json: &str) -> Result<JsValue, JsValue> {
 
                 restored_locations.insert(
                     (target.glyph_name.clone(), target.layer_id.clone()),
-                    restored.as_ref().map(|restored| restored["location"].clone()),
+                    restored
+                        .as_ref()
+                        .map(|restored| restored["location"].clone()),
                 );
-                changed_glyphs.insert(target.glyph_name.clone());
-                layer_targets.push(BatchLayerTarget {
-                    glyph_name: target.glyph_name.clone(),
-                    layer_id: target.layer_id.clone(),
-                });
-                layer_operations.push(BatchLayerOperation {
-                    glyph_name: target.glyph_name.clone(),
-                    layer_id: target.layer_id.clone(),
+                recorder.record(
+                    target.glyph_name.clone(),
+                    target.layer_id.clone(),
                     old_value,
-                    new_value: restored,
-                });
+                    restored,
+                );
             }
             for entry in &background_entries {
                 let action = background_action(entry, &restored_locations)
@@ -3158,8 +3145,7 @@ pub fn remove_masters_yjs(master_ids_json: &str) -> Result<JsValue, JsValue> {
                     BackgroundAction::FollowOwners(owner_ids) => {
                         let mut owners = Vec::with_capacity(owner_ids.len());
                         for owner_id in owner_ids {
-                            let stored =
-                                layer_json_from_core(&entry.glyph_name, &owner_id, &txn)?;
+                            let stored = layer_json_from_core(&entry.glyph_name, &owner_id, &txn)?;
                             owners.push((owner_id, stored));
                         }
                         let (master, location) =
@@ -3178,17 +3164,12 @@ pub fn remove_masters_yjs(master_ids_json: &str) -> Result<JsValue, JsValue> {
                         Some(moved)
                     }
                 };
-                changed_glyphs.insert(entry.glyph_name.clone());
-                layer_targets.push(BatchLayerTarget {
-                    glyph_name: entry.glyph_name.clone(),
-                    layer_id: entry.layer_id.clone(),
-                });
-                layer_operations.push(BatchLayerOperation {
-                    glyph_name: entry.glyph_name.clone(),
-                    layer_id: entry.layer_id.clone(),
+                recorder.record(
+                    entry.glyph_name.clone(),
+                    entry.layer_id.clone(),
                     old_value,
                     new_value,
-                });
+                );
             }
         }
     }
@@ -3197,7 +3178,11 @@ pub fn remove_masters_yjs(master_ids_json: &str) -> Result<JsValue, JsValue> {
         let names: HashSet<String> = targets
             .iter()
             .map(|t| t.glyph_name.clone())
-            .chain(background_entries.iter().map(|entry| entry.glyph_name.clone()))
+            .chain(
+                background_entries
+                    .iter()
+                    .map(|entry| entry.glyph_name.clone()),
+            )
             .collect();
         let mut clones = clone_named_glyph_docs(&names)?;
         for target in targets {
@@ -3221,19 +3206,11 @@ pub fn remove_masters_yjs(master_ids_json: &str) -> Result<JsValue, JsValue> {
             }
             restored_locations.insert(
                 (target.glyph_name.clone(), target.layer_id.clone()),
-                restored.as_ref().map(|restored| restored["location"].clone()),
+                restored
+                    .as_ref()
+                    .map(|restored| restored["location"].clone()),
             );
-            changed_glyphs.insert(target.glyph_name.clone());
-            layer_targets.push(BatchLayerTarget {
-                glyph_name: target.glyph_name.clone(),
-                layer_id: target.layer_id.clone(),
-            });
-            layer_operations.push(BatchLayerOperation {
-                glyph_name: target.glyph_name,
-                layer_id: target.layer_id,
-                old_value,
-                new_value: restored,
-            });
+            recorder.record(target.glyph_name, target.layer_id, old_value, restored);
         }
         for entry in &background_entries {
             let action = background_action(entry, &restored_locations)
@@ -3289,51 +3266,32 @@ pub fn remove_masters_yjs(master_ids_json: &str) -> Result<JsValue, JsValue> {
                     }
                 }
             };
-            changed_glyphs.insert(entry.glyph_name.clone());
-            layer_targets.push(BatchLayerTarget {
-                glyph_name: entry.glyph_name.clone(),
-                layer_id: entry.layer_id.clone(),
-            });
-            layer_operations.push(BatchLayerOperation {
-                glyph_name: entry.glyph_name.clone(),
-                layer_id: entry.layer_id.clone(),
+            recorder.record(
+                entry.glyph_name.clone(),
+                entry.layer_id.clone(),
                 old_value,
                 new_value,
-            });
+            );
         }
         let core_update = edits.packet()?;
         let mut packets = vec![(FONT_CORE_DOCUMENT_ID.to_string(), core_update)];
         packets.extend(encode_glyph_edits(&clones)?);
         return encode_result_packets(
             packets,
-            &BatchMetadata {
-                changed_glyphs: changed_glyphs.into_iter().collect(),
-                layer_targets,
-                layer_operations,
-                masters_operation: Some(BatchMastersOperation {
-                    old_value: old_masters,
-                    new_value: next_masters_json,
-                }),
-                axes_operation: None,
-                instances_operation: None,
-            },
+            &recorder.into_metadata(Some(BatchMastersOperation {
+                old_value: old_masters,
+                new_value: next_masters_json,
+            })),
         );
     }
 
     let update = edits.packet()?;
     encode_result(
         update,
-        &BatchMetadata {
-            changed_glyphs: changed_glyphs.into_iter().collect(),
-            layer_targets,
-            layer_operations,
-            masters_operation: Some(BatchMastersOperation {
-                old_value: old_masters,
-                new_value: next_masters_json,
-            }),
-            axes_operation: None,
-            instances_operation: None,
-        },
+        &recorder.into_metadata(Some(BatchMastersOperation {
+            old_value: old_masters,
+            new_value: next_masters_json,
+        })),
     )
 }
 
@@ -3552,9 +3510,12 @@ pub fn add_axis_with_master_copies_yjs(plan_json: &str) -> Result<JsValue, JsVal
             .ok_or_else(|| JsValue::from_str("Y.Doc not initialized"))?;
         let txn = doc.transact();
         (
-            ydoc_get_top_level_json_with_txn("masters", &txn).map_err(|error| JsValue::from_str(&error))?,
-            ydoc_get_top_level_json_with_txn("axes", &txn).map_err(|error| JsValue::from_str(&error))?,
-            ydoc_get_top_level_json_with_txn("instances", &txn).map_err(|error| JsValue::from_str(&error))?,
+            ydoc_get_top_level_json_with_txn("masters", &txn)
+                .map_err(|error| JsValue::from_str(&error))?,
+            ydoc_get_top_level_json_with_txn("axes", &txn)
+                .map_err(|error| JsValue::from_str(&error))?,
+            ydoc_get_top_level_json_with_txn("instances", &txn)
+                .map_err(|error| JsValue::from_str(&error))?,
         )
     };
     let glyph_layer_ids: Vec<(String, Vec<String>)> = font
@@ -4000,7 +3961,10 @@ mod tests {
         assert_eq!(stored["nodePositionsById"]["n1"], json!("40 0"));
         assert!(stored.get("shapes").is_none());
         // The generation did not move: the topology is the same.
-        assert!(stored["geometryTopology"].as_str().unwrap().contains("\"g\":1,"));
+        assert!(stored["geometryTopology"]
+            .as_str()
+            .unwrap()
+            .contains("\"g\":1,"));
         let read = stored_drawing(&doc, &layers, "L0");
         assert_eq!(read["shapes"][0]["nodes"][0]["x"], json!(40.0));
     }
@@ -4134,7 +4098,10 @@ mod tests {
         drawing.as_object_mut().unwrap().remove("shapes");
         write(&doc, &glyph, &layers, "L0", &drawing);
         let stored = raw_drawing(&doc, &layers, "L0");
-        assert_eq!(stored["geometryTopology"], json!(r#"{"v":1,"g":1,"shapes":[]}"#));
+        assert_eq!(
+            stored["geometryTopology"],
+            json!(r#"{"v":1,"g":1,"shapes":[]}"#)
+        );
         assert_eq!(stored["nodePositionsById"], json!({}));
         assert_eq!(stored["shapeDataById"], json!({}));
         assert!(stored.get("shapes").is_none());
@@ -4207,7 +4174,10 @@ mod tests {
             stations_after_removing(&stored, &["m1".to_string()]).unwrap(),
             Some(json!([{ "id": "m-collaborator" }]))
         );
-        assert_eq!(stations_after_removing(&stored, &["m9".to_string()]).unwrap(), None);
+        assert_eq!(
+            stations_after_removing(&stored, &["m9".to_string()]).unwrap(),
+            None
+        );
         assert!(stations_after_removing(&[json!({ "name": "x" })], &[]).is_err());
     }
 
@@ -4314,14 +4284,22 @@ mod tests {
         // Moving `a` to the end deletes and re-inserts only `a`.
         assert_eq!(
             array_edits(&ids(&["a", "b", "c"]), &ids(&["b", "c", "a"])),
-            vec![ArrayEdit::Delete, ArrayEdit::Keep, ArrayEdit::Keep, ArrayEdit::Insert(2)]
+            vec![
+                ArrayEdit::Delete,
+                ArrayEdit::Keep,
+                ArrayEdit::Keep,
+                ArrayEdit::Insert(2)
+            ]
         );
         assert_eq!(
             array_edits(&ids(&["a"]), &ids(&["a", "d"])),
             vec![ArrayEdit::Keep, ArrayEdit::Insert(1)]
         );
         // 434 and 434.0 are one number, as after a Yjs round trip.
-        assert_eq!(array_edits(&[json!(434)], &[json!(434.0)]), vec![ArrayEdit::Keep]);
+        assert_eq!(
+            array_edits(&[json!(434)], &[json!(434.0)]),
+            vec![ArrayEdit::Keep]
+        );
     }
 
     #[test]
@@ -4464,9 +4442,7 @@ mod tests {
         let worker = Doc::with_client_id(1);
         let collaborator = Doc::with_client_id(2);
         let font = worker.get_or_insert_map("font");
-        let station = |id: &str, location: JsonValue| {
-            json!({ "id": id, "name": id, "location": location, "kerning": {} })
-        };
+        let station = |id: &str, location: JsonValue| json!({ "id": id, "name": id, "location": location, "kerning": {} });
         {
             let mut txn = worker.transact_mut();
             write_keyed_list_value(
@@ -5404,7 +5380,10 @@ mod tests {
         assert_eq!(built, vec!["A".to_string(), "B".to_string()]);
 
         let all = regenerate_reinterpolation_targets(
-            vec![reinterpolation_target("A", "M1"), reinterpolation_target("C", "M1")],
+            vec![
+                reinterpolation_target("A", "M1"),
+                reinterpolation_target("C", "M1"),
+            ],
             |target| Ok(json!({ "id": target.layer_id })),
         )
         .unwrap();
@@ -5489,7 +5468,10 @@ mod tests {
             ]
         );
         let mut restored = HashMap::new();
-        restored.insert(("A".to_string(), "M1".to_string()), Some(json!({ "wght": 870 })));
+        restored.insert(
+            ("A".to_string(), "M1".to_string()),
+            Some(json!({ "wght": 870 })),
+        );
         restored.insert(("A".to_string(), "M1.alt".to_string()), None);
         let actions: Vec<BackgroundAction> = entries
             .iter()
@@ -5554,9 +5536,8 @@ mod tests {
         let old_background = stored_drawing(&doc, &layers, "M0-bg");
         let (master, location) =
             owners_link("A", "M0-bg", &[("M0".to_string(), Some(owner.clone()))]).unwrap();
-        let moved =
-            relinked_background("M0-bg", Some(&old_background), &master, location.as_ref())
-                .unwrap();
+        let moved = relinked_background("M0-bg", Some(&old_background), &master, location.as_ref())
+            .unwrap();
         {
             let mut txn = doc.transact_mut();
             write_moved_background(&mut txn, &layers, "M0-bg", &moved).unwrap();
@@ -5576,20 +5557,30 @@ mod tests {
         let error = owners_link("A", "bg", &[("M0".to_string(), None)]).unwrap_err();
         assert!(error.contains("not stored"), "{error}");
         // An owner without `master` is FreeFloating, Babelfont's encoding.
-        let (free, _) =
-            owners_link("A", "bg", &[("M0".to_string(), Some(json!({ "id": "M0" })))]).unwrap();
+        let (free, _) = owners_link(
+            "A",
+            "bg",
+            &[("M0".to_string(), Some(json!({ "id": "M0" })))],
+        )
+        .unwrap();
         assert_eq!(free, json!({ "type": "FreeFloating" }));
         let error = owners_link(
             "A",
             "bg",
-            &[("M0".to_string(), Some(json!({ "id": "M0", "master": "M0" })))],
+            &[(
+                "M0".to_string(),
+                Some(json!({ "id": "M0", "master": "M0" })),
+            )],
         )
         .unwrap_err();
         assert!(error.contains("not a station link"), "{error}");
         let error = owners_link(
             "A",
             "bg",
-            &[("M0".to_string(), Some(at_m0.clone())), ("M2".to_string(), Some(at_m2))],
+            &[
+                ("M0".to_string(), Some(at_m0.clone())),
+                ("M2".to_string(), Some(at_m2)),
+            ],
         )
         .unwrap_err();
         assert!(error.contains("different locations"), "{error}");
@@ -5608,8 +5599,7 @@ mod tests {
         glyph.layers[1].master = LayerType::DefaultForMaster("M1".to_string());
         glyph.layers[0].id = None;
         let targets = collect_reinterpolation_targets(&font, "M1").unwrap();
-        let error =
-            collect_background_entries(&font, &["M1".to_string()], &targets).unwrap_err();
+        let error = collect_background_entries(&font, &["M1".to_string()], &targets).unwrap_err();
         assert!(error.contains("A::M0-bg"), "{error}");
     }
 
@@ -5634,8 +5624,14 @@ mod tests {
             surviving_owners: Vec::new(),
         };
         let mut restored = HashMap::new();
-        restored.insert(("A".to_string(), "M1".to_string()), Some(json!({ "wght": 870 })));
-        restored.insert(("A".to_string(), "M1.alt".to_string()), Some(json!({ "wght": 880 })));
+        restored.insert(
+            ("A".to_string(), "M1".to_string()),
+            Some(json!({ "wght": 870 })),
+        );
+        restored.insert(
+            ("A".to_string(), "M1.alt".to_string()),
+            Some(json!({ "wght": 880 })),
+        );
         let error = background_action(&entry, &restored).unwrap_err();
         assert!(error.contains("different locations"), "{error}");
     }
@@ -5687,7 +5683,9 @@ mod tests {
             }
             restored_locations.insert(
                 (target.glyph_name.clone(), target.layer_id.clone()),
-                restored.as_ref().map(|restored| restored["location"].clone()),
+                restored
+                    .as_ref()
+                    .map(|restored| restored["location"].clone()),
             );
         }
         for entry in &entries {
@@ -5705,7 +5703,10 @@ mod tests {
                     write_moved_background(&mut txn, &layers, &entry.layer_id, &moved).unwrap();
                 }
                 BackgroundAction::FollowOwners(owners) => {
-                    panic!("no drawing that stays owns {}: {:?}", entry.layer_id, owners)
+                    panic!(
+                        "no drawing that stays owns {}: {:?}",
+                        entry.layer_id, owners
+                    )
                 }
             }
         }
@@ -5726,7 +5727,8 @@ mod tests {
         // Nothing left names the removed station.
         let txn = doc.transact();
         for id in &remaining {
-            let drawing = crate::ydoc_layer_to_json(id, layers.get(&txn, id).unwrap(), &txn).unwrap();
+            let drawing =
+                crate::ydoc_layer_to_json(id, layers.get(&txn, id).unwrap(), &txn).unwrap();
             assert_ne!(drawing["master"]["master"], json!("M1"), "{id}");
         }
     }
@@ -5758,10 +5760,13 @@ mod tests {
         };
         let error = stored_collection_items(&txn, &layer, &DRAWING_INDEXED_COLLECTIONS[0], "L0")
             .unwrap_err();
-        assert!(error.contains("anchorsById.a-top does not store its id"), "{error}");
+        assert!(
+            error.contains("anchorsById.a-top does not store its id"),
+            "{error}"
+        );
         // The reader refuses the drawing too.
-        let error = crate::ydoc_layer_to_json("L0", layers.get(&txn, "L0").unwrap(), &txn)
-            .unwrap_err();
+        let error =
+            crate::ydoc_layer_to_json("L0", layers.get(&txn, "L0").unwrap(), &txn).unwrap_err();
         assert!(error.contains("anchorsById.a-top has no id"), "{error}");
     }
 
@@ -5799,7 +5804,10 @@ mod tests {
     fn stored_anchor_order(doc: &Doc, layers: &yrs::MapRef) -> Vec<JsonValue> {
         let txn = doc.transact_mut();
         let (_, order) = anchor_pair(&txn, layers);
-        order.iter(&txn).map(|value| crate::yrs_value_to_json(value, &txn).unwrap()).collect()
+        order
+            .iter(&txn)
+            .map(|value| crate::yrs_value_to_json(value, &txn).unwrap())
+            .collect()
     }
 
     #[test]
@@ -5831,16 +5839,23 @@ mod tests {
         }
         sync_into(&doc, &other);
         sync_into(&other, &doc);
-        assert_eq!(stored_anchor_order(&doc, &layers), vec![json!("a2"), json!("a1")]);
+        assert_eq!(
+            stored_anchor_order(&doc, &layers),
+            vec![json!("a2"), json!("a1")]
+        );
         for (replica, replica_layers) in [(&doc, &layers), (&other, &other_layers)] {
             let read = stored_drawing(replica, replica_layers, "L0");
-            assert_eq!(read["anchors"], json!([{ "id": "a2", "name": "bottom", "x": 10, "y": 0 }]));
+            assert_eq!(
+                read["anchors"],
+                json!([{ "id": "a2", "name": "bottom", "x": 10, "y": 0 }])
+            );
             let txn = replica.transact();
             let Some(yrs::types::Value::YMap(layer)) = replica_layers.get(&txn, "L0") else {
                 panic!("drawing map missing");
             };
             let items =
-                stored_collection_items(&txn, &layer, &DRAWING_INDEXED_COLLECTIONS[0], "L0").unwrap();
+                stored_collection_items(&txn, &layer, &DRAWING_INDEXED_COLLECTIONS[0], "L0")
+                    .unwrap();
             assert_eq!(items, vec![("a2".to_string(), Some("bottom".to_string()))]);
         }
         // The next write of the list drops the order entry left behind.
@@ -5889,7 +5904,10 @@ mod tests {
             let mut txn = doc.transact_mut();
             write_drawing(&mut txn, &glyph, &layers, "L0", &read).unwrap();
         }
-        assert_eq!(stored_anchor_order(&doc, &layers), vec![json!("a2"), json!("a1")]);
+        assert_eq!(
+            stored_anchor_order(&doc, &layers),
+            vec![json!("a2"), json!("a1")]
+        );
     }
 
     /// The anchor list of `doc` after a merge, as every reader reads it.
@@ -5925,7 +5943,10 @@ mod tests {
         }
         sync_into(&doc, &other);
         sync_into(&other, &doc);
-        assert_eq!(stored_anchor_order(&doc, &layers), vec![json!("a1"), json!("a2")]);
+        assert_eq!(
+            stored_anchor_order(&doc, &layers),
+            vec![json!("a1"), json!("a2")]
+        );
         // Now A adds a1 again with its id (an undo, say), and at the same
         // time B drops the leftover place, as `tidyKeyedPairOrder` does.
         let mut again = drawing.clone();
@@ -5994,7 +6015,10 @@ mod tests {
         }
         sync_into(&doc, &other);
         sync_into(&other, &doc);
-        assert_eq!(stored_anchor_order(&doc, &layers), vec![json!("a2"), json!("a1")]);
+        assert_eq!(
+            stored_anchor_order(&doc, &layers),
+            vec![json!("a2"), json!("a1")]
+        );
         for (replica, replica_layers) in [(&doc, &layers), (&other, &other_layers)] {
             assert_eq!(
                 read_anchors(replica, replica_layers),
@@ -6019,7 +6043,10 @@ mod tests {
         let mut txn = doc.transact_mut();
         let error = write_drawing(&mut txn, &glyph, &layers, "L0", &drawing).unwrap_err();
         assert!(
-            error.as_string().unwrap_or_default().contains("appears twice"),
+            error
+                .as_string()
+                .unwrap_or_default()
+                .contains("appears twice"),
             "{error:?}"
         );
     }
@@ -6044,8 +6071,8 @@ mod tests {
         let Some(yrs::types::Value::YMap(layer)) = layers.get(&txn, "L0") else {
             panic!("drawing map missing");
         };
-        let items = stored_collection_items(&txn, &layer, &DRAWING_INDEXED_COLLECTIONS[0], "L0")
-            .unwrap();
+        let items =
+            stored_collection_items(&txn, &layer, &DRAWING_INDEXED_COLLECTIONS[0], "L0").unwrap();
         assert_eq!(items, vec![("a-top".to_string(), Some("top".to_string()))]);
     }
 
@@ -6066,7 +6093,10 @@ mod tests {
         };
         let error = stored_collection_items(&txn, &layer, &DRAWING_INDEXED_COLLECTIONS[0], "L0")
             .unwrap_err();
-        assert!(error.contains("anchorsById holds a-top, which anchorOrder does not list"), "{error}");
+        assert!(
+            error.contains("anchorsById holds a-top, which anchorOrder does not list"),
+            "{error}"
+        );
     }
 
     #[cfg(target_arch = "wasm32")]

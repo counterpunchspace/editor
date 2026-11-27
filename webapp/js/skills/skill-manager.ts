@@ -1,7 +1,11 @@
 import { Logger } from '../logger';
 import { glyphDataIndex } from '../glyph-data';
-import type { CompositionRecipe } from './composition-planner';
-import { runHostPython, runHostPythonAsync } from './host-python';
+import type { CompositionRecipe, GlyphDrawing } from './composition-planner';
+import {
+    runHostPython,
+    runHostPythonAsync,
+    waitForPyodide
+} from './host-python';
 import {
     ENSURE_SKILLS,
     SKILLS_JSON,
@@ -146,25 +150,9 @@ json.dumps(provider.anchors(${JSON.stringify(token)}) if known else [])
         return JSON.parse(String(result)) as string[];
     }
 
-    async drawings(names: readonly string[]): Promise<
-        Record<
-            string,
-            {
-                upm: number;
-                width: number;
-                paths: Array<{
-                    closed: boolean;
-                    nodes: Array<{
-                        x: number;
-                        y: number;
-                        nodetype: string;
-                        smooth?: boolean;
-                    }>;
-                }>;
-                anchors: Array<{ name: string; x: number; y: number }>;
-            }
-        >
-    > {
+    async drawings(
+        names: readonly string[]
+    ): Promise<Record<string, GlyphDrawing>> {
         if (!names.length) {
             return {};
         }
@@ -303,19 +291,7 @@ json.dumps(found)
     }
 
     private async load(): Promise<void> {
-        if (
-            !window.pyodide &&
-            typeof window.ensurePyodideReady === 'function'
-        ) {
-            await window.ensurePyodideReady();
-        }
-        const started = performance.now();
-        while (!window.pyodide) {
-            if (performance.now() - started > 30_000) {
-                throw new Error('Timed out waiting for Python.');
-            }
-            await new Promise((resolve) => window.setTimeout(resolve, 50));
-        }
+        await waitForPyodide();
         console.log('Skills ready');
     }
 }

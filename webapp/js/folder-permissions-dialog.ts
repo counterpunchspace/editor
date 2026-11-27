@@ -151,11 +151,6 @@ export function isFolderSetupComplete(status: FolderSetupStatus): boolean {
     return status.settings.state === 'ready';
 }
 
-export function isFolderSetupCompleteSync(): boolean {
-    const status = getHost().cachedStatus;
-    return !!status && isFolderSetupComplete(status);
-}
-
 export function isSettingsFolderReadySync(): boolean {
     const status = getHost().cachedStatus;
     return !!status && status.settings.state === 'ready';

@@ -29,7 +29,6 @@ import {
 const console = new Logger('FontDestinationPluginUI');
 
 let pluginManagerEscapeBinding: ModalEscapeBinding | null = null;
-let purchaseSheetOpen = false;
 
 function paymentMethodText(billing: CatalogBilling): string {
     const email = billing.email ? ` (${billing.email})` : '';
@@ -287,7 +286,6 @@ function openPurchaseSheet(
     content: HTMLElement
 ): void {
     document.querySelector('.plugin-purchase-sheet')?.remove();
-    purchaseSheetOpen = true;
     const sheet = document.createElement('div');
     sheet.className = 'plugin-purchase-sheet';
     const card = document.createElement('div');
@@ -296,7 +294,6 @@ function openPurchaseSheet(
     let escapeBinding: { release: () => void } | null = null;
     const close = () => {
         escapeBinding?.release();
-        purchaseSheetOpen = false;
         sheet.remove();
     };
     const renderQuote = (current: CatalogPlugin) => {

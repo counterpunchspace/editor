@@ -18,19 +18,7 @@ import {
     diffFontDataToPatchPairs,
     type FontDataPatchPair
 } from './font-data-diff';
-
-function serializeFontCoreWithoutGlyphs(
-    fontData: Record<string, unknown>
-): string {
-    const core: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(fontData)) {
-        if (key === 'glyphs') {
-            continue;
-        }
-        core[key] = value;
-    }
-    return JSON.stringify(core);
-}
+import { serializeFontCoreWithoutGlyphs } from './python-utils';
 
 const console = new Logger('PythonPostExecution');
 

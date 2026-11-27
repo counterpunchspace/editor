@@ -12,19 +12,14 @@ import * as Y from 'yjs';
 import { assertCompileStamp } from './edit-intent';
 import { rebasePythonExecutionBaseline } from './python-execution-baseline';
 import {
-    jsonToYDoc,
     jsonToCoreFontMap,
     fillGlyphYMap,
-    yDocToJson,
     fromYDrawing,
     fromYType,
     toYType,
     setYPath,
     deleteYPath,
     getYPath,
-    setJsonPath,
-    deleteJsonPath,
-    getJsonPath,
     normalizeValueForYDocWrite,
     INDEXED_MAP_KEYS,
     stabilizeIndexedMapPath,
@@ -71,7 +66,6 @@ import {
     historyReplayValue,
     isSnapshotRootPath,
     getPathSegments,
-    invalidateHistoryStateCache,
     isReplayableHistoryEntry,
     joinPathWithGlyphSeparator,
     normalizeWorkerReplayTargets,
@@ -121,6 +115,7 @@ import {
 } from './collaboration-message';
 import { windowRole } from './window-role';
 import {
+    isEmptyYjsUpdate,
     withSuppressedModelRecording,
     pathHasSubtractionFlag
 } from './babelfont-model';
@@ -199,13 +194,10 @@ import {
 } from './filesystem-plugins/cloud-room-move';
 import { flattenKerningMap } from './delete-glyphs-preflight';
 import {
-    ClockGapError,
     DocumentStateNotLoadedError,
     applyUpdateWithIntegrity,
     assertCompleteGlyphState,
     assertDocumentWritable,
-    assertNoPendingState,
-    assertUpdateIntegrates,
     clearBrokenDocumentScope,
     createBrokenDocumentScope,
     isDocumentBroken,
@@ -692,12 +684,6 @@ function transactionWroteSomething(
     return false;
 }
 
-/** A Yjs v1 update with no structs and no deletions. */
-function isEmptyYjsUpdate(update: Uint8Array): boolean {
-    return (
-        update.length === 0 || (update.length === 2 && !update[0] && !update[1])
-    );
-}
 const GLYPH_EDIT_ORIGIN = 'glyph-edit';
 /** Remote cloud applies; never treated as a local edit origin. */
 export const CLOUD_REMOTE_ORIGIN = 'cloud-remote';
@@ -1080,11 +1066,6 @@ type DrawingSyncMetadata = {
     visualAnchorSide?: 'left' | 'right' | null;
     workerReplayTargets?: WorkerReplayTarget[];
     preserveOmittedFields?: boolean;
-};
-
-const INDEXED_ARRAY_ORDER_KEYS: Record<string, string> = {
-    anchors: 'anchorOrder',
-    guides: 'guideOrder'
 };
 
 const GRANULAR_DRAWING_ARRAY_KEYS = new Set(['anchors', 'guides']);
@@ -5051,16 +5032,6 @@ export class PatchSyncEngine {
             }
         }
         return total;
-    }
-
-    /** Cached encoded sizes for prepareToSave without a full re-encode. */
-    getCachedShardSizeReports(): Array<{
-        documentId: string;
-        byteLength: number;
-    }> {
-        return [...this._lastEncodedShardBytes.entries()]
-            .filter(([, byteLength]) => Number.isFinite(byteLength))
-            .map(([documentId, byteLength]) => ({ documentId, byteLength }));
     }
 
     private _glyphHasRetainedLocalState(
@@ -13932,9 +13903,6 @@ export class PatchSyncEngine {
             transactionId !== null && this._txStartTimeMs !== null
                 ? Math.max(0, performance.now() - this._txStartTimeMs)
                 : null;
-        const operationPaths = effectiveOperations.map((operation) =>
-            joinPathWithGlyphSeparator(operation.path)
-        );
         const primaryHistoryTarget =
             historyTarget ??
             this._deriveHistoryTarget(effectiveOperations[0]?.path ?? []);
@@ -14895,80 +14863,6 @@ export class PatchSyncEngine {
             return 'layer';
         }
         return 'glyph';
-    }
-
-    private _getRemoteDrawingSyncScopes(
-        remoteEntries?: ChangeLogEntry[]
-    ): Array<{ glyphName: string; layerId: string }> | null {
-        if (!remoteEntries?.length) {
-            return null;
-        }
-
-        if (
-            remoteEntries.some((entry) => {
-                const glyphName = this._deriveGlyphNameFromPath(entry.path);
-                const drawingId = this._deriveDrawingIdFromPath(entry.path);
-                return !!glyphName && !drawingId;
-            })
-        ) {
-            return null;
-        }
-
-        const targets = normalizeWorkerReplayTargets(
-            remoteEntries.flatMap((entry) => {
-                if (entry.workerReplayTargets?.length) {
-                    return entry.workerReplayTargets;
-                }
-
-                if (entry.undoScope !== 'layer') {
-                    return [];
-                }
-
-                const glyphName = this._deriveGlyphNameFromPath(entry.path);
-                const drawingId = this._deriveDrawingIdFromPath(entry.path);
-                return glyphName && drawingId
-                    ? [{ glyphName, layerId: drawingId }]
-                    : [];
-            })
-        );
-
-        if (!targets.length) {
-            return null;
-        }
-
-        return targets;
-    }
-
-    private _hasMaterializedDrawingRoot(
-        glyphName: string,
-        drawingId: string
-    ): boolean {
-        const glyphMap = this._glyphMapForName(glyphName);
-        const drawingsMap =
-            glyphMap instanceof Y.Map ? glyphMap.get('layers') : null;
-        const drawingValue =
-            drawingsMap instanceof Y.Map
-                ? drawingsMap.get(drawingId)
-                : undefined;
-        if (!(drawingValue instanceof Y.Map)) {
-            return false;
-        }
-
-        const drawingSnapshot = fromYDrawing(drawingValue);
-        if (
-            !drawingSnapshot ||
-            typeof drawingSnapshot !== 'object' ||
-            Array.isArray(drawingSnapshot)
-        ) {
-            return false;
-        }
-
-        const drawingRecord = drawingSnapshot as Record<string, unknown>;
-        return (
-            typeof drawingRecord.id === 'string' &&
-            drawingRecord.id.length > 0 &&
-            drawingRecord.id === drawingId
-        );
     }
 
     private _resolveUndoHistoryItem(
@@ -16271,50 +16165,6 @@ export class PatchSyncEngine {
         nextValues: unknown[]
     ): void {
         diffYArray(targetArray, nextValues);
-    }
-
-    private _replaceYArrayEntry(
-        targetArray: Y.Array<unknown>,
-        index: number,
-        nextValue: unknown
-    ): void {
-        const currentValue = targetArray.get(index);
-        const currentJsonValue =
-            currentValue instanceof Y.Map || currentValue instanceof Y.Array
-                ? fromYType(currentValue)
-                : currentValue;
-
-        if (this._isDeepEqual(currentJsonValue, nextValue)) {
-            return;
-        }
-
-        if (Array.isArray(nextValue)) {
-            if (currentValue instanceof Y.Array) {
-                this._replaceYArrayContents(currentValue, nextValue);
-            } else {
-                targetArray.delete(index, 1);
-                targetArray.insert(index, [toYType(nextValue)]);
-            }
-            return;
-        }
-
-        if (
-            nextValue &&
-            typeof nextValue === 'object' &&
-            !Array.isArray(nextValue)
-        ) {
-            const nextRecord = nextValue as Record<string, unknown>;
-            if (currentValue instanceof Y.Map) {
-                this._replaceYMapContents(currentValue, nextRecord);
-            } else {
-                targetArray.delete(index, 1);
-                targetArray.insert(index, [toYType(nextRecord)]);
-            }
-            return;
-        }
-
-        targetArray.delete(index, 1);
-        targetArray.insert(index, [nextValue]);
     }
 
     /**

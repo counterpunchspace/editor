@@ -213,22 +213,3 @@ export async function mapStackTrace(stack: string): Promise<string> {
         scheduleEviction();
     }
 }
-
-/**
- * Synchronous version that returns the raw stack immediately
- * and triggers async mapping in the background
- */
-export function mapStackTraceAsync(
-    stack: string,
-    callback: (mapped: string) => void
-): string {
-    // Trigger async mapping
-    mapStackTrace(stack)
-        .then(callback)
-        .catch((error) => {
-            console.error('Stack mapping failed:', error);
-        });
-
-    // Return original stack immediately
-    return stack;
-}

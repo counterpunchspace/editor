@@ -185,17 +185,3 @@ export function spreadPackItems<T>(
         ...exclusive
     ];
 }
-
-/** Byte-bounded pack batches (item count is not the primary limit). */
-export function partitionPackItemsByBytes<T>(
-    items: readonly T[],
-    byteLengthOf: (item: T) => number,
-    maxBytes: number
-): T[][] {
-    return partitionPackItems(
-        items,
-        byteLengthOf,
-        Number.MAX_SAFE_INTEGER,
-        maxBytes
-    );
-}

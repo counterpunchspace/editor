@@ -4,13 +4,11 @@
  */
 
 import {
-    isShowAllMetricsEnabled as readShowAllMetrics,
+    isShowAllMetricsEnabled,
     setShowAllMetricsEnabled as writeShowAllMetrics
 } from './window-ui-state';
 
-export function isShowAllMetricsEnabled(): boolean {
-    return readShowAllMetrics();
-}
+export { isShowAllMetricsEnabled };
 
 export function setShowAllMetricsEnabled(enabled: boolean): void {
     writeShowAllMetrics(enabled);

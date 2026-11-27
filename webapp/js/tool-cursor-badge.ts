@@ -2,6 +2,7 @@ import {
     POINTER_BADGE_ICONS,
     type EditToolPointerBadge
 } from './glyph-canvas/edit-tools';
+import { getClampedPointerPosition } from './loading-cursor';
 import { Logger } from './logger';
 
 const console = new Logger('ToolCursorBadge');
@@ -17,28 +18,16 @@ let lastPointerX: number | null = null;
 let lastPointerY: number | null = null;
 let activeBadge: EditToolPointerBadge | null = null;
 
-function getBadgePosition(): { x: number; y: number } {
-    if (!canUseDom) {
-        return { x: 0, y: 0 };
-    }
-
-    const fallbackX = Math.round(window.innerWidth / 2);
-    const fallbackY = Math.round(window.innerHeight / 2);
-    const x = lastPointerX ?? fallbackX;
-    const y = lastPointerY ?? fallbackY;
-
-    return {
-        x: Math.max(0, Math.min(window.innerWidth - 1, x + BADGE_OFFSET_PX)),
-        y: Math.max(0, Math.min(window.innerHeight - 1, y + BADGE_OFFSET_PX))
-    };
-}
-
 function updateBadgePosition(): void {
     if (!badgeElement || !activeBadge) {
         return;
     }
 
-    const { x, y } = getBadgePosition();
+    const { x, y } = getClampedPointerPosition(
+        lastPointerX,
+        lastPointerY,
+        BADGE_OFFSET_PX
+    );
     badgeElement.style.left = `${x}px`;
     badgeElement.style.top = `${y}px`;
 }

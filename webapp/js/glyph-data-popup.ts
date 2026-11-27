@@ -5,6 +5,7 @@
 
 import tippy, { type Instance as TippyInstance } from 'tippy.js';
 import { getTheme } from './tippy-utils';
+import { escapeHtml } from './ui/escape-html';
 import {
     GENERAL_CATEGORY_LABELS,
     glyphDataIndex,
@@ -68,14 +69,6 @@ const COMBINING_CLASSES: Record<string, string> = {
     '234': 'Double above',
     '240': 'Iota subscript'
 };
-
-function escapeHtml(value: string): string {
-    return value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-}
 
 function formatCodepoint(codepoint: number): string {
     return `U+${codepoint.toString(16).toUpperCase().padStart(4, '0')}`;

@@ -1,4 +1,5 @@
 import { Logger } from '../logger';
+import { decompressGzipResponse } from '../glyph-data';
 
 const console = new Logger('AutoQa');
 
@@ -320,7 +321,7 @@ export class QaCorpusIndex {
             );
         }
         const table = JSON.parse(
-            await decompressGzipResponse(response)
+            await decompressGzipResponse(response, 'Auto QA corpus')
         ) as QaCorpusTable;
         const identityCount = Object.keys(table.identities || {}).length;
         this.applyTable(table);
@@ -334,17 +335,6 @@ export class QaCorpusIndex {
         this.table = new CompactQaCorpusStore(table);
         this.markAnchorNames = new Set(this.table.mark_anchor_names);
     }
-}
-
-async function decompressGzipResponse(response: Response): Promise<string> {
-    if (typeof DecompressionStream === 'undefined') {
-        throw new Error('Gzip DecompressionStream is not available.');
-    }
-    if (!response.body) {
-        throw new Error('Auto QA corpus response has no body.');
-    }
-    const stream = response.body.pipeThrough(new DecompressionStream('gzip'));
-    return new Response(stream).text();
 }
 
 // Reuse the first index across webpack chunks so the corpus is never fetched

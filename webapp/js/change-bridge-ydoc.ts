@@ -23,7 +23,6 @@ import { recordCollabTrace } from './collab-trace';
 import {
     geometryHasNormalizedStorage,
     getNodeIdAt,
-    getShapeIdAt,
     DRAWING_GEOMETRY_TOPOLOGY_KEY,
     DRAWING_NODE_POSITIONS_KEY,
     DRAWING_SHAPE_DATA_KEY,

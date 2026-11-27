@@ -1252,24 +1252,6 @@ export class GlyphOverviewFilterManager {
         return [...this.plugins, ...this.userFilters];
     }
 
-    private normalizeAutoUpdateEvents(events: unknown): string[] {
-        if (!Array.isArray(events)) {
-            return [];
-        }
-
-        return [
-            ...new Set(
-                events
-                    .filter(
-                        (eventName): eventName is string =>
-                            typeof eventName === 'string'
-                    )
-                    .map((eventName) => eventName.trim())
-                    .filter(Boolean)
-            )
-        ];
-    }
-
     private invalidatePluginCache(plugin: GlyphFilterPlugin): void {
         plugin.classifications.clear();
         plugin.lastResults = undefined;

@@ -760,11 +760,6 @@ import {
             isBottomRow
         );
 
-        const container = document.querySelector('.container') as HTMLElement;
-        const containerWidth = container.offsetWidth;
-        const containerHeight = container.offsetHeight;
-        const horizontalDividerHeight = 4;
-        const availableHeight = containerHeight - horizontalDividerHeight;
         const editorWasCollapsed = isEditorViewportCollapsed();
 
         beginKeyboardEditorViewportPreservation();
@@ -1015,102 +1010,6 @@ import {
     /**
      * Resize a view in the bottom row
      */
-    /**
-     * Resize a view in the bottom row
-     * @param {boolean} forceResize - If true, resize even if target is smaller than current
-     */
-    function resizeBottomRowView(
-        viewId: string,
-        view: HTMLElement,
-        resizeConfig: ResizeConfig,
-        containerWidth: number,
-        containerHeight: number,
-        forceResize = false
-    ) {
-        const bottomRow = view.closest('.bottom-row') as HTMLElement;
-        const topRow = document.querySelector('.top-row') as HTMLElement;
-        const views = Array.from(
-            bottomRow.querySelectorAll('.view')
-        ) as HTMLElement[];
-        const viewIndex = views.indexOf(view);
-
-        if (viewIndex === -1) return;
-
-        // Calculate target dimensions
-        const horizontalDividerHeight = 4;
-        const availableHeight = containerHeight - horizontalDividerHeight;
-        const targetBottomHeight = availableHeight * resizeConfig.height;
-        const targetViewWidth = containerWidth * resizeConfig.width;
-
-        // Get current dimensions
-        const currentBottomHeight = bottomRow.offsetHeight;
-        const currentWidth = view.offsetWidth;
-
-        // Resize if target is larger than current, or if forceResize is true
-        const shouldResizeHeight =
-            forceResize || targetBottomHeight > currentBottomHeight;
-        const shouldResizeWidth = forceResize || targetViewWidth > currentWidth;
-
-        // Handle height resizing (affects top/bottom split)
-        if (shouldResizeHeight) {
-            const topTargetHeight = availableHeight - targetBottomHeight;
-
-            if (topTargetHeight >= 200) {
-                // Check if bottom row is at minimum (collapsed)
-                if (Math.abs(targetBottomHeight - 24) < 5) {
-                    topRow.style.flex = `1`;
-                    bottomRow.style.flex = `0 0 24px`;
-                } else {
-                    // Ensure minimum height for top row (editor)
-                    const topFlex = topTargetHeight / availableHeight;
-                    const bottomFlex = targetBottomHeight / availableHeight;
-
-                    topRow.style.flex = `${topFlex}`;
-                    bottomRow.style.flex = `${bottomFlex}`;
-                }
-            }
-        }
-
-        // Handle width resizing (affects bottom row column distribution)
-        if (shouldResizeWidth && views.length > 1) {
-            const remainingWidth = containerWidth - targetViewWidth;
-            const otherViewsCount = views.length - 1;
-            const remainingWidthPerView = remainingWidth / otherViewsCount;
-
-            if (remainingWidthPerView >= 100) {
-                // Ensure minimum width for other views
-                const widths: Record<number, number> = {};
-
-                // Distribute width to all views
-                views.forEach((v, i) => {
-                    if (i === viewIndex) {
-                        // Set target width for the selected view
-                        widths[i] = targetViewWidth;
-                    } else {
-                        // Distribute remaining width equally among ALL other views (left and right)
-                        widths[i] = remainingWidthPerView;
-                    }
-                });
-
-                // Calculate total width for flex calculation
-                const totalWidth = Object.values(widths).reduce(
-                    (sum, w) => sum + w,
-                    0
-                );
-
-                // Apply flex values to ALL views in the bottom row
-                views.forEach((v, i) => {
-                    const flexValue = widths[i] / totalWidth;
-                    v.style.flex = `${flexValue} 1 0%`;
-                    console.log(
-                        '[KeyboardNav]',
-                        `View ${i} (${v.id}): flex = ${flexValue.toFixed(3)}, width = ${widths[i].toFixed(0)}px`
-                    );
-                });
-            }
-        }
-    }
-
     /**
      * Blur the console terminal cursor
      */

@@ -11,6 +11,7 @@ import type {
     CloudShareState
 } from './filesystem-plugins/plugins/cloud-plugin';
 import { Logger } from './logger';
+import { escapeHtml } from './ui/escape-html';
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 
 const console = new Logger('ShareButton');
@@ -62,15 +63,6 @@ function isCloudShareAvailable(): boolean {
     }
 
     return !!cloudPlugin.getCurrentAssetIdForSharing();
-}
-
-function escapeHtml(value: string | null | undefined): string {
-    return String(value || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
 }
 
 function formatTimestamp(timestamp: number | null | undefined): string {

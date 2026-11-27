@@ -1,4 +1,3 @@
-import { Logger } from '../logger';
 import type { Babelfont } from '../babelfont';
 import type { GlyphCanvas } from '../glyph-canvas';
 import {
@@ -7,9 +6,6 @@ import {
     multiplyAffineTransforms,
     normalizeAffineTransform
 } from '../glyph-path-geometry';
-import { DrawingDataNormalizer } from '../drawing-data-normalizer';
-
-const console: Logger = new Logger('StackPreviewAnimator');
 
 const IDENTITY_TRANSFORM = createIdentityAffine();
 

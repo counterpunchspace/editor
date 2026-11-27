@@ -1,5 +1,6 @@
 import { getHarfBuzzRawModule } from './font-compilation';
 import { Logger } from './logger';
+import { escapeHtml } from './ui/escape-html';
 import {
     evaluateLiveShardMemory,
     type LiveShardMemoryReport
@@ -704,14 +705,6 @@ export async function refreshWorkerMemoryDomains(): Promise<MemoryDomain[]> {
 export async function collectMemoryBreakdown(): Promise<MemoryBreakdown> {
     await refreshWorkerMemoryDomains();
     return collectLocalMemoryBreakdown();
-}
-
-function escapeHtml(value: string): string {
-    return value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
 }
 
 function renderSizeCell(bytes: number): string {

@@ -50,8 +50,7 @@ import {
     escapeHtml,
     icon,
     openDialog,
-    reportError,
-    showNotice
+    reportError
 } from '../font-windows/dialogs';
 import '../font-windows/pending-opens';
 import {

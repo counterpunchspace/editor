@@ -20,18 +20,14 @@ import {
     type CommittedChangeOrigin,
     type CommittedUiBatch
 } from './patch-sync-engine';
-import * as Y from 'yjs';
-import { fromYDrawing, fromYType } from './change-bridge-ydoc';
+import { fromYDrawing } from './change-bridge-ydoc';
 import {
     decodePackedXY,
     DRAWING_GEOMETRY_TOPOLOGY_KEY,
     DRAWING_NODE_POSITIONS_KEY,
     DRAWING_SHAPE_DATA_KEY
 } from './drawing-geometry-ydoc';
-import {
-    FONT_CORE_DOCUMENT_ID,
-    isGlyphRevisionPath
-} from './filesystem-plugins/cloud-document-set';
+import { isGlyphRevisionPath } from './filesystem-plugins/cloud-document-set';
 import { Font, withSuppressedModelRecording } from './babelfont-model';
 import {
     WindowSync,
@@ -64,7 +60,6 @@ import {
     deriveEditKindsFromOperations
 } from './recomposition-closure';
 import { sidebarErrorDisplay } from './sidebar-error-display';
-import APP_SETTINGS from './settings';
 import { markQaGlyphsChanged } from './auto-qa/auto-qa-matcher';
 import {
     drawingFingerprint,
@@ -466,43 +461,6 @@ export function shouldInvalidateLayoutClosureForCommittedEntries(
     }
 
     return false;
-}
-
-function collectDrawingTargetsForAffectedGlyphNames(
-    affectedGlyphNames: Iterable<string>,
-    sourceTargets: WorkerReplayTarget[]
-): WorkerReplayTarget[] {
-    const fontModel =
-        window.fontManager?.currentFont?.fontModel ?? window.currentFontModel;
-    if (!fontModel) {
-        return [];
-    }
-
-    const targets: WorkerReplayTarget[] = [];
-    for (const sourceTarget of sourceTargets) {
-        const sourceDrawing = fontModel
-            .findGlyph(sourceTarget.glyphName)
-            ?.findDrawingById(sourceTarget.layerId);
-        if (!sourceDrawing) {
-            continue;
-        }
-
-        for (const glyphName of affectedGlyphNames) {
-            if (!glyphName) {
-                continue;
-            }
-
-            const glyph = fontModel.findGlyph(glyphName);
-            const matchedDrawing =
-                glyph?.findDrawingById(sourceTarget.layerId) ??
-                sourceDrawing.getMatchingDrawingOnGlyph?.(glyphName);
-            if (matchedDrawing?.id) {
-                targets.push({ glyphName, layerId: matchedDrawing.id });
-            }
-        }
-    }
-
-    return normalizeWorkerReplayTargets(targets);
 }
 
 function resolveDrawingArrayIndex(
@@ -1298,22 +1256,6 @@ function readStampForOrigin(
     return { editType, changeSource: stamp.changeSource };
 }
 
-function inferLocalCompileContextFromHistoryItem(
-    historyItem: HistoryStackItem | null
-): {
-    editType: CommittedCompileEditType;
-    changeSource: string;
-} {
-    const entries = historyItem?.entries ?? [];
-    const semanticEntries = entries.flatMap(
-        (entry) => entry.semanticChangeLogEntries ?? []
-    );
-    return readStampForOrigin(
-        semanticEntries.length > 0 ? semanticEntries : entries,
-        'local'
-    );
-}
-
 /**
  * Collect all workerReplayTargets from remote change log entries,
  * so the linked window can do incremental drawing updates to its
@@ -1329,315 +1271,6 @@ function collectReplayTargetsFromEntries(
         }
     }
     return normalizeWorkerReplayTargets(targets);
-}
-
-function collectReplayTargetsBeyondDirectEntryPaths(
-    entries: ChangeLogEntry[]
-): WorkerReplayTarget[] {
-    const replayTargets = collectReplayTargetsFromEntries(entries);
-    if (!replayTargets.length) {
-        return [];
-    }
-
-    const directDrawingKeys = new Set<string>();
-    const directGlyphNames = new Set<string>();
-    for (const entry of entries) {
-        const entryPath =
-            typeof entry.path === 'string' && entry.path.length > 0
-                ? getPathSegments(entry.path)
-                : [];
-        const glyphName = deriveGlyphName(entryPath);
-        if (!glyphName) {
-            continue;
-        }
-        const drawingId = deriveDrawingId(entryPath);
-        if (drawingId) {
-            directDrawingKeys.add(`${glyphName}@@${drawingId}`);
-        } else {
-            directGlyphNames.add(glyphName);
-        }
-    }
-
-    return replayTargets.filter(
-        (target) =>
-            !directGlyphNames.has(target.glyphName) &&
-            !directDrawingKeys.has(`${target.glyphName}@@${target.layerId}`)
-    );
-}
-
-function hasReplayTargetsBeyondDirectEntryPaths(
-    entries: ChangeLogEntry[]
-): boolean {
-    return collectReplayTargetsBeyondDirectEntryPaths(entries).length > 0;
-}
-
-function normalizeDrawingDataForWorkerDriftCheck(drawingData: unknown): string {
-    if (!drawingData) {
-        return 'null';
-    }
-
-    const normalizeDrawingForRust = (window.fontManager as any)
-        ?.normalizeDrawingForRust as
-        ((drawing: unknown) => unknown) | undefined;
-    const normalizedDrawingData =
-        typeof normalizeDrawingForRust === 'function'
-            ? normalizeDrawingForRust.call(window.fontManager, drawingData)
-            : drawingData;
-
-    return stableStringifyForWorkerDriftCheck(
-        pruneSemanticallyEmptyOptionalDrawingFields(normalizedDrawingData)
-    );
-}
-
-function pruneSemanticallyEmptyOptionalDrawingFields(value: unknown): unknown {
-    return pruneSemanticallyEmptyOptionalDrawingFieldsInternal(value, false);
-}
-
-function pruneSemanticallyEmptyOptionalDrawingFieldsInternal(
-    value: unknown,
-    insideFormatSpecific: boolean
-): unknown {
-    if (Array.isArray(value)) {
-        return value
-            .map((entry) =>
-                pruneSemanticallyEmptyOptionalDrawingFieldsInternal(
-                    entry,
-                    insideFormatSpecific
-                )
-            )
-            .filter((entry) => entry !== undefined);
-    }
-
-    if (!value || typeof value !== 'object') {
-        return value;
-    }
-
-    const record = value as Record<string, unknown>;
-    const normalized: Record<string, unknown> = {};
-    for (const [key, entryValue] of Object.entries(record)) {
-        const pruneWithinFormatSpecific =
-            insideFormatSpecific || key === 'format_specific';
-        const prunedValue = pruneSemanticallyEmptyOptionalDrawingFieldsInternal(
-            entryValue,
-            pruneWithinFormatSpecific
-        );
-
-        if (prunedValue === undefined && pruneWithinFormatSpecific) {
-            continue;
-        }
-
-        if (
-            key === 'format_specific' &&
-            prunedValue &&
-            typeof prunedValue === 'object' &&
-            !Array.isArray(prunedValue) &&
-            Object.keys(prunedValue as Record<string, unknown>).length === 0
-        ) {
-            continue;
-        }
-
-        if (
-            key === 'guides' &&
-            Array.isArray(prunedValue) &&
-            prunedValue.length === 0
-        ) {
-            continue;
-        }
-
-        normalized[key] = prunedValue;
-    }
-
-    if (insideFormatSpecific && Object.keys(normalized).length === 0) {
-        return undefined;
-    }
-
-    return normalized;
-}
-
-function stableStringifyForWorkerDriftCheck(value: unknown): string {
-    if (Array.isArray(value)) {
-        return `[${value.map(stableStringifyForWorkerDriftCheck).join(',')}]`;
-    }
-
-    if (value && typeof value === 'object') {
-        const record = value as Record<string, unknown>;
-        return `{${Object.keys(record)
-            .sort()
-            .map(
-                (key) =>
-                    `${JSON.stringify(key)}:${stableStringifyForWorkerDriftCheck(record[key])}`
-            )
-            .join(',')}}`;
-    }
-
-    return JSON.stringify(value);
-}
-
-async function showCommittedWorkerDriftIfNeeded(
-    entries: ChangeLogEntry[],
-    localCompileContext: LocalCommittedCompileContext | null
-): Promise<boolean> {
-    if (!APP_SETTINGS.IN_BROWSER_LIVE_TESTS.ENABLE_WORKER_DRIFT_CHECKS) {
-        if (window.fontManager) {
-            window.fontManager.pendingCommittedKeyboardDriftCheckAfterDrag = false;
-        }
-        return false;
-    }
-
-    if (
-        !localCompileContext ||
-        (localCompileContext.editType !== 'outline' &&
-            localCompileContext.editType !== 'anchor')
-    ) {
-        return false;
-    }
-
-    if (
-        entries.some(
-            (entry) =>
-                entry.historyAction === 'undo' || entry.historyAction === 'redo'
-        )
-    ) {
-        return false;
-    }
-
-    if (!fontCompilation?.isInitialized) {
-        return false;
-    }
-
-    const replayTargets = collectReplayTargetsFromEntries(entries);
-    if (replayTargets.length === 0) {
-        return false;
-    }
-
-    const fontModel = window.fontManager?.currentFont?.fontModel;
-    if (!fontModel || typeof fontModel.findGlyph !== 'function') {
-        return false;
-    }
-
-    const expectedSnapshots = replayTargets
-        .map((target) => {
-            const drawing = fontModel
-                .findGlyph(target.glyphName)
-                ?.findDrawingById(target.layerId);
-            const drawingData =
-                typeof drawing?.toJSON === 'function'
-                    ? drawing.toJSON()
-                    : (drawing as unknown);
-            if (!drawingData) {
-                return null;
-            }
-
-            return {
-                glyphName: target.glyphName,
-                layerId: target.layerId,
-                fingerprint:
-                    normalizeDrawingDataForWorkerDriftCheck(drawingData)
-            };
-        })
-        .filter(
-            (
-                snapshot
-            ): snapshot is {
-                glyphName: string;
-                layerId: string;
-                fingerprint: string;
-            } => !!snapshot
-        );
-
-    if (expectedSnapshots.length === 0) {
-        return false;
-    }
-
-    const response = await fontCompilation.sendMessage({
-        type: 'dumpDrawingState',
-        layerTargets: replayTargets
-    });
-
-    if (window.fontManager) {
-        window.fontManager.pendingCommittedKeyboardDriftCheckAfterDrag = false;
-    }
-
-    if (response?.error) {
-        console.error(
-            '[ChangeBridgeInit] Failed to inspect committed keyboard worker state:',
-            response.error
-        );
-        return false;
-    }
-
-    const dump = response?.dumpJson ? JSON.parse(response.dumpJson) : null;
-    const dumpTargets = Array.isArray(dump?.targets) ? dump.targets : [];
-    const mismatches: string[] = [];
-    const seenTargets = new Set<string>();
-    const expectedByTarget = new Map(
-        expectedSnapshots.map((snapshot) => [
-            `${snapshot.glyphName}@@${snapshot.layerId}`,
-            snapshot.fingerprint
-        ])
-    );
-
-    for (const target of dumpTargets) {
-        const glyphName =
-            typeof target?.glyphName === 'string' ? target.glyphName : null;
-        const drawingId =
-            typeof target?.layerId === 'string' ? target.layerId : null;
-        if (!glyphName || !drawingId) {
-            continue;
-        }
-
-        const targetKey = `${glyphName}@@${drawingId}`;
-        seenTargets.add(targetKey);
-
-        const expectedFingerprint = expectedByTarget.get(targetKey) ?? 'null';
-        const rustCanonicalFingerprint =
-            normalizeDrawingDataForWorkerDriftCheck(target?.canonicalLayer);
-        const rustSubsetFingerprint = normalizeDrawingDataForWorkerDriftCheck(
-            target?.subsetLayer
-        );
-        const rustYDocFingerprint = normalizeDrawingDataForWorkerDriftCheck(
-            target?.ydocLayer
-        );
-        const subsetMatchesIfPresent =
-            rustSubsetFingerprint === 'null' ||
-            expectedFingerprint === rustSubsetFingerprint;
-
-        if (
-            expectedFingerprint !== rustCanonicalFingerprint ||
-            !subsetMatchesIfPresent ||
-            expectedFingerprint !== rustYDocFingerprint
-        ) {
-            mismatches.push(
-                `${glyphName}/${drawingId}: expected=${expectedFingerprint} rustCanonical=${rustCanonicalFingerprint} rustSubset=${rustSubsetFingerprint} rustYDoc=${rustYDocFingerprint}`
-            );
-        }
-    }
-
-    for (const target of replayTargets) {
-        const targetKey = `${target.glyphName}@@${target.layerId}`;
-        if (!seenTargets.has(targetKey)) {
-            mismatches.push(
-                `${target.glyphName}/${target.layerId}: missing from Rust dump response`
-            );
-        }
-    }
-
-    if (mismatches.length === 0) {
-        return false;
-    }
-
-    const error = new Error(
-        'Committed glyph data did not reach the compiled worker state after the authoritative commit.\n' +
-            'Drawing edits are no longer recompiling the editing font on fresh data.\n' +
-            'Reload the font or app before continuing.\n\n' +
-            mismatches.join('\n')
-    );
-    sidebarErrorDisplay.showError(error, 'editing', { sticky: true });
-    console.error(
-        '[ChangeBridgeInit] Committed worker drift detected:',
-        error.message
-    );
-    return true;
 }
 
 function getDrawingWidth(
@@ -2596,14 +2229,6 @@ function isDirectSidebearingTransactionLabel(
         transactionLabel === 'Set LSB' ||
         transactionLabel === 'Set RSB' ||
         transactionLabel === 'Set sidebearing'
-    );
-}
-
-function historyItemTouchesAnchors(
-    historyItem: HistoryStackItem | null
-): boolean {
-    return (historyItem?.touchedPaths ?? []).some((path) =>
-        /(^|\.)anchors(\.|$)/.test(path)
     );
 }
 
@@ -3566,23 +3191,6 @@ export async function handleRemoteChangeRefresh(
     }
 ): Promise<void> {
     await handleCommittedChangeRefresh(entries, 'remote', dependencies);
-}
-
-export function queueRustCacheAndRefreshCanvas(
-    rootGlyphName?: string,
-    editedGlyphName?: string,
-    options?: {
-        skipDeferredCanvasRepaint?: boolean;
-        workerReplayTargets?: WorkerReplayTarget[];
-    }
-): Promise<void> {
-    return enqueueBridgeSync(async () => {
-        await syncRustCacheAndRefreshCanvas(
-            rootGlyphName,
-            editedGlyphName,
-            options
-        );
-    });
 }
 
 /**

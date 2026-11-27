@@ -15,6 +15,7 @@ import {
     type RequestCodeOutcome,
     type VerifyCodeOutcome
 } from './sign-in-dialog';
+import { getSessionTokenFromCookie } from './state-manager';
 
 const SIGN_IN_EMAIL_KEY = 'signInEmail';
 const AUTH_CHANNEL_NAME = 'counterpunch-auth';
@@ -66,6 +67,8 @@ type EnsureCloudSessionOptions = {
     allowSignInPrompt?: boolean;
     reason?: string;
 };
+
+export { getSessionTokenFromCookie };
 
 class AuthManager {
     websiteURL: string;
@@ -469,21 +472,7 @@ class AuthManager {
      * Get session token from cookie
      */
     getSessionToken(): string | null {
-        const cookies = document.cookie.split(';');
-        for (const cookie of cookies) {
-            const trimmedCookie = cookie.trim();
-            const separatorIndex = trimmedCookie.indexOf('=');
-            if (separatorIndex === -1) {
-                continue;
-            }
-
-            const name = trimmedCookie.slice(0, separatorIndex);
-            const value = trimmedCookie.slice(separatorIndex + 1);
-            if (name === 'editor_session') {
-                return value;
-            }
-        }
-        return null;
+        return getSessionTokenFromCookie();
     }
 
     /**

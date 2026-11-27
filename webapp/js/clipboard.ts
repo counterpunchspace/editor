@@ -39,8 +39,7 @@ import {
     fontraClipboardItemRepresentation,
     parseFontraClipboard,
     stringifyFontraClipboardDocument,
-    writeFontraClipboardToDataTransfer,
-    buildFontraAxisNameByKey
+    writeFontraClipboardToDataTransfer
 } from './clipboard/fontra';
 import {
     SVG_MIME_TYPES,
@@ -275,19 +274,6 @@ export function mergeClipboardPayloads(
         }
     }
     return payloads;
-}
-
-/**
- * Sync paste DataTransfer plus async ClipboardItem read (Fontra / tagged MIME).
- * Prefer calling this from a user-gesture handler (paste / Cmd+V).
- */
-export async function resolveClipboardPayloads(
-    clipboardData?: DataTransfer | null
-): Promise<ClipboardPayload[]> {
-    const syncPayloads = collectClipboardPayloads(clipboardData);
-    const asyncPayloads = await readClipboardPayloadsAsync();
-    // Async first so tagged MIME is present before SVG fallbacks when parsing.
-    return mergeClipboardPayloads(asyncPayloads, syncPayloads);
 }
 
 /** True when paste already has Counterpunch/Fontra fidelity (not SVG-only). */
@@ -576,15 +562,6 @@ export function normalizeClipboardPathNodeType(
         default:
             return String(nodeType || 'Unknown');
     }
-}
-
-export function getPastePathStructureSignature(path: {
-    closed?: boolean;
-    nodes: Array<{ nodetype?: string }>;
-}): string {
-    const closedFlag = path.closed === false ? '0' : '1';
-    const nodeTypes = getPastePathNormalizedNodeTypes(path);
-    return `P:${closedFlag}:${nodeTypes.length}:${nodeTypes.join(',')}`;
 }
 
 export function getPastePathNormalizedNodeTypes(path: {

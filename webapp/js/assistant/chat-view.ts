@@ -5,6 +5,7 @@ import tippy, { type Placement } from 'tippy.js';
 import 'tippy.js/dist/tippy.css';
 import '../../css/assistant-chat.css';
 import { getTheme } from '../tippy-utils';
+import { escapeHtml } from '../ui/escape-html';
 import { rewriteHtmlAnchorsForDocs } from '../link-navigation';
 import type { UsageMetrics } from '../assistant-config';
 import type {
@@ -15,11 +16,7 @@ import type {
     ChatTurnItem
 } from './chat-session';
 
-export function escapeHtml(text: string): string {
-    const d = document.createElement('div');
-    d.appendChild(document.createTextNode(text));
-    return d.innerHTML;
-}
+export { escapeHtml };
 
 export function highlightPython(code: string): string {
     let html = escapeHtml(code);

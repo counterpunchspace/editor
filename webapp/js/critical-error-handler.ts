@@ -12,6 +12,7 @@
  */
 
 import { Logger } from './logger';
+import { escapeHtml } from './ui/escape-html';
 
 const console = new Logger('CriticalErrorHandler');
 
@@ -55,18 +56,6 @@ export function showCriticalError(
 
     // Log the error
     console.error('[CriticalError]', title, message);
-}
-
-/**
- * Simple HTML escape to prevent XSS
- */
-function escapeHtml(unsafe: string): string {
-    return unsafe
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
 }
 
 /**

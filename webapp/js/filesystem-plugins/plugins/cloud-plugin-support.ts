@@ -3,96 +3,31 @@
  * (open pipeline, save-as, and live orchestration support).
  */
 import { assertEncodableDocumentSet } from '../../cloud-document-encode-gate';
-import {
-    FilesystemPlugin,
-    type CanAddGlyphsResult
-} from '../filesystem-plugin';
-import { pluginRegistry } from '../registry';
-import {
-    CloudAdapter,
-    CloudAdapterOptions,
-    CloudConnectionStatus,
-    type CloudTransferActivity,
-    type CloudSeededShardAttestation,
-    type CloudShardIoOptions,
-    normalizeCloudRoomWebSocketUrl
-} from '../../cloud-adapter';
-import {
-    isTransferCancelled,
-    loadDocumentSetWithProgress,
-    seedDocumentSetWithProgress,
-    shardIoOptionsFromSession
-} from '../cancellable-shard-transfer';
-import {
-    CloudLiveSession,
-    activeEditorGlyphNames,
-    liveGlyphDocumentIdsFromSubset
-} from '../../cloud-live-session';
-import {
-    PatchSyncEngine,
-    type CommittedChangeListener
-} from '../../patch-sync-engine';
-import { setCollabIntegritySnapshotProvider } from '../../cloud-collab-integrity-debug';
-import { Logger } from '../../logger';
+import type { PatchSyncEngine } from '../../patch-sync-engine';
 import {
     getPathSegments,
     glyphRenamesForHistoryAction,
     historyReplayValue,
     type ChangeLogEntry
 } from '../../change-log';
-import { resolveWebsiteURL } from '../../website-url';
-import { readUrlState } from '../../url-state';
-import { beginLoadingCursor, endLoadingCursor } from '../../loading-cursor';
 import {
-    applyCloudOwnedData,
-    tombstoneCloudOwnedGlyphs,
     catalogFromCoreJson,
     catalogNeedsUpdate,
-    incompleteCloudSeedReason,
     liveCatalogGlyphIds,
-    listGlyphRecords,
-    patchCloudOwnedGlyph,
-    stripOwnedFontData
+    listGlyphRecords
 } from '../cloud-glyph-catalog';
-import { missingRequiredCloudCapabilities } from '../cloud-collab-capabilities';
-import { PACK_SEED_GRANT_OPERATION } from '../cloud-shard-grant';
+import { catalogEntriesForDepsParse, depsNeedUpdate } from '../cloud-font-deps';
 import {
-    catalogEntriesForDepsParse,
-    depsNeedUpdate,
-    readFontDepsIndex,
-    resolveHydrationSeeds,
-    writeCompleteFontDepsIfLoaded
-} from '../cloud-font-deps';
-import {
-    CloudDocumentSet,
     FONT_CORE_DOCUMENT_ID,
     FONT_DEPS_DOCUMENT_ID,
     glyphDocumentId,
-    glyphIdsFromCatalogEntries,
-    glyphIdsFromRevisionEntries,
-    hydrateSparseGlyphsToFixedPoint,
     type EncodedShard
 } from '../cloud-document-set';
 import {
-    evaluateShardSizes,
-    evaluateCollabSubmit,
-    formatCollabSubmitRejection,
     MAX_SHARD_BYTES,
-    MAX_YJS_PACKET_BYTES,
-    shouldAutoSparseHydrate,
-    shouldExactEncodeAssetSize,
     type ShardSizeGate,
-    type ShardSizeReport,
-    type CollabSubmitDecision,
-    type CollabSubmitRequest
+    type ShardSizeReport
 } from '../cloud-shard-limits';
-import type { CollaborationMessageEnvelope } from '../../collaboration-message';
-import { getCloudRequestHeaders } from '../../cloud-website-api';
-
-const console = new Logger('CloudPlugin');
-const CLOUD_PLUGIN_UI_ENABLED = true;
-const CLOUD_ASSET_DELETED_MESSAGE = 'Cloud asset was deleted';
-const CLOUD_ASSET_LOCALIZED_EVENT = 'cloudAssetLocalizedToMemory';
 
 export type CloudAssetRole = 'owner' | 'editor' | 'viewer';
 
@@ -479,9 +414,10 @@ export function formatCloudStatusTooltipHtml(
     return `<div class="info-popup-content cloud-status-tooltip"><p class="cloud-status-tooltip-sentence">${escapeCloudTooltipText(statusTitle)}</p><ul><li>font-core: ${escapeCloudTooltipText(formatCloudByteCount(stats.fontCoreBytes))}</li><li>font-deps: ${escapeCloudTooltipText(formatCloudByteCount(stats.fontDepsBytes))}</li><li>Largest glyph shard: ${escapeCloudTooltipText(largestLabel)}</li><li>Active WebSockets: ${Math.max(0, Math.floor(stats.activeWebSocketCount) || 0)}</li></ul></div>`;
 }
 
-export function canonicalizeCloudExportFontJson(
-    fontJson: Record<string, unknown>
-): Record<string, unknown> {
+function forEachCloudExportShape(
+    fontJson: Record<string, unknown>,
+    visitor: (shape: Record<string, unknown>) => void
+): void {
     const glyphs = Array.isArray(fontJson.glyphs) ? fontJson.glyphs : [];
     for (const glyph of glyphs) {
         const glyphRecord =
@@ -501,19 +437,26 @@ export function canonicalizeCloudExportFontJson(
                 if (!shape || typeof shape !== 'object') {
                     continue;
                 }
-
-                const componentShape = shape as {
-                    reference?: unknown;
-                    transform?: unknown;
-                };
-                if (typeof componentShape.reference === 'string') {
-                    componentShape.transform = normalizeCloudComponentTransform(
-                        componentShape.transform
-                    );
-                }
+                visitor(shape as Record<string, unknown>);
             }
         }
     }
+}
+
+export function canonicalizeCloudExportFontJson(
+    fontJson: Record<string, unknown>
+): Record<string, unknown> {
+    forEachCloudExportShape(fontJson, (shape) => {
+        const componentShape = shape as {
+            reference?: unknown;
+            transform?: unknown;
+        };
+        if (typeof componentShape.reference === 'string') {
+            componentShape.transform = normalizeCloudComponentTransform(
+                componentShape.transform
+            );
+        }
+    });
 
     return fontJson;
 }
@@ -522,91 +465,68 @@ export function validateCloudExportForFontOpen(
     fontJson: Record<string, unknown>,
     _operation: 'open' | 'save' = 'open'
 ) {
-    const glyphs = Array.isArray(fontJson.glyphs) ? fontJson.glyphs : [];
-    for (const glyph of glyphs) {
-        const glyphRecord =
-            glyph && typeof glyph === 'object' && !Array.isArray(glyph)
-                ? (glyph as Record<string, unknown>)
-                : null;
-        const drawings = Array.isArray(glyphRecord?.layers)
-            ? (glyphRecord.layers as unknown[])
-            : [];
-        for (const drawing of drawings) {
-            const shapes = Array.isArray(
-                (drawing as { shapes?: unknown[] }).shapes
-            )
-                ? (drawing as { shapes: unknown[] }).shapes
-                : [];
-            for (const shape of shapes) {
-                if (!shape || typeof shape !== 'object') {
-                    continue;
-                }
+    forEachCloudExportShape(fontJson, (shapeRecord) => {
+        if (
+            'Path' in shapeRecord &&
+            shapeRecord.Path &&
+            typeof shapeRecord.Path === 'object' &&
+            !Array.isArray(shapeRecord.Path)
+        ) {
+            throw new TypeError(
+                'Wrapped Path shapes are not allowed in cloud-exported font data.'
+            );
+        } else if (
+            'Component' in shapeRecord &&
+            shapeRecord.Component &&
+            typeof shapeRecord.Component === 'object' &&
+            !Array.isArray(shapeRecord.Component)
+        ) {
+            throw new TypeError(
+                'Wrapped Component shapes are not allowed in cloud-exported font data.'
+            );
+        }
 
-                const shapeRecord = shape as Record<string, unknown>;
-                if (
-                    'Path' in shapeRecord &&
-                    shapeRecord.Path &&
-                    typeof shapeRecord.Path === 'object' &&
-                    !Array.isArray(shapeRecord.Path)
-                ) {
-                    throw new TypeError(
-                        'Wrapped Path shapes are not allowed in cloud-exported font data.'
-                    );
-                } else if (
-                    'Component' in shapeRecord &&
-                    shapeRecord.Component &&
-                    typeof shapeRecord.Component === 'object' &&
-                    !Array.isArray(shapeRecord.Component)
-                ) {
-                    throw new TypeError(
-                        'Wrapped Component shapes are not allowed in cloud-exported font data.'
-                    );
-                }
+        const pathShape = shapeRecord as {
+            nodes?: unknown;
+            closed?: boolean;
+        };
+        if (Array.isArray(pathShape.nodes)) {
+            if (pathShape.closed === undefined) {
+                throw new TypeError(
+                    'Cloud-exported path shapes must carry an explicit closed flag.'
+                );
+            }
+            return;
+        }
 
-                const pathShape = shape as {
-                    nodes?: unknown;
-                    closed?: boolean;
-                };
-                if (Array.isArray(pathShape.nodes)) {
-                    if (pathShape.closed === undefined) {
-                        throw new TypeError(
-                            'Cloud-exported path shapes must carry an explicit closed flag.'
-                        );
-                    }
-                    continue;
-                }
-
-                const componentShape = shape as {
-                    reference?: unknown;
-                    transform?: unknown;
-                };
-                if (typeof componentShape.reference === 'string') {
-                    const normalizedTransform =
-                        normalizeCloudComponentTransform(
-                            componentShape.transform
-                        );
-                    const transform = componentShape.transform;
-                    if (
-                        !transform ||
-                        typeof transform !== 'object' ||
-                        Array.isArray(transform) ||
-                        Object.keys(transform).length !==
-                            Object.keys(normalizedTransform).length ||
-                        !Object.keys(normalizedTransform).every(
-                            (key) =>
-                                JSON.stringify(
-                                    (transform as Record<string, unknown>)[key]
-                                ) === JSON.stringify(normalizedTransform[key])
-                        )
-                    ) {
-                        throw new TypeError(
-                            'Cloud-exported component shapes must carry canonical transform objects.'
-                        );
-                    }
-                }
+        const componentShape = shapeRecord as {
+            reference?: unknown;
+            transform?: unknown;
+        };
+        if (typeof componentShape.reference === 'string') {
+            const normalizedTransform = normalizeCloudComponentTransform(
+                componentShape.transform
+            );
+            const transform = componentShape.transform;
+            if (
+                !transform ||
+                typeof transform !== 'object' ||
+                Array.isArray(transform) ||
+                Object.keys(transform).length !==
+                    Object.keys(normalizedTransform).length ||
+                !Object.keys(normalizedTransform).every(
+                    (key) =>
+                        JSON.stringify(
+                            (transform as Record<string, unknown>)[key]
+                        ) === JSON.stringify(normalizedTransform[key])
+                )
+            ) {
+                throw new TypeError(
+                    'Cloud-exported component shapes must carry canonical transform objects.'
+                );
             }
         }
-    }
+    });
 }
 
 export function glyphIdsFromCoreJson(

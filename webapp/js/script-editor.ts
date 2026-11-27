@@ -13,7 +13,7 @@ import {
     MENU_COMMAND_SYMBOL,
     MENU_RETURN_SYMBOL
 } from './keyboard-shortcut-display';
-import { Logger } from './logger';
+import { escapeHtml } from './ui/escape-html';
 
 /** A missing settings file is not a watcher error. The watcher must stop. */
 export function isMissingFileError(error: unknown): boolean {
@@ -889,15 +889,6 @@ import {
     }
 
     /**
-     * Escape HTML special characters
-     */
-    function escapeHtml(text: string): string {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-
-    /**
      * Setup click handlers for file menu items.
      * Uses a single delegated onclick (replaces any prior handler) and starts
      * Save/Open pickers before tippy.hide() so user activation is preserved.
@@ -1199,17 +1190,6 @@ import {
         }
 
         return await handleSaveAs();
-    }
-
-    /**
-     * Handle Open file
-     */
-    async function handleOpen() {
-        const pickerPromise = beginOpenFilePicker();
-        if (!pickerPromise) {
-            return;
-        }
-        await completeOpenFilePicker(pickerPromise);
     }
 
     /**

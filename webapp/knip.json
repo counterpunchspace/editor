@@ -22,6 +22,10 @@
         "tests/**/*.{js,ts,mjs}"
     ],
     "include": ["files", "dependencies", "unlisted"],
+    "ignore": [
+        "js/generated/collab-protocol-pack-grant.ts",
+        "js/generated/collab-protocol-timing-safe.ts"
+    ],
     "ignoreDependencies": [
         "ace-builds",
         "diff",

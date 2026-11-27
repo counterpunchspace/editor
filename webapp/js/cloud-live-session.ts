@@ -16,7 +16,6 @@ import {
     fetchCloudDocumentStateWithLogId,
     normalizeCloudShardHttpUrl
 } from './cloud-adapter-bootstrap';
-import * as Y from 'yjs';
 import {
     EnvelopeTooLargeError,
     fitEnvelopeForWire
@@ -54,7 +53,6 @@ import {
 import type { PatchSyncEngine } from './patch-sync-engine';
 import {
     collaborationMessageKey,
-    createLinkedWindowCatchUpEnvelope,
     type CollaborationMessageEnvelope
 } from './collaboration-message';
 import { Logger } from './logger';

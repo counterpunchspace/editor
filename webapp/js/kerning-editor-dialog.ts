@@ -8,6 +8,7 @@ import {
     type KerningContainer
 } from './kerning-utils';
 import { Logger } from './logger';
+import { escapeHtml } from './ui/escape-html';
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 
 const console = new Logger('KerningEditorDialog');
@@ -21,14 +22,6 @@ type KerningPairRow = {
     second: string;
     values: Array<number | null>;
 };
-
-function escapeHtml(text: string): string {
-    return text
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-}
 
 function compareStrings(left: string, right: string): number {
     return left.localeCompare(right, undefined, {

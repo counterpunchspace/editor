@@ -180,23 +180,6 @@ export function drawingComponentIdentities(
     return sequences;
 }
 
-export function componentIdentities(
-    glyph: Glyph,
-    glyphsByName: Map<string, Glyph>
-): string[] {
-    const identities: string[] = [];
-    const seen = new Set<string>();
-    for (const sequence of drawingComponentIdentities(glyph, glyphsByName)) {
-        for (const identity of sequence) {
-            if (!seen.has(identity)) {
-                seen.add(identity);
-                identities.push(identity);
-            }
-        }
-    }
-    return identities;
-}
-
 export function anchorNames(glyph: Glyph): string[] {
     const names: string[] = [];
     const seen = new Set<string>();

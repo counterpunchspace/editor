@@ -4,7 +4,7 @@
  */
 
 import { Logger } from './logger';
-import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
+import { mountModalOverlay } from './ui/confirm-dialog';
 import { isTourLinkLaunch } from './tour-link';
 
 const console = new Logger('WelcomeScreen');
@@ -59,14 +59,19 @@ function showWelcomeModal(): void {
     }
     welcomeShownThisLoad = true;
 
-    const overlay = document.createElement('div');
-    overlay.className = 'info-popup-overlay';
-    overlay.style.display = 'flex';
-    overlay.setAttribute('role', 'dialog');
-    overlay.setAttribute('aria-modal', 'true');
-    overlay.setAttribute('aria-labelledby', 'welcome-screen-title');
+    const onDismiss = (): void => {
+        dismissCurrentWelcome();
+        console.log('Dismissed welcome version', WELCOME_VERSION);
+        dispatchWelcomeScreenSettled();
+    };
 
-    overlay.innerHTML = `
+    const { overlay, close } = mountModalOverlay({
+        attributes: {
+            'role': 'dialog',
+            'aria-modal': 'true',
+            'aria-labelledby': 'welcome-screen-title'
+        },
+        innerHTML: `
         <div class="info-popup confirm-dialog">
             <div class="info-popup-header">
                 <h3 id="welcome-screen-title">Welcome</h3>
@@ -83,45 +88,17 @@ function showWelcomeModal(): void {
                 </div>
             </div>
         </div>
-    `;
-
-    document.body.appendChild(overlay);
-
-    let escapeBinding: ModalEscapeBinding | null = null;
-
-    function close(): void {
-        escapeBinding?.release();
-        escapeBinding = null;
-        overlay.remove();
-        dismissCurrentWelcome();
-        console.log('Dismissed welcome version', WELCOME_VERSION);
-        dispatchWelcomeScreenSettled();
-    }
-
-    escapeBinding = bindModalEscape(close, {
-        isOpen: () => overlay.isConnected
+    `,
+        focusSelector: '[data-action="dismiss"]',
+        onDismiss
     });
-
-    overlay.addEventListener('click', (event) => {
-        if (event.target === overlay) {
-            close();
-        }
-    });
-
-    overlay
-        .querySelector('.confirm-dialog-close-btn')
-        ?.addEventListener('click', close);
 
     overlay
         .querySelector('[data-action="dismiss"]')
-        ?.addEventListener('click', close);
-
-    queueMicrotask(() => {
-        const dismissBtn = overlay.querySelector(
-            '[data-action="dismiss"]'
-        ) as HTMLElement | null;
-        dismissBtn?.focus();
-    });
+        ?.addEventListener('click', () => {
+            close();
+            onDismiss();
+        });
 }
 
 /**

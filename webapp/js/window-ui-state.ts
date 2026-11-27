@@ -160,16 +160,6 @@ export function getWindowUiSlot(): string {
     return 'main';
 }
 
-/**
- * Per-window chrome layout and UI prefs as one compact v1 string.
- * Keys are `windowUi.main` and `windowUi.${slot}` for linked windows.
- */
-export function getWindowUiStorageKey(
-    slot: string = getWindowUiSlot()
-): string {
-    return `windowUi.${slot}`;
-}
-
 export function isApplyingWindowUi(): boolean {
     return getRuntime().applying;
 }
@@ -331,7 +321,7 @@ export function parseOverviewDisplayMode(
     return 'normal';
 }
 
-function parsePreview(raw: string | null | undefined): PreviewArea {
+export function parsePreviewArea(raw: string | null | undefined): PreviewArea {
     if (raw === 'medium' || raw === 'full') {
         return raw;
     }
@@ -602,7 +592,7 @@ function parseWindowUi(raw: string): WindowUiState | null {
         next.metrics = fields.get('metrics') === '1';
     }
     if (fields.has('preview')) {
-        next.preview = parsePreview(fields.get('preview'));
+        next.preview = parsePreviewArea(fields.get('preview'));
     }
     if (fields.has('plugins')) {
         const split = splitEncodedPluginRecords(
@@ -962,7 +952,7 @@ export function getPreviewArea(): PreviewArea {
 }
 
 export function setPreviewAreaPreference(area: PreviewArea): void {
-    mutate({ preview: parsePreview(area) });
+    mutate({ preview: parsePreviewArea(area) });
 }
 
 export function getFocusViewId(): string | null {

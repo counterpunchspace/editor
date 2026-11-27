@@ -20,10 +20,7 @@ import {
 import { fontCompilation } from './font-compilation';
 import { attachTopRowSidebarInterpolation } from './top-row-sidebar-interpolation';
 import { getFontInfoSection, setFontInfoSection } from './window-ui-state';
-import type {
-    PatchSyncEngine,
-    TransactionHistoryTarget
-} from './patch-sync-engine';
+import type { TransactionHistoryTarget } from './patch-sync-engine';
 import type { Babelfont } from './babelfont';
 import type { Font as BabelfontModelFont } from './babelfont-model';
 import type { StationTopologyGate } from './filesystem-plugins/filesystem-plugin';
@@ -91,17 +88,10 @@ import {
 } from './font-info-station-metrics';
 // Import FEA mode for Ace Editor (registers the mode automatically)
 import './mode-fea';
+import { escapeHtml as escapeFeatureHtml } from './ui/escape-html';
 const console = new Logger('FontInfo');
 
 const FEATURE_CODE_COMPILE_DEBOUNCE_MS = 5000;
-
-function escapeFeatureHtml(value: string): string {
-    return value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-}
 
 const FEATURE_ITEM_NOUN: Record<FeatureItemType, string> = {
     prefix: 'prefix',
@@ -786,20 +776,6 @@ function cloneNumericRecord(
     value?: Record<string, number>
 ): Record<string, number> | undefined {
     return value ? { ...value } : undefined;
-}
-
-function areNumericRecordsEqual(
-    left?: Record<string, number>,
-    right?: Record<string, number>
-): boolean {
-    const leftKeys = Object.keys(left ?? {});
-    const rightKeys = Object.keys(right ?? {});
-
-    if (leftKeys.length !== rightKeys.length) {
-        return false;
-    }
-
-    return leftKeys.every((key) => left?.[key] === right?.[key]);
 }
 
 function getLocationKeys(
@@ -4646,69 +4622,6 @@ class FontInfoManager {
         return header;
     }
 
-    private appendNameGroups(options: {
-        container: HTMLElement;
-        names: Babelfont.Names;
-        dataFieldPrefix: string;
-        sectionTitle?: string;
-        sectionHelperText?: string;
-        onCommit: (
-            key: FontNameFieldKey,
-            nextValue: Babelfont.I18NDictionary
-        ) => void;
-    }) {
-        if (options.sectionTitle) {
-            const introSection = document.createElement('section');
-            introSection.className = 'fontinfo-name-group';
-
-            const titleEl = document.createElement('h3');
-            titleEl.className = 'sidebar-section-title';
-            titleEl.textContent = options.sectionTitle;
-            introSection.appendChild(titleEl);
-
-            if (options.sectionHelperText) {
-                const helper = document.createElement('div');
-                helper.className = 'localized-string-helper';
-                helper.textContent = options.sectionHelperText;
-                introSection.appendChild(helper);
-            }
-
-            options.container.appendChild(introSection);
-        }
-
-        FONT_NAME_GROUPS.forEach((group) => {
-            const groupEl = document.createElement('section');
-            groupEl.className = 'fontinfo-name-group';
-
-            const titleEl = document.createElement('h3');
-            titleEl.className = 'sidebar-section-title';
-            titleEl.textContent = group.title;
-            groupEl.appendChild(titleEl);
-
-            const fieldsEl = document.createElement('div');
-            fieldsEl.className = 'fontinfo-name-group-fields';
-
-            group.fields.forEach((field) => {
-                const editor = createLocalizedStringEditor({
-                    label: field.label,
-                    value: options.names[field.key],
-                    multiline: field.multiline,
-                    onCommit: (nextValue) =>
-                        options.onCommit(field.key, nextValue)
-                });
-
-                editor.element.setAttribute(
-                    'data-font-field',
-                    `${options.dataFieldPrefix}.${field.key}`
-                );
-                fieldsEl.appendChild(editor.element);
-            });
-
-            groupEl.appendChild(fieldsEl);
-            options.container.appendChild(groupEl);
-        });
-    }
-
     private appendCustomOTGroups(options: {
         container: HTMLElement;
         customOTValues: Partial<Babelfont.CustomOTValues>;
@@ -6652,47 +6565,6 @@ class FontInfoManager {
         });
     }
 
-    private applyLocalStationFieldValue(
-        stationIndex: number,
-        key: StationFieldKey,
-        nextValue: string
-    ) {
-        const font = window.currentFontModel as any;
-        const station = font?.stations?.[stationIndex];
-        if (!station) {
-            return;
-        }
-
-        station[key] = nextValue;
-    }
-
-    private commitStationFieldValue(
-        stationIndex: number,
-        key: StationFieldKey,
-        nextValue: string
-    ) {
-        const font = window.currentFontModel as any;
-        const station = font?.stations?.[stationIndex];
-        if (!station) {
-            return;
-        }
-
-        const previousValue = station[key];
-        if (previousValue === nextValue) {
-            return;
-        }
-
-        this.commitFontPathChange({
-            label: 'Edit station field',
-            path: ['masters', stationIndex, key],
-            oldValue: previousValue,
-            newValue: nextValue,
-            applyLocal: () =>
-                this.applyLocalStationFieldValue(stationIndex, key, nextValue),
-            markDirtyKey: 'font-info-station-field'
-        });
-    }
-
     private applyLocalStationLocationValue(
         stationIndex: number,
         axisTag: string,
@@ -6799,65 +6671,6 @@ class FontInfoManager {
                     nextValue
                 ),
             markDirtyKey: 'font-info-station-metric'
-        });
-    }
-
-    private applyLocalStationCustomOTValue(
-        stationIndex: number,
-        key: CustomOTFieldKey,
-        nextValue: unknown
-    ) {
-        const font = window.currentFontModel as any;
-        const station = font?.stations?.[stationIndex];
-        if (!station) {
-            return;
-        }
-
-        if (nextValue === undefined) {
-            if (station.custom_ot_values) {
-                delete station.custom_ot_values[key];
-                if (Object.keys(station.custom_ot_values).length === 0) {
-                    delete station.custom_ot_values;
-                }
-            }
-            return;
-        }
-
-        if (!station.custom_ot_values) {
-            station.custom_ot_values = {};
-        }
-        station.custom_ot_values[key] = nextValue;
-    }
-
-    private commitStationCustomOTValue(
-        stationIndex: number,
-        key: CustomOTFieldKey,
-        nextValue: unknown
-    ) {
-        const font = window.currentFontModel as any;
-        const station = font?.stations?.[stationIndex];
-        if (!station) {
-            return;
-        }
-
-        const previousValue = station.custom_ot_values?.[key];
-        if (areCustomOTFieldValuesEqual(previousValue, nextValue)) {
-            return;
-        }
-
-        this.commitFontPathChange({
-            label: 'Edit station custom OpenType value',
-            path: ['masters', stationIndex, 'custom_ot_values', key],
-            oldValue: cloneCustomOTFieldValue(previousValue),
-            newValue: cloneCustomOTFieldValue(nextValue),
-            remove: nextValue === undefined,
-            applyLocal: () =>
-                this.applyLocalStationCustomOTValue(
-                    stationIndex,
-                    key,
-                    nextValue
-                ),
-            markDirtyKey: 'font-info-station-custom-ot'
         });
     }
 
@@ -7021,71 +6834,6 @@ class FontInfoManager {
                 ),
             markDirtyKey: 'font-info-instance-location',
             refresh: () => this.refreshInstanceSidebarItemSummary(instanceIndex)
-        });
-    }
-
-    private applyLocalInstanceCustomNameFieldValue(
-        instanceIndex: number,
-        key: FontNameFieldKey,
-        nextValue: Babelfont.I18NDictionary
-    ) {
-        const font = window.currentFontModel as any;
-        const instance = font?.instances?.[instanceIndex];
-        if (!instance) {
-            return;
-        }
-
-        if (!instance.custom_names) {
-            instance.custom_names = {};
-        }
-
-        const normalizedNextValue = normalizeLocalizedStringValue(nextValue);
-        if (Object.keys(normalizedNextValue).length === 0) {
-            delete instance.custom_names[key];
-            return;
-        }
-
-        instance.custom_names[key] = normalizedNextValue;
-    }
-
-    private commitInstanceCustomNameFieldValue(
-        instanceIndex: number,
-        key: FontNameFieldKey,
-        nextValue: Babelfont.I18NDictionary
-    ) {
-        const font = window.currentFontModel as any;
-        const instance = font?.instances?.[instanceIndex];
-        if (!instance) {
-            return;
-        }
-
-        const previousValue = normalizeLocalizedStringValue(
-            instance.custom_names?.[key]
-        );
-        const normalizedNextValue = normalizeLocalizedStringValue(nextValue);
-        if (areLocalizedStringValuesEqual(previousValue, normalizedNextValue)) {
-            return;
-        }
-
-        this.commitFontPathChange({
-            label: 'Edit instance custom name',
-            path: ['instances', instanceIndex, 'custom_names', key],
-            oldValue:
-                Object.keys(previousValue).length > 0
-                    ? { ...previousValue }
-                    : undefined,
-            newValue:
-                Object.keys(normalizedNextValue).length > 0
-                    ? { ...normalizedNextValue }
-                    : undefined,
-            remove: Object.keys(normalizedNextValue).length === 0,
-            applyLocal: () =>
-                this.applyLocalInstanceCustomNameFieldValue(
-                    instanceIndex,
-                    key,
-                    normalizedNextValue
-                ),
-            markDirtyKey: 'font-info-instance-custom-name'
         });
     }
 
@@ -9316,11 +9064,6 @@ class FontInfoManager {
         });
 
         return allGlyphs;
-    }
-
-    private classContainsGlyph(className: string, glyphName: string): boolean {
-        const allGlyphs = this.getAllGlyphsInClass(className);
-        return allGlyphs.has(glyphName);
     }
 
     private loadClassesList() {

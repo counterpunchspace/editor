@@ -761,8 +761,6 @@ export class GlyphCanvasRenderer {
             return;
         }
 
-        const invScale = this.chromeInvScale();
-
         // Clear glyph bounds for hit testing
         this.glyphCanvas.glyphBounds = [];
 
@@ -3518,8 +3516,6 @@ export class GlyphCanvasRenderer {
         // or if showing interpolated data (non-editable)
         const minZoomForHandles =
             APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_HANDLES;
-        const minZoomForLabels =
-            APP_SETTINGS.OUTLINE_EDITOR.MIN_ZOOM_FOR_ANCHOR_LABELS;
 
         if (
             this.viewportManager.scale >= minZoomForHandles &&
@@ -5919,7 +5915,6 @@ export class GlyphCanvasRenderer {
                         i += 3; // Skip the two control points and endpoint
                     } else {
                         // Single off-curve - shouldn't happen with cubic, just draw line
-                        const startIdx = this.getPathStartIndex(nodes);
                         target.lineTo(next2X, next2Y);
                         i += 2;
                     }
@@ -5975,49 +5970,6 @@ export class GlyphCanvasRenderer {
             segment.points[3].x,
             segment.points[3].y
         );
-    }
-
-    private buildPathWithAddPointPreview(
-        nodes: Babelfont.Node[],
-        closed: boolean,
-        preview: {
-            segmentId: number;
-            segments: Array<{
-                type: 'line' | 'quadratic' | 'cubic';
-                points: Array<{ x: number; y: number }>;
-            }>;
-        },
-        pathTarget?: Path2D
-    ): number {
-        const descriptors = Drawing.getPathSegmentDescriptors({
-            nodes,
-            closed
-        });
-        if (!descriptors.length) {
-            return this.buildPathFromNodes(nodes, closed, pathTarget);
-        }
-
-        const startIdx = this.getPathStartIndex(nodes);
-
-        const target = pathTarget || this.ctx;
-        target.moveTo(descriptors[0].points[0].x, descriptors[0].points[0].y);
-
-        descriptors.forEach((descriptor) => {
-            if (descriptor.segmentId === preview.segmentId) {
-                preview.segments.forEach((segment) => {
-                    this.appendPreviewSegmentToPath(target, segment);
-                });
-                return;
-            }
-
-            this.appendPreviewSegmentToPath(target, descriptor);
-        });
-
-        if (closed) {
-            target.closePath();
-        }
-
-        return startIdx;
     }
 
     private getPathStartIndex(nodes: Babelfont.Node[]): number {
@@ -6147,8 +6099,6 @@ export class GlyphCanvasRenderer {
             return;
         }
 
-        const invScale = this.chromeInvScale();
-
         // Clear glyph bounds for hit testing
         this.glyphCanvas.glyphBounds = [];
 
@@ -6252,7 +6202,6 @@ export class GlyphCanvasRenderer {
         }
 
         const range = this.textRunEditor.getSelectionRange();
-        const invScale = this.chromeInvScale();
         const selectionFill = 'rgba(100, 150, 255, 0.3)';
         const editorView = document.querySelector('#view-editor');
         const isEditorViewFocused =
@@ -6299,7 +6248,6 @@ export class GlyphCanvasRenderer {
             // Check if we're selecting the entire cluster or just part of it
             const isFullySelected =
                 selStart === clusterStart && selEnd === clusterEnd;
-            const isPartiallySelected = !isFullySelected;
 
             // Calculate visual position and width for selected portion
             let highlightX, highlightWidth;
@@ -6315,7 +6263,6 @@ export class GlyphCanvasRenderer {
             } else if (cluster.isRTL) {
                 // RTL: right edge is start, left edge is end
                 const rightEdge = cluster.x + cluster.width;
-                const leftEdge = cluster.x;
 
                 // Only interpolate if this is a multi-character cluster
                 if (clusterEnd - clusterStart > 1) {
@@ -7163,9 +7110,6 @@ export class GlyphCanvasRenderer {
         const invScale = this.chromeInvScale();
         const isDarkTheme =
             document.documentElement.getAttribute('data-theme') !== 'light';
-        const colors = isDarkTheme
-            ? APP_SETTINGS.OUTLINE_EDITOR.COLORS_DARK
-            : APP_SETTINGS.OUTLINE_EDITOR.COLORS_LIGHT;
         const isAutomaticComponentDrawing =
             isAutomaticallyAlignedComponentDrawing(drawingData);
 

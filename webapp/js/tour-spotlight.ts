@@ -12,6 +12,7 @@ import 'tippy.js/dist/tippy.css';
 import { Logger } from './logger';
 import {
     keyboardShortcutHtml,
+    platformUsesCommandKey,
     shortcutSpecFromHandbook
 } from './keyboard-shortcut-display';
 import {
@@ -372,13 +373,9 @@ function isTourViewCollapsed(viewId: string): boolean {
     );
 }
 
-function usesCommandModifier(): boolean {
-    return navigator.platform.toUpperCase().includes('MAC');
-}
-
 function localizeTourModifiers(text: string): string {
-    const command = usesCommandModifier() ? 'Cmd' : 'Ctrl';
-    const option = usesCommandModifier() ? 'Option' : 'Alt';
+    const command = platformUsesCommandKey() ? 'Cmd' : 'Ctrl';
+    const option = platformUsesCommandKey() ? 'Option' : 'Alt';
     return text
         .replaceAll('Cmd/Ctrl', command)
         .replaceAll('Alt/Option', option);

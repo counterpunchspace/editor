@@ -7,7 +7,7 @@
 import type { Instance as TippyInstance } from 'tippy.js';
 import { Logger } from './logger';
 import { attachOutcomePreviewTippy } from './tippy-utils';
-import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
+import { mountModalOverlay } from './ui/confirm-dialog';
 import {
     buildTakeoverPreviewHtml,
     escapeHtml,
@@ -262,11 +262,6 @@ export function openConvertToCounterpunchDialog(): void {
         return;
     }
 
-    const overlay = document.createElement('div');
-    overlay.className = 'info-popup-overlay';
-    overlay.style.display = 'flex';
-    overlay.style.zIndex = '10002';
-
     const saved = loadSavedOptions();
     const rowsHtml = OPTION_ROWS.map((row) => ({
         ...row,
@@ -288,7 +283,10 @@ export function openConvertToCounterpunchDialog(): void {
         )
         .join('');
 
-    overlay.innerHTML = `
+    const tippies: TippyInstance[] = [];
+    const { overlay, close } = mountModalOverlay({
+        zIndex: '10002',
+        innerHTML: `
         <div class="info-popup confirm-dialog">
             <div class="info-popup-header">
                 <h3>Convert to Counterpunch</h3>
@@ -305,12 +303,14 @@ export function openConvertToCounterpunchDialog(): void {
                 </div>
             </div>
         </div>
-    `;
-
-    document.body.appendChild(overlay);
-
-    let escapeBinding: ModalEscapeBinding | null = null;
-    const tippies: TippyInstance[] = [];
+    `,
+        onCleanup: () => {
+            for (const instance of tippies) {
+                instance.destroy();
+            }
+        },
+        onDismiss: () => {}
+    });
 
     const checkbox = (id: OptionId) =>
         overlay.querySelector(
@@ -379,22 +379,9 @@ export function openConvertToCounterpunchDialog(): void {
         }
     }
 
-    function cleanup() {
-        for (const instance of tippies) {
-            instance.destroy();
-        }
-        escapeBinding?.release();
-        escapeBinding = null;
-        overlay.remove();
-    }
-
-    function cancel() {
-        cleanup();
-    }
-
     function convert() {
         const chosen = selected();
-        cleanup();
+        close();
         void runConvertToCounterpunch(chosen);
     }
 
@@ -441,20 +428,6 @@ export function openConvertToCounterpunchDialog(): void {
         refreshConvertEnabled();
     });
 
-    escapeBinding = bindModalEscape(cancel, {
-        isOpen: () => overlay.isConnected
-    });
-
-    overlay.addEventListener('click', (e) => {
-        if (e.target === overlay) {
-            cancel();
-        }
-    });
-
-    overlay
-        .querySelector('.confirm-dialog-close-btn')
-        ?.addEventListener('click', cancel);
-
     overlay.querySelectorAll('[data-action]').forEach((btn) => {
         btn.addEventListener('click', () => {
             const action = (btn as HTMLElement).dataset.action;
@@ -462,7 +435,7 @@ export function openConvertToCounterpunchDialog(): void {
                 convert();
                 return;
             }
-            cancel();
+            close();
         });
     });
 }

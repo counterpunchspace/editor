@@ -11,8 +11,6 @@ import {
     planOutboundParts
 } from './cloud-adapter-outbound-parts';
 import type { PatchSyncEngine } from './patch-sync-engine';
-import type { ChangeLogEntry } from './change-log';
-import { Logger } from './logger';
 import {
     FONT_CORE_DOCUMENT_ID,
     FONT_DEPS_DOCUMENT_ID,
@@ -21,7 +19,6 @@ import {
 import { throwIfAborted, yieldToUi } from './yield-to-ui';
 import {
     collaborationMessageKey,
-    createCollaborationMessageEnvelopesFromChangeLogEntries,
     createLinkedWindowCatchUpEnvelope,
     type CollaborationMessageEnvelope
 } from './collaboration-message';
@@ -41,9 +38,11 @@ import {
     assembleTailTransactionsFromFrames,
     CollabFrameError
 } from './cloud-adapter-frames';
-import { CloudDurableWal } from './cloud-durable-wal';
-
-const console = new Logger('CloudAdapterSupport');
+import {
+    base64ToBytes as base64ToU8,
+    bytesToBase64 as u8ToBase64,
+    type CloudDurableWal
+} from './cloud-durable-wal';
 
 /** The room’s stream broke its own ordering rules (a log id hole, a bad page). */
 export class CloudProtocolError extends Error {
@@ -544,16 +543,7 @@ export async function emitShardIoProgress(
     throwIfAborted(options?.signal);
 }
 
-export function getCloudRequestHeaders(
-    extraHeaders: Record<string, string> = {}
-): Record<string, string> {
-    const headers = { ...extraHeaders };
-    const sessionToken = window.authManager?.getSessionToken?.();
-    if (sessionToken) {
-        headers.Authorization = `Bearer ${sessionToken}`;
-    }
-    return headers;
-}
+export { getCloudRequestHeaders } from './cloud-website-api';
 
 export const HYDRATE_PACK_FETCH_TIMEOUT_MS = 90_000;
 
@@ -1902,22 +1892,7 @@ export function allGlyphsChangedFlag(metadata: object): {
 
 // ── Binary ↔ base64 helpers ──────────────────────────────────────────────────
 
-export function u8ToBase64(u8: Uint8Array): string {
-    let binary = '';
-    for (let i = 0; i < u8.length; i++) {
-        binary += String.fromCharCode(u8[i]);
-    }
-    return btoa(binary);
-}
-
-export function base64ToU8(b64: string): Uint8Array {
-    const binary = atob(b64);
-    const u8 = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-        u8[i] = binary.charCodeAt(i);
-    }
-    return u8;
-}
+export { u8ToBase64, base64ToU8 };
 
 export function getLiveUpdateChunkKey(
     clientId: string | null | undefined,

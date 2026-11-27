@@ -1,5 +1,18 @@
 // Python utility functions
 
+function adjustTracebackLineNumber(line: string, lineOffset: number): string {
+    const lineNumMatch = line.match(/, line (\d+),/);
+    if (!lineNumMatch) {
+        return line;
+    }
+    const originalLineNum = parseInt(lineNumMatch[1], 10);
+    const adjustedLineNum = Math.max(1, originalLineNum - lineOffset);
+    return line.replace(
+        `, line ${originalLineNum},`,
+        `, line ${adjustedLineNum},`
+    );
+}
+
 /**
  * Adjust line numbers in a traceback by subtracting an offset.
  * This is useful when user code is wrapped in boilerplate code.
@@ -32,18 +45,7 @@ window.adjustTracebackLineNumbers = function adjustTracebackLineNumbers(
 
             if (matchesPattern) {
                 // Match and adjust line number: File "<exec>", line 27, in <module>
-                const lineNumMatch = line.match(/, line (\d+),/);
-                if (lineNumMatch) {
-                    const originalLineNum = parseInt(lineNumMatch[1], 10);
-                    const adjustedLineNum = Math.max(
-                        1,
-                        originalLineNum - lineOffset
-                    );
-                    line = line.replace(
-                        `, line ${originalLineNum},`,
-                        `, line ${adjustedLineNum},`
-                    );
-                }
+                line = adjustTracebackLineNumber(line, lineOffset);
             }
         }
 
@@ -133,18 +135,7 @@ window.cleanPythonTraceback = function cleanPythonTraceback(
                     line.includes('"<script>"') ||
                     line.includes('"<string>"'))
             ) {
-                const lineNumMatch = line.match(/, line (\d+),/);
-                if (lineNumMatch) {
-                    const originalLineNum = parseInt(lineNumMatch[1], 10);
-                    const adjustedLineNum = Math.max(
-                        1,
-                        originalLineNum - lineOffset
-                    );
-                    line = line.replace(
-                        `, line ${originalLineNum},`,
-                        `, line ${adjustedLineNum},`
-                    );
-                }
+                line = adjustTracebackLineNumber(line, lineOffset);
             }
         }
 
@@ -218,3 +209,16 @@ window.countCodeLines = function countCodeLines(code: string) {
     if (!code || typeof code !== 'string') return 0;
     return code.split('\n').length;
 };
+
+export function serializeFontCoreWithoutGlyphs(
+    fontData: Record<string, unknown>
+): string {
+    const core: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(fontData)) {
+        if (key === 'glyphs') {
+            continue;
+        }
+        core[key] = value;
+    }
+    return JSON.stringify(core);
+}

@@ -10,6 +10,61 @@ import type {
     CloudShareState
 } from './cloud-plugin-support';
 
+async function requestShareApi<T = Record<string, unknown>>(
+    plugin,
+    pathSuffix: string,
+    options: {
+        assetId?: string;
+        method?: string;
+        body?: unknown;
+        defaultError: string;
+        rawErrorPrefix?: string;
+    }
+): Promise<{ assetId: string; data: T }> {
+    const user = await plugin._ensureCloudUser({
+        allowSignInPrompt: true
+    });
+    if (!user) {
+        throw new Error('Authentication required');
+    }
+
+    const resolvedAssetId = plugin._resolveShareAssetId(options.assetId);
+    const hasBody = options.body !== undefined;
+    const init: RequestInit = {
+        ...(options.method ? { method: options.method } : {}),
+        credentials: 'include',
+        headers: getCloudRequestHeaders(
+            hasBody ? { 'Content-Type': 'application/json' } : undefined
+        ),
+        ...(hasBody ? { body: JSON.stringify(options.body) } : {})
+    };
+    const resp = await fetch(
+        `${plugin._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(resolvedAssetId)}${pathSuffix}`,
+        init
+    );
+
+    if (options.rawErrorPrefix) {
+        if (!resp.ok) {
+            const body = await resp.text().catch(() => '');
+            throw new Error(
+                `${options.rawErrorPrefix}: ${resp.status} ${body}`
+            );
+        }
+        return {
+            assetId: resolvedAssetId,
+            data: (await resp.json()) as T
+        };
+    }
+
+    const data = (await resp.json().catch(() => ({}))) as T & {
+        error?: string;
+    };
+    if (!resp.ok) {
+        throw new Error(data.error || options.defaultError);
+    }
+    return { assetId: resolvedAssetId, data };
+}
+
 export const cloudPluginSharingMethods = {
     _resolveShareAssetId(assetId?: string): string {
         const resolvedAssetId = assetId || this.getCurrentAssetIdForSharing();
@@ -20,30 +75,12 @@ export const cloudPluginSharingMethods = {
     },
 
     async getShareState(assetId?: string): Promise<CloudShareState> {
-        const user = await this._ensureCloudUser({
-            allowSignInPrompt: true
-        });
-        if (!user) {
-            throw new Error('Authentication required');
-        }
-
-        const resolvedAssetId = this._resolveShareAssetId(assetId);
-        const resp = await fetch(
-            `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(resolvedAssetId)}/members`,
-            {
-                credentials: 'include',
-                headers: getCloudRequestHeaders()
-            }
-        );
-
-        if (!resp.ok) {
-            const body = await resp.text().catch(() => '');
-            throw new Error(
-                `Failed to load sharing settings: ${resp.status} ${body}`
-            );
-        }
-
-        const shareState = (await resp.json()) as CloudShareState;
+        const { assetId: resolvedAssetId, data: shareState } =
+            await requestShareApi<CloudShareState>(this, '/members', {
+                assetId,
+                defaultError: 'Failed to load sharing settings',
+                rawErrorPrefix: 'Failed to load sharing settings'
+            });
         this._cacheAssetRole(resolvedAssetId, shareState.asset.role);
         return shareState;
     },
@@ -56,34 +93,15 @@ export const cloudPluginSharingMethods = {
         invitation: CloudAssetInvitation;
         inviteUrl?: string;
     }> {
-        const user = await this._ensureCloudUser({
-            allowSignInPrompt: true
-        });
-        if (!user) {
-            throw new Error('Authentication required');
-        }
-
-        const resolvedAssetId = this._resolveShareAssetId(assetId);
-        const resp = await fetch(
-            `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(resolvedAssetId)}/invitations`,
-            {
-                method: 'POST',
-                credentials: 'include',
-                headers: getCloudRequestHeaders({
-                    'Content-Type': 'application/json'
-                }),
-                body: JSON.stringify({ email, role })
-            }
-        );
-
-        const data = (await resp.json().catch(() => ({}))) as {
-            error?: string;
+        const { data } = await requestShareApi<{
             invitation?: CloudAssetInvitation;
             inviteUrl?: string;
-        };
-        if (!resp.ok) {
-            throw new Error(data.error || 'Failed to create invitation');
-        }
+        }>(this, '/invitations', {
+            assetId,
+            method: 'POST',
+            body: { email, role },
+            defaultError: 'Failed to create invitation'
+        });
 
         if (!data.invitation) {
             throw new Error('Invitation response missing invitation data');
@@ -103,36 +121,15 @@ export const cloudPluginSharingMethods = {
         ownershipTransfer: CloudOwnershipTransfer;
         transferUrl?: string;
     }> {
-        const user = await this._ensureCloudUser({
-            allowSignInPrompt: true
-        });
-        if (!user) {
-            throw new Error('Authentication required');
-        }
-
-        const resolvedAssetId = this._resolveShareAssetId(assetId);
-        const resp = await fetch(
-            `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(resolvedAssetId)}/ownership-transfer`,
-            {
-                method: 'POST',
-                credentials: 'include',
-                headers: getCloudRequestHeaders({
-                    'Content-Type': 'application/json'
-                }),
-                body: JSON.stringify({ email, previousOwnerRole })
-            }
-        );
-
-        const data = (await resp.json().catch(() => ({}))) as {
-            error?: string;
+        const { data } = await requestShareApi<{
             ownershipTransfer?: CloudOwnershipTransfer;
             transferUrl?: string;
-        };
-        if (!resp.ok) {
-            throw new Error(
-                data.error || 'Failed to create ownership transfer'
-            );
-        }
+        }>(this, '/ownership-transfer', {
+            assetId,
+            method: 'POST',
+            body: { email, previousOwnerRole },
+            defaultError: 'Failed to create ownership transfer'
+        });
 
         if (!data.ownershipTransfer) {
             throw new Error(
@@ -147,63 +144,27 @@ export const cloudPluginSharingMethods = {
     },
 
     async cancelOwnershipTransfer(assetId?: string): Promise<void> {
-        const user = await this._ensureCloudUser({
-            allowSignInPrompt: true
+        await requestShareApi(this, '/ownership-transfer', {
+            assetId,
+            method: 'DELETE',
+            body: {},
+            defaultError: 'Failed to cancel ownership transfer'
         });
-        if (!user) {
-            throw new Error('Authentication required');
-        }
-
-        const resolvedAssetId = this._resolveShareAssetId(assetId);
-        const resp = await fetch(
-            `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(resolvedAssetId)}/ownership-transfer`,
-            {
-                method: 'DELETE',
-                credentials: 'include',
-                headers: getCloudRequestHeaders({
-                    'Content-Type': 'application/json'
-                }),
-                body: '{}'
-            }
-        );
-
-        const data = (await resp.json().catch(() => ({}))) as {
-            error?: string;
-        };
-        if (!resp.ok) {
-            throw new Error(
-                data.error || 'Failed to cancel ownership transfer'
-            );
-        }
     },
 
     async revokeInvitation(
         invitationId: string,
         assetId?: string
     ): Promise<void> {
-        const user = await this._ensureCloudUser({
-            allowSignInPrompt: true
-        });
-        if (!user) {
-            throw new Error('Authentication required');
-        }
-
-        const resolvedAssetId = this._resolveShareAssetId(assetId);
-        const resp = await fetch(
-            `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(resolvedAssetId)}/invitations/${encodeURIComponent(invitationId)}`,
+        await requestShareApi(
+            this,
+            `/invitations/${encodeURIComponent(invitationId)}`,
             {
+                assetId,
                 method: 'POST',
-                credentials: 'include',
-                headers: getCloudRequestHeaders()
+                defaultError: 'Failed to revoke invitation'
             }
         );
-
-        const data = (await resp.json().catch(() => ({}))) as {
-            error?: string;
-        };
-        if (!resp.ok) {
-            throw new Error(data.error || 'Failed to revoke invitation');
-        }
     },
 
     async updateMemberRole(
@@ -211,62 +172,23 @@ export const cloudPluginSharingMethods = {
         role: 'editor' | 'viewer',
         assetId?: string
     ): Promise<void> {
-        const user = await this._ensureCloudUser({
-            allowSignInPrompt: true
+        await requestShareApi(this, `/members/${encodeURIComponent(userId)}`, {
+            assetId,
+            method: 'PATCH',
+            body: { role },
+            defaultError: 'Failed to update member role'
         });
-        if (!user) {
-            throw new Error('Authentication required');
-        }
-
-        const resolvedAssetId = this._resolveShareAssetId(assetId);
-        const resp = await fetch(
-            `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(resolvedAssetId)}/members/${encodeURIComponent(userId)}`,
-            {
-                method: 'PATCH',
-                credentials: 'include',
-                headers: getCloudRequestHeaders({
-                    'Content-Type': 'application/json'
-                }),
-                body: JSON.stringify({ role })
-            }
-        );
-
-        const data = (await resp.json().catch(() => ({}))) as {
-            error?: string;
-        };
-        if (!resp.ok) {
-            throw new Error(data.error || 'Failed to update member role');
-        }
     },
 
     async removeMember(userId: string, assetId?: string): Promise<void> {
-        const user = await this._ensureCloudUser({
-            allowSignInPrompt: true
-        });
-        if (!user) {
-            throw new Error('Authentication required');
-        }
-
-        const resolvedAssetId = this._resolveShareAssetId(assetId);
-        const resp = await fetch(
-            `${this._websiteBaseUrl}/api/cloud/assets/${encodeURIComponent(resolvedAssetId)}/members/${encodeURIComponent(userId)}`,
-            {
-                method: 'DELETE',
-                credentials: 'include',
-                headers: getCloudRequestHeaders({
-                    'Content-Type': 'application/json'
-                }),
-                body: '{}'
-            }
-        );
-
-        const data = (await resp.json().catch(() => ({}))) as {
-            error?: string;
+        const { data } = await requestShareApi<{
             accessChange?: { state?: string; warning?: string };
-        };
-        if (!resp.ok) {
-            throw new Error(data.error || 'Failed to remove member');
-        }
+        }>(this, `/members/${encodeURIComponent(userId)}`, {
+            assetId,
+            method: 'DELETE',
+            body: {},
+            defaultError: 'Failed to remove member'
+        });
         if (data.accessChange?.state && data.accessChange.state !== 'applied') {
             console.warn(
                 data.accessChange.warning ||

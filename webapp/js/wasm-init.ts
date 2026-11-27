@@ -8,7 +8,6 @@ console.log('wasm-init.ts module loaded');
 // Global promise that resolves when WASM is initialized
 let wasmInitPromise: Promise<void> | null = null;
 let wasmInitialized = false;
-let autoInitStarted = false;
 
 /**
  * Initialize the babelfont WASM module
@@ -54,84 +53,6 @@ export async function ensureWasmInitialized(): Promise<void> {
  */
 export function isWasmReady(): boolean {
     return wasmInitialized;
-}
-
-function runAutoInitialization(): void {
-    if (autoInitStarted) {
-        return;
-    }
-
-    autoInitStarted = true;
-
-    ensureWasmInitialized().catch((error) => {
-        // Keep startup resilient: explicit feature paths will retry initialization later.
-        console.warn(
-            '[WasmInit]',
-            'Auto-initialization failed (non-fatal, will retry lazily):',
-            error
-        );
-    });
-}
-
-function scheduleAutoInitialization(): void {
-    if (typeof window === 'undefined' || typeof navigator === 'undefined') {
-        console.log(
-            '[WasmInit]',
-            'Skipping browser auto-initialization outside a window context'
-        );
-        return;
-    }
-
-    const isProductionMode =
-        typeof window.isProduction === 'function' && window.isProduction();
-    const hasServiceWorkerApi = 'serviceWorker' in navigator;
-    const hasServiceWorkerController =
-        hasServiceWorkerApi && !!navigator.serviceWorker.controller;
-
-    if (
-        isProductionMode &&
-        hasServiceWorkerApi &&
-        !hasServiceWorkerController
-    ) {
-        console.log(
-            '[WasmInit]',
-            'Deferring WASM auto-initialization until service worker control to avoid startup reload races'
-        );
-
-        const onControllerChange = () => {
-            navigator.serviceWorker.removeEventListener(
-                'controllerchange',
-                onControllerChange
-            );
-            console.log(
-                '[WasmInit]',
-                'Service worker gained control, starting deferred WASM auto-initialization'
-            );
-            runAutoInitialization();
-        };
-
-        navigator.serviceWorker.addEventListener(
-            'controllerchange',
-            onControllerChange
-        );
-
-        // Fallback in case controllerchange does not fire in this session.
-        window.setTimeout(() => {
-            navigator.serviceWorker.removeEventListener(
-                'controllerchange',
-                onControllerChange
-            );
-            console.log(
-                '[WasmInit]',
-                'Service worker control wait timed out, starting WASM auto-initialization fallback'
-            );
-            runAutoInitialization();
-        }, 5000);
-
-        return;
-    }
-
-    runAutoInitialization();
 }
 
 // Lazy initialization only: do NOT auto-initialize the 20 MB babelfont WASM

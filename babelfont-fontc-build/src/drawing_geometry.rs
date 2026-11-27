@@ -71,7 +71,7 @@ pub(crate) struct SplitGeometry {
 /// `String(number)` in JS: the shortest digits that read back as `value`,
 /// in plain notation for exponents from -7 to 20 and in `1.5e+21` notation
 /// outside them. `-0` is `"0"`.
-pub(crate) fn js_number_to_string(value: f64) -> Result<String, String> {
+fn js_number_to_string(value: f64) -> Result<String, String> {
     if !value.is_finite() {
         return Err("Node coordinates must be finite numbers.".to_string());
     }
@@ -109,8 +109,12 @@ pub(crate) fn js_number_to_string(value: f64) -> Result<String, String> {
 }
 
 /// `encodePackedXY`: a node position as `"x y"`.
-pub(crate) fn encode_packed_xy(x: f64, y: f64) -> Result<String, String> {
-    Ok(format!("{} {}", js_number_to_string(x)?, js_number_to_string(y)?))
+fn encode_packed_xy(x: f64, y: f64) -> Result<String, String> {
+    Ok(format!(
+        "{} {}",
+        js_number_to_string(x)?,
+        js_number_to_string(y)?
+    ))
 }
 
 fn is_node_type(value: &str) -> bool {
@@ -213,7 +217,9 @@ pub(crate) fn decode_geometry_topology(raw: &str) -> Result<GeometryTopology, St
 }
 
 fn non_empty_id(value: Option<&JsonValue>) -> Option<&str> {
-    value.and_then(JsonValue::as_str).filter(|id| !id.is_empty())
+    value
+        .and_then(JsonValue::as_str)
+        .filter(|id| !id.is_empty())
 }
 
 /// The ids a written shape list names itself, which no stored id may be
@@ -304,7 +310,9 @@ pub(crate) fn split_shapes_for_ydoc(
                 let node_id = match non_empty_id(node.get("id")) {
                     Some(node_id) => node_id.to_string(),
                     None => take_stored(
-                        stored_nodes.and_then(|(_, n)| n.get(node_index)).map(String::as_str),
+                        stored_nodes
+                            .and_then(|(_, n)| n.get(node_index))
+                            .map(String::as_str),
                         &mut claimed,
                     )
                     .unwrap_or_else(|| new_id()),
@@ -319,7 +327,10 @@ pub(crate) fn split_shapes_for_ydoc(
                         .and_then(JsonValue::as_f64)
                         .ok_or_else(|| "Node coordinates must be finite numbers.".to_string())
                 };
-                positions.push((node_id.clone(), encode_packed_xy(coordinate("x")?, coordinate("y")?)?));
+                positions.push((
+                    node_id.clone(),
+                    encode_packed_xy(coordinate("x")?, coordinate("y")?)?,
+                ));
                 types.push(node_type.to_string());
                 smooth.push(node.get("smooth") == Some(&JsonValue::Bool(true)));
                 node_ids.push(node_id);
@@ -428,14 +439,18 @@ mod tests {
         );
         assert_eq!(
             split.positions,
-            vec![("a".to_string(), "1 2.5".to_string()), ("b".to_string(), "3 4".to_string())]
+            vec![
+                ("a".to_string(), "1 2.5".to_string()),
+                ("b".to_string(), "3 4".to_string())
+            ]
         );
         assert_eq!(JsonValue::Object(split.shape_data[0].1.clone()), json!({}));
         assert_eq!(
             JsonValue::Object(split.shape_data[1].1.clone()),
             json!({"reference": "A", "transform": {"translation": [0, 0]}})
         );
-        let decoded = decode_geometry_topology(&encode_geometry_topology(&split.topology).unwrap()).unwrap();
+        let decoded =
+            decode_geometry_topology(&encode_geometry_topology(&split.topology).unwrap()).unwrap();
         assert_eq!(decoded, split.topology);
     }
 

@@ -4,6 +4,7 @@
  */
 
 import { Logger } from './logger';
+import { getFontStations, getStationDisplayName } from './tour-utils';
 
 const console = new Logger('Tour');
 
@@ -232,22 +233,6 @@ function boundsOfPoints(points: FontPoint[]): FontRect {
     };
 }
 
-function getStationDisplayName(station: {
-    name?: string | { dflt?: string; en?: string };
-}): string {
-    const name = station.name;
-    if (typeof name === 'string') {
-        return name;
-    }
-    if (name?.dflt) {
-        return name.dflt;
-    }
-    if (name?.en) {
-        return name.en;
-    }
-    return '';
-}
-
 type PathNodeRecord = {
     x?: number;
     y?: number;
@@ -386,15 +371,6 @@ function getDrawingStationId(station: unknown): string | null {
         return record.AssociatedWithMaster;
     }
     return null;
-}
-
-function getFontStations(): Array<{
-    id?: string;
-    name?: string | { dflt?: string; en?: string };
-}> {
-    const font =
-        window.currentFontModel || window.fontManager?.currentFont?.fontModel;
-    return font?.stations || [];
 }
 
 function isExtraBoldDrawing(drawing: {

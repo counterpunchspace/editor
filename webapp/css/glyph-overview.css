@@ -269,10 +269,6 @@
     );
 }
 
-.glyph-tile-unhydrated .glyph-tile-canvas {
-    visibility: hidden;
-}
-
 .glyph-tile-hidden-support {
     background-color: color-mix(
         in srgb,
@@ -313,10 +309,6 @@
             var(--glyph-tile-selected-active)
         )
     );
-}
-
-.glyph-tile-hidden-support .glyph-tile-canvas {
-    opacity: 0.5;
 }
 
 /* Legacy canvas inside tile (kept for compatibility) */
@@ -737,7 +729,9 @@
     margin-top: 16px;
 }
 
-.glyph-filter-refresh-btn {
+.glyph-filter-refresh-btn,
+.glyph-filter-new-btn,
+.glyph-filter-new-folder-btn {
     background: none;
     border: none;
     cursor: pointer;
@@ -750,12 +744,16 @@
     transition: background-color 0.1s ease;
 }
 
-.glyph-filter-refresh-btn:hover {
+.glyph-filter-refresh-btn:hover,
+.glyph-filter-new-btn:hover,
+.glyph-filter-new-folder-btn:hover {
     background-color: var(--background-hover);
     color: var(--text-primary);
 }
 
-.glyph-filter-refresh-btn .material-symbols-outlined {
+.glyph-filter-refresh-btn .material-symbols-outlined,
+.glyph-filter-new-btn .material-symbols-outlined,
+.glyph-filter-new-folder-btn .material-symbols-outlined {
     font-size: 16px;
 }
 
@@ -772,7 +770,6 @@
     }
 }
 
-.glyph-filter-no-access,
 .glyph-filter-empty {
     font-size: 11px;
     color: var(--text-tertiary);
@@ -784,32 +781,6 @@
 .glyph-filter-header-buttons {
     display: flex;
     gap: 4px;
-}
-
-/* New filter button */
-.glyph-filter-new-btn,
-.glyph-filter-new-folder-btn {
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 2px;
-    color: var(--text-secondary);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 4px;
-    transition: background-color 0.1s ease;
-}
-
-.glyph-filter-new-btn:hover,
-.glyph-filter-new-folder-btn:hover {
-    background-color: var(--background-hover);
-    color: var(--text-primary);
-}
-
-.glyph-filter-new-btn .material-symbols-outlined,
-.glyph-filter-new-folder-btn .material-symbols-outlined {
-    font-size: 16px;
 }
 
 /* Moving user filters between folders */
@@ -840,13 +811,6 @@
     outline: none;
     font-family: inherit;
     width: 100%;
-}
-
-/* Fix error button in error overlay */
-.glyph-overview-fix-error-btn {
-    margin-top: 16px;
-    padding: 8px 16px;
-    font-size: 13px;
 }
 
 /* Overview property panel (mirrors editor glyph-property-panel) */

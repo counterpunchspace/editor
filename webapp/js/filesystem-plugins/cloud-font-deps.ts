@@ -243,11 +243,6 @@ export function catalogNameIndexFromEntries(
     return catalogNameIndexCache;
 }
 
-export function resetCatalogNameIndexCacheForTests(): void {
-    catalogNameIndexCacheKey = '';
-    catalogNameIndexCache = null;
-}
-
 export function buildFontDepsIndex(
     fontJson: Record<string, unknown>
 ): FontDepsIndex {
@@ -527,39 +522,6 @@ export function closeComponentNamesFromFontJson(options: {
         .filter((name) => !seedNameSet.has(name));
 }
 
-export function expandSparsePlanWithLoadedComponents(options: {
-    plan: SparseHydrationPlan;
-    glyphs: Array<Record<string, unknown>>;
-    catalog: Array<{ glyphId: string; name: string }>;
-    catalogIds: string[];
-    loadedIds: Iterable<string>;
-}): SparseHydrationPlan {
-    const catalogIdSet = new Set(options.catalogIds);
-    const loaded = new Set(options.loadedIds);
-    const workingSet = new Set(options.plan.workingIds);
-    const hiddenSet = new Set(options.plan.hiddenIds);
-    const componentIds = closeForwardComponentIds({
-        glyphs: options.glyphs,
-        catalog: options.catalog,
-        seedIds: options.plan.workingIds
-    }).filter((id) => catalogIdSet.has(id));
-    for (const id of componentIds) {
-        if (hiddenSet.has(id)) {
-            continue;
-        }
-        workingSet.add(id);
-    }
-    const workingIds = [...workingSet];
-    const hiddenIds = [...hiddenSet].filter((id) => !workingSet.has(id));
-    const loadIds = [...new Set([...workingIds, ...hiddenIds])];
-    return {
-        workingIds,
-        hiddenIds,
-        loadIds,
-        missingIds: loadIds.filter((id) => !loaded.has(id))
-    };
-}
-
 export function mergeFontDepEdges(
     base: Record<string, Record<string, FontDepEdgeKind>>,
     extra: Record<string, Record<string, FontDepEdgeKind>>
@@ -583,19 +545,6 @@ function isLikelyMarkGlyphName(name: string): boolean {
     return (
         /(?:^|[._-])(?:comb|mark)(?:$|[._-])/i.test(name) || /comb$/i.test(name)
     );
-}
-
-function componentTargetIds(
-    edges: Record<string, Record<string, FontDepEdgeKind>>,
-    sourceId: string
-): string[] {
-    const targets = edges[sourceId];
-    if (!targets) {
-        return [];
-    }
-    return Object.entries(targets)
-        .filter(([, kind]) => kind === 'component' || kind === 'both')
-        .map(([targetId]) => targetId);
 }
 
 type HydrationCatalogEntry = {
@@ -1678,25 +1627,6 @@ export function seedGlyphIdsFromText(
         }
     }
     return ids;
-}
-
-function codepointsFromText(text: string): number[] {
-    const seen = new Set<number>();
-    const out: number[] = [];
-    const pushText = (value: string) => {
-        for (const character of value) {
-            const codepoint = character.codePointAt(0);
-            if (codepoint === undefined || seen.has(codepoint)) {
-                continue;
-            }
-            seen.add(codepoint);
-            out.push(codepoint);
-        }
-    };
-    pushText(text);
-    pushText(text.normalize('NFC'));
-    pushText(text.normalize('NFD'));
-    return out;
 }
 
 export function resolveHydrationSeeds(options: {

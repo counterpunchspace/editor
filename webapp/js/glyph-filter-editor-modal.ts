@@ -7,6 +7,7 @@ import tippy, { type Instance as TippyInstance } from 'tippy.js';
 import { withCampaignTags } from './campaign-tags';
 import { Logger } from './logger';
 import { getTheme } from './tippy-utils';
+import { escapeHtml } from './ui/escape-html';
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 import { showProceedDialog } from './ui/confirm-dialog';
 import { AssistantChatView, formatPythonLineDiff } from './assistant/chat-view';
@@ -172,14 +173,6 @@ function assistantAvailable(): boolean {
         auth.isAuthenticated() &&
         auth.subscription?.canUseAssistant === true
     );
-}
-
-function escapeHtml(value: string): string {
-    return value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
 }
 
 function icon(name: string): string {

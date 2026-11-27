@@ -1,5 +1,4 @@
 import { get_font_axes } from '../opentype-table-reader';
-import Babelfont from '../babelfont';
 import { Logger } from '../logger';
 import {
     clampToAxisRange,

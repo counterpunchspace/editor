@@ -123,10 +123,7 @@ import {
     getTheme,
     setupMenuKeyboardNav
 } from './tippy-utils';
-import {
-    applyLiveSidebearingVisualSync,
-    syncModelSidebearingEditToCanvas
-} from './sidebearing-utils';
+import { syncModelSidebearingEditToCanvas } from './sidebearing-utils';
 import { getUndoRedoContext } from './undo-redo-context';
 import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
 import { getCommittedChangeRefreshPromise } from './change-bridge-init';
@@ -201,8 +198,6 @@ function abbreviateGlyphNameMiddle(
     const suffixLength = visibleLength - prefixLength;
     return `${glyphName.slice(0, prefixLength)}...${glyphName.slice(-suffixLength)}`;
 }
-
-const GLYPHS_COMPONENT_ALIGNMENT_KEY = 'com.schriftgestalt.Glyphs.alignment';
 
 function getSharedNumericValue(
     values: number[],
@@ -8100,79 +8095,6 @@ class GlyphCanvas {
         );
     }
 
-    private collectLiveGlyphAdvancesForCurrentEdit(): Record<string, number> {
-        if (!this.outlineEditor.active) {
-            return {};
-        }
-
-        const currentDrawing = this.getCurrentDrawingModel();
-        if (!currentDrawing || !Number.isFinite(currentDrawing.width)) {
-            return {};
-        }
-
-        const parsedStack = this.outlineEditor.parseGlyphStack();
-        const glyphName =
-            parsedStack[parsedStack.length - 1]?.glyphName ??
-            this.getCurrentGlyphName();
-        const sourceGlyphName =
-            this.outlineEditor.getAuthoringGlyphName(glyphName);
-        if (!sourceGlyphName || sourceGlyphName === 'undefined') {
-            return {};
-        }
-
-        if (fontManager.lastEditType !== 'anchor') {
-            return { [sourceGlyphName]: currentDrawing.width };
-        }
-
-        const currentDrawingId = this.outlineEditor.selectedDrawingId;
-        const stationId =
-            typeof currentDrawing.station === 'object' && currentDrawing.station
-                ? currentDrawing.station.master || null
-                : null;
-        const fontModel = fontManager.currentFont?.fontModel;
-        if (!fontModel) {
-            return { [sourceGlyphName]: currentDrawing.width };
-        }
-
-        const glyphNames =
-            fontManager.getAutomaticCompositionDragScopeGlyphNames(
-                sourceGlyphName,
-                fontModel
-            );
-
-        const glyphAdvances: Record<string, number> = {};
-        for (const candidateGlyphName of glyphNames) {
-            const candidateSourceGlyphName =
-                this.outlineEditor.getAuthoringGlyphName(candidateGlyphName);
-            if (
-                !candidateSourceGlyphName ||
-                candidateSourceGlyphName in glyphAdvances
-            ) {
-                continue;
-            }
-
-            const glyph = fontModel.resolveGlyphView(candidateGlyphName);
-            const drawing =
-                (currentDrawingId
-                    ? glyph?.findDrawingById(currentDrawingId)
-                    : undefined) ||
-                (stationId
-                    ? glyph?.findDrawingByStationId(stationId)
-                    : undefined);
-            if (!drawing || !Number.isFinite(drawing.width)) {
-                continue;
-            }
-
-            glyphAdvances[candidateSourceGlyphName] = drawing.width;
-        }
-
-        if (!(sourceGlyphName in glyphAdvances)) {
-            glyphAdvances[sourceGlyphName] = currentDrawing.width;
-        }
-
-        return glyphAdvances;
-    }
-
     reapplyActiveEditedGlyphAdvanceAfterShape(): boolean {
         // A completed shape is authoritative for kerning, features, variation,
         // and anchor positioning. Live width deltas belong to the pre-shape
@@ -9925,18 +9847,6 @@ class GlyphCanvas {
 
         this.pendingTextModeKerningCursorAnchor = true;
         this.scheduleTextModeKerningCompile('kerning-property-panel');
-    }
-
-    private updateTextModeKerningMirror(
-        input: HTMLInputElement,
-        mirror: HTMLElement
-    ): void {
-        const nextValue = input.value.trim() || input.placeholder || '0';
-        mirror.textContent = nextValue;
-        mirror.classList.toggle(
-            'glyph-kerning-value-mirror-empty',
-            !input.value.trim()
-        );
     }
 
     /**

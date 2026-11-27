@@ -31,7 +31,7 @@ fn clock_gap(document_id: &str, detail: String) -> String {
 }
 
 /// Refuse to touch a document an earlier apply left damaged.
-pub(crate) fn assert_document_not_broken(document_id: &str) -> Result<(), String> {
+fn assert_document_not_broken(document_id: &str) -> Result<(), String> {
     match BROKEN_DOCUMENTS
         .lock()
         .unwrap()
@@ -65,10 +65,7 @@ pub(crate) fn clear_all_broken_documents() {
 }
 
 /// Err when the document holds structs or deletions waiting for clocks it lacks.
-pub(crate) fn assert_no_pending_state<T: ReadTxn>(
-    txn: &T,
-    document_id: &str,
-) -> Result<(), String> {
+fn assert_no_pending_state<T: ReadTxn>(txn: &T, document_id: &str) -> Result<(), String> {
     let store = txn.store();
     if let Some(pending) = store.pending_update() {
         let missing: Vec<String> = pending
@@ -94,7 +91,7 @@ pub(crate) fn assert_no_pending_state<T: ReadTxn>(
 /// every client's structs start at or below the document's clock, there is
 /// no skip, every origin, right origin and parent is known or inside the
 /// update, and every deleted range is known or inside the update.
-pub(crate) fn assert_update_integrates<T: ReadTxn>(
+fn assert_update_integrates<T: ReadTxn>(
     txn: &T,
     update: &[u8],
     document_id: &str,

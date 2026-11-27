@@ -267,36 +267,33 @@ export class ViewportManager {
         targetPanY: number,
         renderCallback: Function
     ) {
-        // Set up animation state
-        const startPanX = this.panX;
-        const startPanY = this.panY;
-        const frames = 10;
-        let currentFrame = 0;
+        this.animateZoomAndPan(
+            this.scale,
+            targetPanX,
+            targetPanY,
+            renderCallback
+        );
+    }
 
-        const animate = () => {
-            currentFrame++;
-            const progress = Math.min(currentFrame / frames, 1.0);
-
-            // Ease-out cubic for smooth deceleration
-            const easedProgress = 1 - Math.pow(1 - progress, 3);
-
-            // Interpolate pan values
-            this.panX = startPanX + (targetPanX - startPanX) * easedProgress;
-            this.panY = startPanY + (targetPanY - startPanY) * easedProgress;
-
-            renderCallback();
-
-            if (progress < 1.0) {
-                requestAnimationFrame(animate);
-            } else {
-                // Ensure we end exactly at target
-                this.panX = targetPanX;
-                this.panY = targetPanY;
-                renderCallback();
-            }
+    private computeGlyphFontSpaceBounds(
+        bounds: RectWithWidthHeight,
+        glyphPosition: { xPosition: number; xOffset: number; yOffset: number }
+    ) {
+        const minX =
+            glyphPosition.xPosition + glyphPosition.xOffset + bounds.minX;
+        const maxX =
+            glyphPosition.xPosition + glyphPosition.xOffset + bounds.maxX;
+        const minY = glyphPosition.yOffset + bounds.minY;
+        const maxY = glyphPosition.yOffset + bounds.maxY;
+        return {
+            minX,
+            maxX,
+            minY,
+            maxY,
+            centerX: (minX + maxX) / 2,
+            centerY: (minY + maxY) / 2,
+            height: maxY - minY
         };
-
-        animate();
     }
 
     /**
@@ -320,17 +317,8 @@ export class ViewportManager {
             margin = APP_SETTINGS.OUTLINE_EDITOR.CMD_ZERO_FRAME_MARGIN;
         }
 
-        // Calculate the full bounding box in font space (same approach as panToGlyph)
-        const fontSpaceMinX =
-            glyphPosition.xPosition + glyphPosition.xOffset + bounds.minX;
-        const fontSpaceMaxX =
-            glyphPosition.xPosition + glyphPosition.xOffset + bounds.maxX;
-        const fontSpaceMinY = glyphPosition.yOffset + bounds.minY;
-        const fontSpaceMaxY = glyphPosition.yOffset + bounds.maxY;
-
-        // Calculate center from font space bounds
-        const fontSpaceCenterX = (fontSpaceMinX + fontSpaceMaxX) / 2;
-        const fontSpaceCenterY = (fontSpaceMinY + fontSpaceMaxY) / 2;
+        const { centerX: fontSpaceCenterX, centerY: fontSpaceCenterY } =
+            this.computeGlyphFontSpaceBounds(bounds, glyphPosition);
 
         // Calculate the scale needed to fit the bounding box with margin
         const scaleX = (canvasRect.width - margin * 2) / bounds.width;
@@ -388,16 +376,14 @@ export class ViewportManager {
             bounds
         );
 
-        // Calculate the full bounding box in font space
-        const fontSpaceMinX =
-            glyphPosition.xPosition + glyphPosition.xOffset + bounds.minX;
-        const fontSpaceMaxX =
-            glyphPosition.xPosition + glyphPosition.xOffset + bounds.maxX;
-        const fontSpaceMinY = glyphPosition.yOffset + bounds.minY;
-        const fontSpaceMaxY = glyphPosition.yOffset + bounds.maxY;
-
-        const glyphHeight = fontSpaceMaxY - fontSpaceMinY;
-        const glyphCenterY = (fontSpaceMinY + fontSpaceMaxY) / 2;
+        const {
+            minX: fontSpaceMinX,
+            maxX: fontSpaceMaxX,
+            minY: fontSpaceMinY,
+            maxY: fontSpaceMaxY,
+            height: glyphHeight,
+            centerY: glyphCenterY
+        } = this.computeGlyphFontSpaceBounds(bounds, glyphPosition);
 
         const currentScale = this.scale;
         const availableWidth = canvasRect.width - margin * 2;

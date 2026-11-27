@@ -535,18 +535,6 @@ export class TextRunEditor {
         this.call('textchanged');
     }
 
-    setTextBufferForNavigation(text: string) {
-        this.compositionSelectionHold = null;
-        this.textBuffer = text || '';
-        this.textBufferWriteGeneration += 1;
-        markUserTextBufferWritten();
-        this.syncTextBufferToStateManager();
-
-        // Shape immediately for visual update but do not persist to font/localStorage
-        // and do not trigger textchanged (which can cascade into full compile dirtying).
-        this.shapeText();
-    }
-
     /**
      * Remember the active glyph so the next reshape can keep it selected
      * after a composition conversion changes cluster lengths.
@@ -1274,42 +1262,6 @@ export class TextRunEditor {
         this.call('render');
     }
 
-    moveToStartWithSelection() {
-        if (!this.hasSelection()) {
-            this.selectionStart = this.cursorPosition;
-        }
-        this.cursorPosition = 0;
-        this.selectionEnd = this.cursorPosition;
-        const range = this.getSelectionRange();
-        if (range.start !== range.end) {
-            console.log(
-                'Selection:',
-                `"${this.textBuffer.slice(range.start, range.end)}"`,
-                `[${range.start}-${range.end}]`
-            );
-        }
-        this.updateCursorVisualPosition();
-        this.call('cursormoved');
-    }
-
-    moveToEndWithSelection() {
-        if (!this.hasSelection()) {
-            this.selectionStart = this.cursorPosition;
-        }
-        this.cursorPosition = this.textBuffer.length;
-        this.selectionEnd = this.cursorPosition;
-        const range = this.getSelectionRange();
-        if (range.start !== range.end) {
-            console.log(
-                'Selection:',
-                `"${this.textBuffer.slice(range.start, range.end)}"`,
-                `[${range.start}-${range.end}]`
-            );
-        }
-        this.updateCursorVisualPosition();
-        this.call('cursormoved');
-    }
-
     extendSelectionTo(position: number) {
         const clamped = Math.max(0, Math.min(position, this.textBuffer.length));
         if (!this.hasSelection() && this.selectionStart === null) {
@@ -1738,22 +1690,6 @@ export class TextRunEditor {
         }
 
         this.call('cursormoved', cursorMoveReason);
-    }
-
-    findClusterAt(logicalPos: number) {
-        // Find the cluster (glyph + its character range) at a logical position
-        if (!this.clusterMap || this.clusterMap.length === 0) {
-            return null;
-        }
-
-        // Find cluster that contains this logical position
-        for (const cluster of this.clusterMap) {
-            if (logicalPos >= cluster.start && logicalPos < cluster.end) {
-                return cluster;
-            }
-        }
-
-        return null;
     }
 
     buildClusterMap() {
@@ -3044,36 +2980,6 @@ export class TextRunEditor {
         this.glyphNameBuffer = names;
     }
 
-    getGlyphNameForGid(gid: number): string {
-        if (!Number.isFinite(gid)) {
-            return '';
-        }
-
-        const shapingFontBlob = this.getActiveShapingFontBlob();
-        if (shapingFontBlob) {
-            try {
-                const resolvedName = get_glyph_name(shapingFontBlob, gid);
-                if (resolvedName) {
-                    return resolvedName;
-                }
-            } catch (error) {
-                console.warn(
-                    '[TextRun]',
-                    `Failed to resolve glyph name for gid ${gid}:`,
-                    error
-                );
-            }
-        }
-
-        for (const [glyphName, mappedGid] of this.editingFontNameToGid) {
-            if (mappedGid === gid) {
-                return glyphName;
-            }
-        }
-
-        return '';
-    }
-
     /**
      * Rebuild the name→GID map from the current editing font bytes.
      * Called when the editing font is reloaded.
@@ -3333,17 +3239,6 @@ export class TextRunEditor {
         // Preserve boundaries when a previously valid EOL token gets text appended.
         // This keeps the token stable and treats appended text as regular text.
         return nextChar !== '/';
-    }
-
-    findExplicitGlyphTokenStartingAt(
-        position: number
-    ): ExplicitGlyphToken | null {
-        for (const token of this.explicitGlyphTokens) {
-            if (token.start === position) {
-                return token;
-            }
-        }
-        return null;
     }
 
     findExplicitGlyphTokenForBackspace(

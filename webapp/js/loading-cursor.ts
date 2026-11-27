@@ -51,19 +51,23 @@ function persistPointerPosition(): void {
     }
 }
 
-function getSpinnerPosition(): { x: number; y: number } {
+export function getClampedPointerPosition(
+    pointerX: number | null,
+    pointerY: number | null,
+    offsetPx: number
+): { x: number; y: number } {
     if (!canUseLoadingCursorDom) {
         return { x: 0, y: 0 };
     }
 
     const fallbackX = Math.round(window.innerWidth / 2);
     const fallbackY = Math.round(window.innerHeight / 2);
-    const x = lastPointerX ?? fallbackX;
-    const y = lastPointerY ?? fallbackY;
+    const x = pointerX ?? fallbackX;
+    const y = pointerY ?? fallbackY;
 
     return {
-        x: Math.max(0, Math.min(window.innerWidth - 1, x + SPINNER_OFFSET_PX)),
-        y: Math.max(0, Math.min(window.innerHeight - 1, y + SPINNER_OFFSET_PX))
+        x: Math.max(0, Math.min(window.innerWidth - 1, x + offsetPx)),
+        y: Math.max(0, Math.min(window.innerHeight - 1, y + offsetPx))
     };
 }
 
@@ -72,7 +76,11 @@ function updateSpinnerPosition(): void {
         return;
     }
 
-    const { x, y } = getSpinnerPosition();
+    const { x, y } = getClampedPointerPosition(
+        lastPointerX,
+        lastPointerY,
+        SPINNER_OFFSET_PX
+    );
     loadingCursorSpinner.style.left = `${x}px`;
     loadingCursorSpinner.style.top = `${y}px`;
 }

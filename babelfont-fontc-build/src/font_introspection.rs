@@ -474,19 +474,39 @@ fn variation_axis_children(
     ])
 }
 
+fn paginate_glyph_children(
+    font: &FontRef<'_>,
+    limit: usize,
+    path: &str,
+    mut build_entry: impl FnMut(u16) -> Result<FontChildEntry, InspectionError>,
+) -> Result<FontChildrenResult, InspectionError> {
+    let max_glyphs = font.maxp().map_err(font_error)?.num_glyphs() as usize;
+    let count = max_glyphs.min(limit + 1);
+    let mut children = Vec::with_capacity(count);
+    for gid in 0..count {
+        children.push(build_entry(gid as u16)?);
+    }
+    let truncated = children.len() > limit;
+    if truncated {
+        children.truncate(limit);
+    }
+    Ok(FontChildrenResult {
+        path: path.to_owned(),
+        children,
+        truncated,
+        note: None,
+    })
+}
+
 fn list_horizontal_metrics(
     font: &FontRef<'_>,
     limit: usize,
 ) -> Result<FontChildrenResult, InspectionError> {
-    let max_glyphs = font.maxp().map_err(font_error)?.num_glyphs() as usize;
-    let count = max_glyphs.min(limit + 1);
-    let mut children = Vec::new();
-    for gid in 0..count {
-        let value =
-            resolve_horizontal_metric(font, gid as u16, HorizontalMetricField::AdvanceWidth)?;
+    paginate_glyph_children(font, limit, "/tables/hmtx/metrics", |gid| {
+        let value = resolve_horizontal_metric(font, gid, HorizontalMetricField::AdvanceWidth)?;
         let side_bearing =
-            resolve_horizontal_metric(font, gid as u16, HorizontalMetricField::SideBearing)?;
-        children.push(FontChildEntry {
+            resolve_horizontal_metric(font, gid, HorizontalMetricField::SideBearing)?;
+        Ok(FontChildEntry {
             path: format!("/tables/hmtx/metrics/gid={gid}"),
             label: format!("gid={gid}"),
             kind: "horizontalMetric".to_owned(),
@@ -494,19 +514,7 @@ fn list_horizontal_metrics(
                 "advanceWidth": value,
                 "sideBearing": side_bearing,
             }),
-        });
-    }
-
-    let truncated = children.len() > limit;
-    if truncated {
-        children.truncate(limit);
-    }
-
-    Ok(FontChildrenResult {
-        path: "/tables/hmtx/metrics".to_owned(),
-        children,
-        truncated,
-        note: None,
+        })
     })
 }
 
@@ -546,30 +554,15 @@ fn list_glyph_children(
     font: &FontRef<'_>,
     limit: usize,
 ) -> Result<FontChildrenResult, InspectionError> {
-    let max_glyphs = font.maxp().map_err(font_error)?.num_glyphs() as usize;
-    let count = max_glyphs.min(limit + 1);
-    let mut children = Vec::new();
-    for gid in 0..count {
-        children.push(FontChildEntry {
+    paginate_glyph_children(font, limit, "/tables/glyf", |gid| {
+        Ok(FontChildEntry {
             path: format!("/tables/glyf/gid={gid}"),
             label: format!("gid={gid}"),
             kind: "glyph".to_owned(),
             value: json!({
                 "outlinePath": format!("/tables/glyf/gid={gid}/outline")
             }),
-        });
-    }
-
-    let truncated = children.len() > limit;
-    if truncated {
-        children.truncate(limit);
-    }
-
-    Ok(FontChildrenResult {
-        path: "/tables/glyf".to_owned(),
-        children,
-        truncated,
-        note: None,
+        })
     })
 }
 

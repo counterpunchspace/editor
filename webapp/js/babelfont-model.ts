@@ -17,7 +17,6 @@ import {
 } from './sparse-rename';
 import type { Babelfont } from './babelfont';
 import type { RustBatchResult } from './font-manager';
-import { setYPath } from './change-bridge-ydoc';
 import {
     describeDrawingStationViolation,
     RestingDrawingWriteError,
@@ -52,7 +51,10 @@ import type {
 import { applyGlyphRenameUiContext } from './rename-glyphs-ui-context';
 import { assertGlyphRenamePreflight } from './rename-glyphs-preflight';
 import { applyGlyphDeleteUiContext } from './delete-glyphs-ui-context';
-import { topologyEqualsForNodes } from './drawing-geometry-ydoc';
+import {
+    generateStableId,
+    topologyEqualsForNodes
+} from './drawing-geometry-ydoc';
 import {
     countDeletedGlyphTokensInFeatureCode,
     collectFeatureLinesReferencingDeletedGlyphs,
@@ -73,19 +75,7 @@ import { recordCompileBenchRecomposition } from './compile-bench-probe';
 
 export type { GlyphDeletePreflight };
 
-/**
- * Generate a stable unique identifier for CRDT addressing.
- * Uses crypto.randomUUID when available, falls back to a timestamp+random construction.
- */
-export function generateStableId(): string {
-    if (
-        typeof crypto !== 'undefined' &&
-        typeof crypto.randomUUID === 'function'
-    ) {
-        return crypto.randomUUID();
-    }
-    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
+export { generateStableId };
 
 /** Ensure a node has an id, generating one if absent. Returns the id. */
 function ensureNodeId(node: { id?: string }): string {
@@ -188,14 +178,16 @@ import {
     affineToDecomposedAffine,
     calculateGlyphPathBounds,
     calculateGlyphShapeBounds,
+    clampUnitInterval,
     createIdentityAffine,
     createIdentityDecomposedAffine,
     decomposedAffineToAffine,
     flattenShapesToPaths,
+    lerpPoint,
     normalizeAffineTransform,
+    transformPointWithAffine,
     type ComponentShapeResolver
 } from './glyph-path-geometry';
-import { DrawingDataNormalizer } from './drawing-data-normalizer';
 import { extendAxesForDesignspaceLocation } from './locations';
 import type { DesignspaceLocation, UserspaceLocation } from './locations';
 import { Bezier } from 'bezier-js';
@@ -348,10 +340,6 @@ const GLYPHS_GLYPH_METRIC_LEFT_KEY = 'metric_left';
 const GLYPHS_GLYPH_METRIC_RIGHT_KEY = 'metric_right';
 const GLYPHS_LAYER_METRIC_LEFT_KEY = 'com.schriftgestalt.Glyphs.metricLeft';
 const GLYPHS_LAYER_METRIC_RIGHT_KEY = 'com.schriftgestalt.Glyphs.metricRight';
-
-function cloneInterpolationValue<T>(value: T): T {
-    return JSON.parse(JSON.stringify(value)) as T;
-}
 const GLYPHS_COMPONENT_ALIGNMENT_KEY = 'com.schriftgestalt.Glyphs.alignment';
 const GLYPHS_COMPONENT_ANCHOR_KEY = 'com.schriftgestalt.Glyphs.componentAnchor';
 
@@ -571,28 +559,6 @@ function isAutomaticStandaloneComponentCategory(
 
 function isChainedBaseEntryAnchor(anchorName: string | undefined): boolean {
     return anchorName === CHAINED_BASE_ENTRY_ANCHOR;
-}
-
-function isChainedBaseExitAnchor(anchorName: string | undefined): boolean {
-    return anchorName === CHAINED_BASE_EXIT_ANCHOR;
-}
-
-function transformPointWithAffine(
-    transform: number[],
-    x: number,
-    y: number
-): { x: number; y: number } {
-    const [a, b, c, d, tx, ty] = transform;
-    return {
-        x: a * x + c * y + tx,
-        y: b * x + d * y + ty
-    };
-}
-
-function getAutomaticAdvanceDeltaX(transform: number[], width: number): number {
-    const start = transformPointWithAffine(transform, 0, 0);
-    const end = transformPointWithAffine(transform, width, 0);
-    return Math.abs(end.x - start.x);
 }
 
 function getAutomaticComponentTransform(
@@ -874,14 +840,6 @@ function getCurrentWindowFontModel(): Font | null {
     return currentFontModel instanceof Font ? currentFontModel : null;
 }
 
-function clampUnitInterval(value: number): number {
-    if (!Number.isFinite(value)) {
-        return 0;
-    }
-
-    return Math.max(0, Math.min(1, value));
-}
-
 function cloneSegmentPoint(point: SegmentPoint): SegmentPoint {
     return { x: point.x, y: point.y };
 }
@@ -923,17 +881,6 @@ function midpoint(left: SegmentPoint, right: SegmentPoint): SegmentPoint {
     return {
         x: (left.x + right.x) / 2,
         y: (left.y + right.y) / 2
-    };
-}
-
-function lerpPoint(
-    start: SegmentPoint,
-    end: SegmentPoint,
-    t: number
-): SegmentPoint {
-    return {
-        x: start.x + (end.x - start.x) * t,
-        y: start.y + (end.y - start.y) * t
     };
 }
 
@@ -5043,25 +4990,6 @@ function getReadOnlyCollectionValue<T>(value: T, errorMessage: string): T {
 
     readOnlyCollectionProxyCache.set(value as object, proxy);
     return proxy as T;
-}
-
-function syncNormalizedModelValue(
-    modelObj: ModelBase,
-    prop: string,
-    value: unknown
-): void {
-    const bridge = getPatchSyncEngine();
-    if (!bridge) {
-        return;
-    }
-
-    bridge.yDoc.transact(() => {
-        setYPath(
-            bridge.fontMap,
-            [...modelObj.getPath(), prop],
-            cloneForHistory(normalizeBridgeRecordedValue(prop, value))
-        );
-    });
 }
 
 function normalizeBridgeRecordedValue(_prop: string, value: unknown): unknown {
@@ -10221,28 +10149,6 @@ export class Drawing extends ArrayElementBase {
         return shape?.isPath() ? shapeIndex : null;
     }
 
-    private getPathIndexForShapeIndex(shapeIndex: number): number | null {
-        const shapes = this.shapes || [];
-        if (shapeIndex < 0 || shapeIndex >= shapes.length) {
-            return null;
-        }
-
-        let pathIndex = 0;
-        for (let index = 0; index < shapes.length; index++) {
-            if (!shapes[index].isPath()) {
-                continue;
-            }
-
-            if (index === shapeIndex) {
-                return pathIndex;
-            }
-
-            pathIndex += 1;
-        }
-
-        return null;
-    }
-
     /**
      * Insert a new shape at the specified index
      */
@@ -12576,15 +12482,6 @@ export class Glyph extends ArrayElementBase {
                 removedDrawing
             );
         }
-    }
-
-    /**
-     * Add a whole drawing record, recorded like any other added drawing.
-     * Its `id`, `width` and station link must already be there.
-     * @internal
-     */
-    _appendDrawingRecord(drawingData: Babelfont.Layer): Drawing {
-        return this.appendRawDrawing(drawingData);
     }
 
     /**
@@ -16041,28 +15938,6 @@ export class Font extends ModelBase {
         }
 
         return JSON.parse(JSON.stringify(value)) as T;
-    }
-
-    private getEffectiveDesignspaceLocationForDrawing(
-        drawing: Drawing | null | undefined
-    ): DesignspaceLocation | undefined {
-        if (!drawing) {
-            return undefined;
-        }
-
-        if (drawing.location && Object.keys(drawing.location).length > 0) {
-            return this.clonePlainValue(drawing.location);
-        }
-
-        const stationId = drawing.station?.master;
-        if (!stationId) {
-            return undefined;
-        }
-
-        const station = this.findStation(stationId);
-        return station?.location
-            ? this.clonePlainValue(station.location)
-            : undefined;
     }
 
     private getAddStationInterpolationLocations(

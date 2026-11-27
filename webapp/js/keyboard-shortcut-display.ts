@@ -5,6 +5,8 @@
  */
 
 /** Unicode shift glyph in shortcut source strings. */
+import { escapeHtml } from './ui/escape-html';
+
 export const MENU_SHIFT_SYMBOL = '\u21E7';
 
 /** Canonical Command glyph in shortcut source strings. */
@@ -24,10 +26,6 @@ export function platformUsesCommandKey(): boolean {
     return /Mac|iPhone|iPad|iPod/i.test(platform);
 }
 
-function usesCommandModifier(): boolean {
-    return platformUsesCommandKey();
-}
-
 /** Pointer command gestures. On macOS, Ctrl alone opens the context menu. */
 export function isPointerCommandModifier(e: {
     metaKey: boolean;
@@ -41,7 +39,7 @@ export function isPointerCommandModifier(e: {
 
 export function commandModifierIconName():
     'keyboard_command_key' | 'keyboard_control_key' {
-    return usesCommandModifier()
+    return platformUsesCommandKey()
         ? 'keyboard_command_key'
         : 'keyboard_control_key';
 }
@@ -61,12 +59,6 @@ function optionModifierIconHtml(): string {
     return materialIcon('', 'shortcut-option-modifier');
 }
 
-function escapeShortcutText(text: string): string {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
 /**
  * Inner HTML of a shortcut chip. Command/Ctrl and Option/Alt use CSS
  * ligatures keyed off `data-command-modifier` on `<html>`.
@@ -83,7 +75,7 @@ export function formatShortcutHtml(shortcut: string): string {
         } else if (ch === MENU_RETURN_SYMBOL) {
             html += materialIcon('keyboard_return');
         } else {
-            html += escapeShortcutText(ch);
+            html += escapeHtml(ch);
         }
     }
     return html;
@@ -108,7 +100,7 @@ export function keyboardShortcutHtml(
 
 /** Plain-text shortcut for native `title` attributes. */
 export function formatPlainShortcut(shortcut: string): string {
-    const command = usesCommandModifier()
+    const command = platformUsesCommandKey()
         ? MENU_COMMAND_SYMBOL
         : CONTROL_KEY_SYMBOL;
     return shortcut.split(MENU_COMMAND_SYMBOL).join(command);

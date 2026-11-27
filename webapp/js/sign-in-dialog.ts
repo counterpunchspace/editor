@@ -5,6 +5,7 @@
  * the field selected for the next try.
  */
 
+import { escapeHtml } from './ui/escape-html';
 import { bindModalEscape } from './ui/modal-escape';
 import {
     extractLoginCode,
@@ -35,14 +36,6 @@ export type SignInDialogOptions = {
 
 const DEFAULT_REASON =
     "Enter your email and we'll send you a 6-digit code. Your open fonts stay open.";
-
-function escapeHtml(value: string): string {
-    return value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-}
 
 function requireElement<T extends Element>(
     root: ParentNode,

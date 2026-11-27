@@ -82,6 +82,44 @@ pub fn get_glyph_order(font_bytes: &[u8]) -> Result<Vec<String>, JsValue> {
 ///
 /// # Returns
 /// * `String` - JSON object mapping feature tags to their UI names
+fn collect_stylistic_set_names_from_feature_list(
+    font: &FontRef<'_>,
+    feature_list: &read_fonts::tables::layout::FeatureList<'_>,
+    feature_names: &mut HashMap<String, String>,
+) {
+    let Ok(name_table) = font.name() else {
+        return;
+    };
+    for record in feature_list.feature_records().iter() {
+        let tag_str = record.feature_tag().to_string();
+        if !tag_str.starts_with("ss") || tag_str.len() != 4 || feature_names.contains_key(&tag_str)
+        {
+            continue;
+        }
+        let Ok(feature_table) = record.feature(feature_list.offset_data()) else {
+            continue;
+        };
+        let Some(Ok(FeatureParams::StylisticSet(ss_params))) = feature_table.feature_params()
+        else {
+            continue;
+        };
+        let name_id = ss_params.ui_name_id();
+        if let Some(name_str) = name_table
+            .name_record()
+            .iter()
+            .find(|rec| {
+                rec.name_id() == name_id
+                    && rec.platform_id() == 3 // Windows
+                    && rec.encoding_id() == 1 // Unicode BMP
+                    && rec.language_id() == 0x0409 // en-US
+            })
+            .and_then(|rec| rec.string(name_table.string_data()).ok())
+        {
+            feature_names.insert(tag_str, name_str.to_string());
+        }
+    }
+}
+
 #[wasm_bindgen]
 pub fn get_stylistic_set_names(font_bytes: &[u8]) -> Result<String, JsValue> {
     let font = FontRef::new(font_bytes)
@@ -89,99 +127,14 @@ pub fn get_stylistic_set_names(font_bytes: &[u8]) -> Result<String, JsValue> {
 
     let mut feature_names: HashMap<String, String> = HashMap::new();
 
-    // Try to get GSUB table for features
     if let Ok(gsub) = font.gsub() {
         if let Ok(feature_list) = gsub.feature_list() {
-            let feature_records = feature_list.feature_records();
-
-            for record in feature_records.iter() {
-                let tag = record.feature_tag();
-                let tag_str = tag.to_string();
-
-                // Only process stylistic set features (ss01-ss20)
-                if tag_str.starts_with("ss") && tag_str.len() == 4 {
-                    if let Ok(feature_table) = record.feature(feature_list.offset_data()) {
-                        // Check if feature has parameters
-                        if let Some(Ok(params)) = feature_table.feature_params() {
-                            match params {
-                                FeatureParams::StylisticSet(ss_params) => {
-                                    let name_id = ss_params.ui_name_id();
-
-                                    // Look up the name in the name table
-                                    if let Ok(name_table) = font.name() {
-                                        // Try to get English name (platform 3, encoding 1, language 0x409)
-                                        if let Some(name_str) = name_table
-                                            .name_record()
-                                            .iter()
-                                            .find(|record| {
-                                                record.name_id() == name_id &&
-                                                record.platform_id() == 3 &&  // Windows
-                                                record.encoding_id() == 1 &&  // Unicode BMP
-                                                record.language_id() == 0x0409 // en-US
-                                            })
-                                            .and_then(|record| {
-                                                record.string(name_table.string_data()).ok()
-                                            })
-                                        {
-                                            feature_names
-                                                .insert(tag_str.clone(), name_str.to_string());
-                                        }
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-            }
+            collect_stylistic_set_names_from_feature_list(&font, &feature_list, &mut feature_names);
         }
     }
-
-    // Also check GPOS table (though stylistic sets are typically in GSUB)
     if let Ok(gpos) = font.gpos() {
         if let Ok(feature_list) = gpos.feature_list() {
-            let feature_records = feature_list.feature_records();
-
-            for record in feature_records.iter() {
-                let tag = record.feature_tag();
-                let tag_str = tag.to_string();
-
-                // Only process stylistic set features if not already found
-                if tag_str.starts_with("ss")
-                    && tag_str.len() == 4
-                    && !feature_names.contains_key(&tag_str)
-                {
-                    if let Ok(feature_table) = record.feature(feature_list.offset_data()) {
-                        if let Some(Ok(params)) = feature_table.feature_params() {
-                            match params {
-                                FeatureParams::StylisticSet(ss_params) => {
-                                    let name_id = ss_params.ui_name_id();
-
-                                    if let Ok(name_table) = font.name() {
-                                        if let Some(name_str) = name_table
-                                            .name_record()
-                                            .iter()
-                                            .find(|record| {
-                                                record.name_id() == name_id
-                                                    && record.platform_id() == 3
-                                                    && record.encoding_id() == 1
-                                                    && record.language_id() == 0x0409
-                                            })
-                                            .and_then(|record| {
-                                                record.string(name_table.string_data()).ok()
-                                            })
-                                        {
-                                            feature_names
-                                                .insert(tag_str.clone(), name_str.to_string());
-                                        }
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-            }
+            collect_stylistic_set_names_from_feature_list(&font, &feature_list, &mut feature_names);
         }
     }
 

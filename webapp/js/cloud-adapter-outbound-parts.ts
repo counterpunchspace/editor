@@ -145,28 +145,21 @@ export class CloudPartedInboundBuffer {
               update: Uint8Array;
               envelopes: CollaborationMessageEnvelope[] | undefined;
           } {
-        const envelope = envelopes?.length === 1 ? envelopes[0] : null;
-        const part = envelope?.part;
-        if (
-            part &&
-            typeof part.of === 'string' &&
-            Number.isInteger(part.index) &&
-            Number.isInteger(part.total) &&
-            part.index < part.total - 1
-        ) {
-            const held = this._held.get(part.of) || {
+        const leadingKey = CloudPartedInboundBuffer.leadingPartKey(envelopes);
+        if (leadingKey !== null) {
+            const held = this._held.get(leadingKey) || {
                 updates: [],
                 firstAt: now
             };
             held.updates.push(update);
-            this._held.set(part.of, held);
+            this._held.set(leadingKey, held);
             return { kind: 'hold' };
         }
-        if (envelope && !part) {
-            const key = collaborationMessageKey(envelope);
-            const held = this._held.get(key);
+        const lastKey = CloudPartedInboundBuffer.lastPartKey(envelopes);
+        if (lastKey !== null) {
+            const held = this._held.get(lastKey);
             if (held) {
-                this._held.delete(key);
+                this._held.delete(lastKey);
                 return {
                     kind: 'apply',
                     update: Y.mergeUpdates([...held.updates, update]),

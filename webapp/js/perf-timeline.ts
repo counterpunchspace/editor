@@ -218,16 +218,6 @@ export function timelineSpanEnd(spanId: string): void {
     activeSpans.delete(spanId);
 }
 
-export function timelineWrap<T>(
-    stage: string,
-    fn: () => Promise<T>
-): Promise<T> {
-    const spanId = timelineSpanStart(stage);
-    return fn().finally(() => {
-        timelineSpanEnd(spanId);
-    });
-}
-
 export type CodeLoadingTimelineEntry = {
     name: string;
     startTime: number;

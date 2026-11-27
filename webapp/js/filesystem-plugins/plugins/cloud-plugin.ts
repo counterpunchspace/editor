@@ -16,8 +16,7 @@ import {
     kerningRoomIds,
     layoutDocumentKind,
     rebasedRoomLayout,
-    roomLayoutCounts,
-    type RoomLayout
+    roomLayoutCounts
 } from '../cloud-room-layout';
 import { ROOM_LAYOUT_VERSION } from '../cloud-room-layout';
 import { CloudWalPersistError } from '../../cloud-durable-wal';
@@ -39,8 +38,7 @@ import {
     CloudConnectionStatus,
     type CloudTransferActivity,
     type CloudSeededShardAttestation,
-    type CloudShardIoOptions,
-    normalizeCloudRoomWebSocketUrl
+    type CloudShardIoOptions
 } from '../../cloud-adapter';
 import {
     CLOUD_SUBSCRIPTION_LAPSED_CODE,
@@ -54,12 +52,7 @@ import { cloudPluginLiveMethods } from './cloud-plugin-live';
 import { cloudPluginSharingMethods } from './cloud-plugin-sharing';
 import { cloudPluginMeasureMethods } from './cloud-plugin-measure';
 import { cloudPluginCatchUpMethods } from './cloud-plugin-catch-up';
-import {
-    isTransferCancelled,
-    loadDocumentSetWithProgress,
-    seedDocumentSetWithProgress,
-    shardIoOptionsFromSession
-} from '../cancellable-shard-transfer';
+import { isTransferCancelled } from '../cancellable-shard-transfer';
 import {
     CloudLiveSession,
     activeEditorGlyphNames,
@@ -71,11 +64,9 @@ import {
 } from '../../patch-sync-engine';
 import { setCollabIntegritySnapshotProvider } from '../../cloud-collab-integrity-debug';
 import { Logger } from '../../logger';
-import { getPathSegments } from '../../change-log';
 import { recordCollabTrace } from '../../collab-trace';
 import { resolveWebsiteURL } from '../../website-url';
 import { readUrlState, updateUrlState } from '../../url-state';
-import { beginLoadingCursor, endLoadingCursor } from '../../loading-cursor';
 import {
     applyCloudOwnedData,
     tombstoneCloudOwnedGlyphs,
@@ -88,20 +79,13 @@ import {
     stripOwnedFontData
 } from '../cloud-glyph-catalog';
 import { missingRequiredCloudCapabilities } from '../cloud-collab-capabilities';
-import {
-    catalogEntriesForDepsParse,
-    readFontDepsIndex,
-    resolveHydrationSeeds,
-    writeCompleteFontDepsIfLoaded
-} from '../cloud-font-deps';
+import { readFontDepsIndex, resolveHydrationSeeds } from '../cloud-font-deps';
 import {
     CLOUD_SPARSE_RESIDENCY_CHANGED_EVENT,
     CloudDocumentSet,
     FONT_CORE_DOCUMENT_ID,
     FONT_DEPS_DOCUMENT_ID,
     glyphDocumentId,
-    glyphIdsFromCatalogEntries,
-    glyphIdsFromRevisionEntries,
     hydrateSparseGlyphsToFixedPoint,
     type EncodedShard
 } from '../cloud-document-set';
@@ -114,7 +98,6 @@ import {
     shouldAutoSparseHydrate,
     shouldExactEncodeAssetSize,
     type ShardSizeGate,
-    type ShardSizeReport,
     type CollabSubmitDecision,
     type CollabSubmitRequest
 } from '../cloud-shard-limits';
@@ -138,43 +121,22 @@ import {
     depsGlyphNamesFromCommittedEntries,
     pathFromCommittedEntry,
     committedChangeAffectsResidentClosure,
-    decodeBase64UrlJson,
     extractRoleFromRoomToken,
-    normalizeCloudComponentTransform,
     formatCloudDebugTimestamp,
     formatCloudByteCount,
-    describeCloudStoredPiece,
     worstCloudPieceSizeReport,
     cloudPieceSizeWarningState,
     glyphNameForCloudDocument,
-    escapeCloudTooltipText,
     formatCloudStatusTooltipHtml,
-    canonicalizeCloudExportFontJson,
-    validateCloudExportForFontOpen,
-    glyphIdsFromCoreJson,
-    catalogEntriesFromCoreJson,
-    glyphDocumentIdsFromCoreJson,
     getCloudFontJsonFromBridge,
-    assertCloudBridgeStateCanBeSaved,
-    cloneCloudFontJson,
-    estimateCloudTransferTimeoutMs,
-    cloneEncodedShards,
-    encodedShardByteLength,
-    flushPendingCloudSaveMutations,
-    waitForCloudSaveBridge,
     captureCloudSaveSeedState,
-    recaptureCloudSaveSeedIfBridgeChanged,
     waitForCloudSaveReady,
-    waitForCloudFontJson,
-    EMPTY_CLOUD_LIVE_SHARD_STATS,
     type CloudAssetRole,
     type CloudLiveShardStats,
-    type CloudSaveSeedCapture,
     type CloudAsset,
     type CloudEligibility,
     type CloudSaveAsBlocker,
     type CloudAssetLimits,
-    type CloudAssetMember,
     type CloudAssetInvitation,
     type CloudOwnershipTransfer,
     type CloudShareState

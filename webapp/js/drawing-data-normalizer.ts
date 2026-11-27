@@ -131,30 +131,6 @@ export class DrawingDataNormalizer {
     }
 
     /**
-     * Get the next node in a circular array
-     */
-    static getNextNode(
-        nodes: Babelfont.Node[],
-        currentIndex: number
-    ): Babelfont.Node | null {
-        if (!nodes || nodes.length === 0) return null;
-        const nextIndex = (currentIndex + 1) % nodes.length;
-        return nodes[nextIndex];
-    }
-
-    /**
-     * Get the previous node in a circular array
-     */
-    static getPrevNode(
-        nodes: Babelfont.Node[],
-        currentIndex: number
-    ): Babelfont.Node | null {
-        if (!nodes || nodes.length === 0) return null;
-        const prevIndex = (currentIndex - 1 + nodes.length) % nodes.length;
-        return nodes[prevIndex];
-    }
-
-    /**
      * Build a canvas path from a nodes array.
      * Standalone utility function extracted from Renderer.buildPathFromNodes.
      *

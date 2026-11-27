@@ -253,13 +253,8 @@ import { bindModalEscape, type ModalEscapeBinding } from './ui/modal-escape';
             return false;
         }
 
-        // WebAgg backend creates canvas elements with specific characteristics
-        // Check if canvas has matplotlib-related attributes or parent
+        // WebAgg backend creates canvas elements inside the terminal.
         const parent = canvas.parentElement;
-        const hasMatplotlibClass =
-            canvas.className && canvas.className.includes('mpl');
-        const parentHasMatplotlibClass =
-            parent && parent.className && parent.className.includes('mpl');
         const isInTerminal = canvas.closest('.terminal');
 
         // If it's in the terminal and looks like a plot, it's probably matplotlib

@@ -146,51 +146,57 @@ fn master_bytes(master: &Master) -> u64 {
         + format_specific_bytes(&master.format_specific)
 }
 
+fn kern_groups_bytes<'a, I>(groups: I) -> u64
+where
+    I: IntoIterator<Item = (&'a smol_str::SmolStr, &'a Vec<smol_str::SmolStr>)>,
+{
+    groups
+        .into_iter()
+        .map(|(key, names)| {
+            str_bytes(key.as_str())
+                + names
+                    .iter()
+                    .map(|name| str_bytes(name.as_str()))
+                    .sum::<u64>()
+        })
+        .sum()
+}
+
+fn feature_code_entries_bytes<'a, I>(entries: I) -> u64
+where
+    I: IntoIterator<Item = (&'a str, &'a str)>,
+{
+    entries
+        .into_iter()
+        .map(|(key, code)| str_bytes(key) + str_bytes(code))
+        .sum()
+}
+
 pub fn font_bytes(font: &Font) -> u64 {
     128 + font.glyphs.iter().map(glyph_bytes).sum::<u64>()
         + font.masters.iter().map(master_bytes).sum::<u64>()
         + names_bytes(&font.names)
         + font.note.as_deref().map(str_bytes).unwrap_or(0)
-        + font
-            .first_kern_groups
-            .iter()
-            .map(|(key, names)| {
-                str_bytes(key.as_str())
-                    + names
-                        .iter()
-                        .map(|name| str_bytes(name.as_str()))
-                        .sum::<u64>()
-            })
-            .sum::<u64>()
-        + font
-            .second_kern_groups
-            .iter()
-            .map(|(key, names)| {
-                str_bytes(key.as_str())
-                    + names
-                        .iter()
-                        .map(|name| str_bytes(name.as_str()))
-                        .sum::<u64>()
-            })
-            .sum::<u64>()
-        + font
-            .features
-            .classes
-            .iter()
-            .map(|(key, code)| str_bytes(key.as_str()) + str_bytes(&code.code))
-            .sum::<u64>()
-        + font
-            .features
-            .prefixes
-            .iter()
-            .map(|(key, code)| str_bytes(key.as_str()) + str_bytes(&code.code))
-            .sum::<u64>()
-        + font
-            .features
-            .features
-            .iter()
-            .map(|(tag, code)| str_bytes(tag.as_str()) + str_bytes(&code.code))
-            .sum::<u64>()
+        + kern_groups_bytes(&font.first_kern_groups)
+        + kern_groups_bytes(&font.second_kern_groups)
+        + feature_code_entries_bytes(
+            font.features
+                .classes
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.code.as_str())),
+        )
+        + feature_code_entries_bytes(
+            font.features
+                .prefixes
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.code.as_str())),
+        )
+        + feature_code_entries_bytes(
+            font.features
+                .features
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.code.as_str())),
+        )
         + format_specific_bytes(&font.format_specific)
 }
 

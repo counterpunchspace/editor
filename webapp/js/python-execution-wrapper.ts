@@ -39,6 +39,31 @@
         // Counter for execution tracking
         let executionCounter = 0;
 
+        function handlePythonExecutionError(
+            execId: number,
+            error: unknown
+        ): never {
+            const errorMessage =
+                error instanceof Error ? error.message : String(error);
+            const sanitizedMessage =
+                typeof window.sanitizePythonRuntimeError === 'function'
+                    ? window.sanitizePythonRuntimeError(errorMessage)
+                    : errorMessage;
+            console.error(
+                '[PythonExec]',
+                `❌ Execution #${execId} failed:`,
+                sanitizedMessage
+            );
+            if (error instanceof Error && error.message !== sanitizedMessage) {
+                try {
+                    error.message = sanitizedMessage;
+                } catch {
+                    // Some host Error objects freeze message.
+                }
+            }
+            throw error;
+        }
+
         // Wrap runPythonAsync to log all Python code to BROWSER CONSOLE ONLY
         window.pyodide.runPythonAsync = async function (
             code: string,
@@ -92,28 +117,7 @@
                 );
                 return result;
             } catch (error) {
-                const errorMessage =
-                    error instanceof Error ? error.message : String(error);
-                const sanitizedMessage =
-                    typeof window.sanitizePythonRuntimeError === 'function'
-                        ? window.sanitizePythonRuntimeError(errorMessage)
-                        : errorMessage;
-                console.error(
-                    '[PythonExec]',
-                    `❌ Execution #${execId} failed:`,
-                    sanitizedMessage
-                );
-                if (
-                    error instanceof Error &&
-                    error.message !== sanitizedMessage
-                ) {
-                    try {
-                        error.message = sanitizedMessage;
-                    } catch {
-                        // Some host Error objects freeze message.
-                    }
-                }
-                throw error;
+                handlePythonExecutionError(execId, error);
             } finally {
                 // Call after-execution hook (always, even on error)
                 if (window.afterPythonExecution) {
@@ -184,28 +188,7 @@
                 );
                 return result;
             } catch (error) {
-                const errorMessage =
-                    error instanceof Error ? error.message : String(error);
-                const sanitizedMessage =
-                    typeof window.sanitizePythonRuntimeError === 'function'
-                        ? window.sanitizePythonRuntimeError(errorMessage)
-                        : errorMessage;
-                console.error(
-                    '[PythonExec]',
-                    `❌ Execution #${execId} failed:`,
-                    sanitizedMessage
-                );
-                if (
-                    error instanceof Error &&
-                    error.message !== sanitizedMessage
-                ) {
-                    try {
-                        error.message = sanitizedMessage;
-                    } catch {
-                        // Some host Error objects freeze message.
-                    }
-                }
-                throw error;
+                handlePythonExecutionError(execId, error);
             } finally {
                 // Call after-execution hook (always, even on error)
                 if (window.afterPythonExecution) {
@@ -217,7 +200,11 @@
                         { succeeded },
                         historyContext
                     );
-                    if (hookResult && typeof hookResult.then === 'function') {
+                    if (
+                        hookResult &&
+                        typeof (hookResult as Promise<unknown>).then ===
+                            'function'
+                    ) {
                         console.warn(
                             '[PythonExec]',
                             'afterPythonExecution hook returned a promise in sync context - cannot await'

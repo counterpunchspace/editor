@@ -854,48 +854,6 @@ export function createNamedChangePairFromEntry(
     };
 }
 
-function getJsonValueAtPath(value: unknown, path: string): unknown {
-    const segments = getPathSegments(path);
-    if (!segments.length) {
-        return value;
-    }
-
-    let current = value as Unsafe;
-    for (const segment of segments) {
-        if (current === undefined || current === null) {
-            return undefined;
-        }
-
-        if (Array.isArray(current)) {
-            const index = Number.parseInt(segment, 10);
-            current = current[index] as Unsafe;
-            continue;
-        }
-
-        if (typeof current !== 'object') {
-            return undefined;
-        }
-
-        current = current[segment] as Unsafe;
-    }
-
-    return current;
-}
-
-export function deriveForwardChangesFromSnapshots(
-    envelope: CollaborationMessageEnvelope,
-    beforeValue: unknown,
-    afterValue: unknown
-): DerivedForwardChange[] {
-    return envelope.changes.map((change) => ({
-        path: change.path,
-        op: change.op,
-        oldValue: cloneValue(getJsonValueAtPath(beforeValue, change.path)),
-        newValue: cloneValue(getJsonValueAtPath(afterValue, change.path)),
-        objectType: deriveObjectInfoFromPath(change.path).objectType
-    }));
-}
-
 export function collaborationMessageKey(
     envelope: CollaborationMessageEnvelope
 ): string {

@@ -161,12 +161,8 @@ export async function planGlyphAdditions(
     return plan;
 }
 
-/** Convert glyphs that already have components, without consulting a recipe. */
-export function planExistingConversion(
-    items: ReadonlyArray<{ name: string; components: string[] }>,
-    output: CompositionOutput
-): CompositionPlan {
-    const plan: CompositionPlan = {
+function createEmptyCompositionPlan(): CompositionPlan {
+    return {
         create: [],
         composites: [],
         clearShells: [],
@@ -180,6 +176,14 @@ export function planExistingConversion(
         arabicAdd: {},
         arabicRemove: []
     };
+}
+
+/** Convert glyphs that already have components, without consulting a recipe. */
+export function planExistingConversion(
+    items: ReadonlyArray<{ name: string; components: string[] }>,
+    output: CompositionOutput
+): CompositionPlan {
+    const plan = createEmptyCompositionPlan();
     for (const item of items) {
         if (!item.components.length) {
             plan.skipped.push(item.name);
@@ -216,20 +220,7 @@ async function planRecords(
     managed: readonly string[],
     clearExistingShells: boolean
 ): Promise<CompositionPlan> {
-    const plan: CompositionPlan = {
-        create: [],
-        composites: [],
-        clearShells: [],
-        ccmpAdd: [],
-        ccmpRemove: [],
-        ccmpComponents: {},
-        supportingCount: 0,
-        skipped: [],
-        deletes: [],
-        kept: [],
-        arabicAdd: {},
-        arabicRemove: []
-    };
+    const plan = createEmptyCompositionPlan();
     const creating = new Set<string>();
     const anchorRequests: AnchorPositionRequest[] = [];
 
@@ -674,20 +665,7 @@ export function planArabicConversion(
     families: readonly ArabicConversionFamily[],
     output: CompositionOutput
 ): CompositionPlan {
-    const plan: CompositionPlan = {
-        create: [],
-        composites: [],
-        clearShells: [],
-        ccmpAdd: [],
-        ccmpRemove: [],
-        ccmpComponents: {},
-        supportingCount: 0,
-        skipped: [],
-        deletes: [],
-        kept: [],
-        arabicAdd: {},
-        arabicRemove: []
-    };
+    const plan = createEmptyCompositionPlan();
     for (const family of families) {
         if (family.missing) {
             plan.skipped.push(family.name);

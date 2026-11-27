@@ -3,13 +3,7 @@
 
 import { Logger } from './logger';
 import type { UserspaceLocation } from './locations';
-import {
-    updateUrlState,
-    encodeLocation,
-    encodeFeatures,
-    decodeLocation,
-    decodeFeatures
-} from './url-state';
+import { updateUrlState, encodeLocation, encodeFeatures } from './url-state';
 import {
     DEFAULT_LINE_HEIGHT_PERCENT,
     DEFAULT_TEXT_ALIGN,
@@ -79,7 +73,7 @@ function getWebsiteURL(): string {
     return resolveWebsiteURL();
 }
 
-function getSessionTokenFromCookie(): string | null {
+export function getSessionTokenFromCookie(): string | null {
     const cookies = document.cookie.split(';');
     for (const cookie of cookies) {
         const trimmedCookie = cookie.trim();
@@ -110,7 +104,7 @@ function safeErrorReason(reason: any): string {
     }
 }
 
-function isSafariUserAgent(userAgent: string): boolean {
+export function isSafariUserAgent(userAgent: string): boolean {
     return (
         /Safari\//.test(userAgent) &&
         !/Chrome\//.test(userAgent) &&
@@ -546,32 +540,6 @@ export class StateManager {
     }
 
     /**
-     * Clear history (for testing/debugging)
-     */
-    clearHistory(): void {
-        this._history = [];
-        this._events = [];
-        console.log('History cleared');
-    }
-
-    /**
-     * Get history for a specific key or time range
-     */
-    getHistory(key?: string, since?: number): StateChange[] {
-        let filtered = this._history;
-
-        if (key) {
-            filtered = filtered.filter((change) => change.key === key);
-        }
-
-        if (since) {
-            filtered = filtered.filter((change) => change.timestamp >= since);
-        }
-
-        return filtered;
-    }
-
-    /**
      * Record a high-level event for debugging timelines
      */
     recordEvent(
@@ -601,23 +569,6 @@ export class StateManager {
         this._events.push(event);
 
         this._pruneHistory();
-    }
-
-    /**
-     * Get event history for a specific event type or time range
-     */
-    getEventHistory(type?: string, since?: number): StateEvent[] {
-        let filtered = this._events;
-
-        if (type) {
-            filtered = filtered.filter((event) => event.type === type);
-        }
-
-        if (since) {
-            filtered = filtered.filter((event) => event.timestamp >= since);
-        }
-
-        return filtered;
     }
 
     /**

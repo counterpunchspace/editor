@@ -205,17 +205,7 @@ export class NativeAdapter implements FileSystemAdapter {
                 }
             ).showDirectoryPicker(pickerOptions);
         } catch (error: unknown) {
-            const err = error as { name?: string };
-            if (err.name === 'AbortError') {
-                console.log('[NativeAdapter]', 'Directory selection cancelled');
-                return false;
-            }
-            console.error(
-                '[NativeAdapter]',
-                'Error selecting directory:',
-                error
-            );
-            throw error;
+            return this._handleDirectoryPickerError(error);
         }
 
         try {
@@ -234,18 +224,18 @@ export class NativeAdapter implements FileSystemAdapter {
             );
             return true;
         } catch (error: unknown) {
-            const err = error as { name?: string };
-            if (err.name === 'AbortError') {
-                console.log('[NativeAdapter]', 'Directory selection cancelled');
-                return false;
-            }
-            console.error(
-                '[NativeAdapter]',
-                'Error selecting directory:',
-                error
-            );
-            throw error;
+            return this._handleDirectoryPickerError(error);
         }
+    }
+
+    private _handleDirectoryPickerError(error: unknown): false {
+        const err = error as { name?: string };
+        if (err.name === 'AbortError') {
+            console.log('[NativeAdapter]', 'Directory selection cancelled');
+            return false;
+        }
+        console.error('[NativeAdapter]', 'Error selecting directory:', error);
+        throw error;
     }
 
     async clearDirectory(): Promise<void> {

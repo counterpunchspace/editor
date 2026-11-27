@@ -379,51 +379,6 @@ Manual cache access:
         }
     }
 
-    // Auto-clear service worker caches on page load
-    async function forceServiceWorkerReset(): Promise<Record<string, unknown>> {
-        if ('serviceWorker' in navigator) {
-            try {
-                // Get the COI service worker
-                const registrations =
-                    await navigator.serviceWorker.getRegistrations();
-
-                for (const registration of registrations) {
-                    // Send deregister message to the service worker
-                    // This triggers the worker's built-in cleanup
-                    if (registration.active) {
-                        registration.active.postMessage({ type: 'deregister' });
-                        console.log(
-                            '[CacheManager]',
-                            '📨 Sent deregister message to service worker'
-                        );
-                    }
-
-                    // Force unregister
-                    await registration.unregister();
-                    console.log(
-                        '[CacheManager]',
-                        '✅ Force unregistered service worker'
-                    );
-                }
-
-                // Wait a moment for cleanup
-                await new Promise((resolve) => setTimeout(resolve, 100));
-
-                return { success: true, reset: true };
-            } catch (error) {
-                const message =
-                    error instanceof Error ? error.message : String(error);
-                console.warn(
-                    '[CacheManager]',
-                    '⚠️ Failed to reset service worker:',
-                    error
-                );
-                return { success: false, error: message };
-            }
-        }
-        return { success: false, message: 'Service workers not supported' };
-    }
-
     async function autoClearOnLoad() {
         // DISABLED: This was breaking the COI service worker
         // The COI service worker needs to stay registered to provide

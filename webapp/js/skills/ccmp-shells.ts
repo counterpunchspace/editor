@@ -10,10 +10,8 @@ import {
 const CCMP_GENERATOR = 'space.counterpunch.ccmp';
 const CCMP_BLOCK = 'decomposition';
 
-export function ccmpShellNames(
-    features: FeaturesDocument | null | undefined
-): Set<string> {
-    const owned = (features?.features || []).find(([, code]) => {
+function findManagedCcmpBlock(features: FeaturesDocument | null | undefined) {
+    return (features?.features || []).find(([, code]) => {
         const stamp = generatorStamp(code);
         return (
             stamp?.generator === CCMP_GENERATOR &&
@@ -21,6 +19,12 @@ export function ccmpShellNames(
             code.automatic !== false
         );
     });
+}
+
+export function ccmpShellNames(
+    features: FeaturesDocument | null | undefined
+): Set<string> {
+    const owned = findManagedCcmpBlock(features);
     const names = new Set(
         owned
             ? managedInputs(features ?? undefined, CCMP_GENERATOR, CCMP_BLOCK)
@@ -36,14 +40,7 @@ export function ccmpShellNames(
 export function ccmpDecomposition(
     features: FeaturesDocument | null | undefined
 ): Map<string, string[]> {
-    const owned = (features?.features || []).find(([, code]) => {
-        const stamp = generatorStamp(code);
-        return (
-            stamp?.generator === CCMP_GENERATOR &&
-            stamp.block === CCMP_BLOCK &&
-            code.automatic !== false
-        );
-    });
+    const owned = findManagedCcmpBlock(features);
     const rules = new Map<string, string[]>();
     if (!owned?.[1].code) {
         return rules;

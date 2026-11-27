@@ -10,7 +10,6 @@ import {
     fontCompilation,
     fullFontCompilation,
     requestOpenFontConversion,
-    COMPILATION_TARGETS,
     adoptTransferredUint8Array,
     isTerminalWorkerDocumentError,
     markTerminalWorkerDocumentError,
@@ -20,11 +19,10 @@ import { get_glyph_order } from './opentype-table-reader';
 import { prepareCompileFilters } from './compile-filter-host';
 import { callSourceWasmOp } from './source-wasm-ops';
 import type { Babelfont } from './babelfont';
-import { designspaceToUserspace, userspaceToDesignspace } from './locations';
+import { designspaceToUserspace } from './locations';
 import type { DesignspaceLocation, UserspaceLocation } from './locations';
 import {
     Font,
-    Path,
     DecomposedAffineTransform,
     FIP001_BOOLEAN_KEY,
     FIP001_BOOLEAN_SUBTRACTION,
@@ -33,7 +31,6 @@ import {
     withSuppressedModelRecording,
     jsonPartsToChunks,
     jsonPartsToData,
-    isEmptyYjsUpdate,
     type AxisStationCopyPlan,
     type BabelfontJsonParts
 } from './babelfont-model';
@@ -542,15 +539,6 @@ export type RustBatchResult = {
     updates?: RustBatchDocumentUpdate[];
     metadata: RustBatchMetadata;
 };
-
-export function rustBatchHasContent(result: RustBatchResult): boolean {
-    if (!isEmptyYjsUpdate(result.update)) {
-        return true;
-    }
-    return Boolean(
-        result.updates?.some((packet) => !isEmptyYjsUpdate(packet.update))
-    );
-}
 
 export type AddStationInterpolationLocation = {
     glyphName: string;
@@ -4625,9 +4613,6 @@ class FontManager {
             compileSource === 'station-reinterpolate-batch';
         let isMouseDragSource = compileSource.startsWith('mouse-drag');
         let isKeyboardSource = compileSource.startsWith('keyboard');
-        let isRemoteSource = compileSource.startsWith('remote-');
-        let isStationReinterpolateBatchSource =
-            compileSource === 'station-reinterpolate-batch';
         const forceFullWorkerCompileAtStart = this.forceFullEditingCacheRefresh;
         const shouldPrepareIncrementalDrawingUpdate =
             (isMouseDragSource || isKeyboardSource) &&
@@ -4899,9 +4884,6 @@ class FontManager {
                     compileSource === 'station-reinterpolate-batch';
                 isMouseDragSource = compileSource.startsWith('mouse-drag');
                 isKeyboardSource = compileSource.startsWith('keyboard');
-                isRemoteSource = compileSource.startsWith('remote-');
-                isStationReinterpolateBatchSource =
-                    compileSource === 'station-reinterpolate-batch';
                 dragActiveAtRequest =
                     isMouseDragSource ||
                     !!window.glyphCanvas?.outlineEditor?.draggingSomething;
@@ -5609,26 +5591,6 @@ class FontManager {
                 'codepoints'
             ]);
 
-            /** Convert a plain object with numeric keys like {"0":..., "1":...} back to an array */
-            const numericKeyObjectToArray = (obj: any): any[] => {
-                const keys = Object.keys(obj);
-                if (keys.length === 0) return [];
-                const indices = keys.map((k) => parseInt(k, 10));
-                if (
-                    !indices.every((i) => !isNaN(i) && i >= 0) ||
-                    !keys.every((k) => String(parseInt(k, 10)) === k)
-                ) {
-                    // Not purely numeric keys — shouldn't convert
-                    return [];
-                }
-                const maxIdx = Math.max(...indices);
-                const arr: any[] = new Array(maxIdx + 1);
-                for (let i = 0; i < keys.length; i++) {
-                    arr[indices[i]] = obj[keys[i]];
-                }
-                return arr;
-            };
-
             // A drawing's station link is checked, never rewritten: a
             // drawing without a valid one is refused.
             if (Array.isArray(data?.glyphs)) {
@@ -5958,7 +5920,6 @@ class FontManager {
         const originalDrawing = this.getGlyph(glyphName)?.layers?.find(
             (entry: any) => entry.id === drawingId
         );
-        const existingDrawing = originalDrawing;
         if (!originalDrawing && !drawingData) {
             return null;
         }

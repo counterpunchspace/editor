@@ -1,5 +1,5 @@
 import { Logger } from './logger';
-import { runHostPythonAsync } from './skills/host-python';
+import { runHostPythonAsync, waitForPyodide } from './skills/host-python';
 
 const console = new Logger('CharacterSetPluginManager');
 
@@ -52,12 +52,6 @@ export type CharacterSetEntry = {
 export type CharacterSetMembers = {
     codepoints: number[];
     glyphNames: string[];
-};
-
-type PyodideLike = {
-    loadPackage(name: string | string[]): Promise<void>;
-    runPythonAsync(code: string): Promise<string>;
-    _originalRunPythonAsync?(code: string): Promise<string>;
 };
 
 function parseMembersBySet(
@@ -237,7 +231,10 @@ export class CharacterSetPluginManager {
         levels: readonly CharacterSetCoverageLevel[]
     ): Promise<CharacterSetEntry[]> {
         await this.ensureReady();
-        await this.waitForPyodide();
+        await waitForPyodide(
+            30_000,
+            'Timed out waiting for Python to initialize.'
+        );
         const result = await runHostPythonAsync(`
 import builtins, json
 from importlib.metadata import entry_points
@@ -270,7 +267,10 @@ json.dumps(provider.characters(set_ids, levels))
         levels: readonly CharacterSetCoverageLevel[]
     ): Promise<Record<string, CharacterSetMembers>> {
         await this.ensureReady();
-        await this.waitForPyodide();
+        await waitForPyodide(
+            30_000,
+            'Timed out waiting for Python to initialize.'
+        );
         const result = await runHostPythonAsync(`
 import builtins, json
 from importlib.metadata import entry_points
@@ -298,7 +298,10 @@ json.dumps(provider.members_by_set(set_ids, levels))
     }
 
     private async load(): Promise<void> {
-        await this.waitForPyodide();
+        await waitForPyodide(
+            30_000,
+            'Timed out waiting for Python to initialize.'
+        );
         const result = await runHostPythonAsync(`
 import builtins, json
 from importlib.metadata import entry_points
@@ -324,23 +327,6 @@ json.dumps(metadata_list)
                 this.providers.set(provider.id, provider);
             }
         }
-    }
-
-    private async waitForPyodide(): Promise<PyodideLike> {
-        if (
-            !window.pyodide &&
-            typeof window.ensurePyodideReady === 'function'
-        ) {
-            await window.ensurePyodideReady();
-        }
-        const startedAt = performance.now();
-        while (!window.pyodide) {
-            if (performance.now() - startedAt > 30_000) {
-                throw new Error('Timed out waiting for Python to initialize.');
-            }
-            await new Promise((resolve) => window.setTimeout(resolve, 50));
-        }
-        return window.pyodide as PyodideLike;
     }
 }
 

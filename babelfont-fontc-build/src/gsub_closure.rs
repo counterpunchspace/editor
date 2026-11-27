@@ -39,12 +39,9 @@ impl GsubClosureGraph {
     pub fn build(font: &Font) -> Result<Self, String> {
         let fea_text = font.features.to_fea();
         let glyph_names: Vec<&str> = font.glyphs.iter().map(|g| g.name.as_str()).collect();
-        let mut feature_file = FeatureFile::new_from_fea(
-            &fea_text,
-            Some(&glyph_names),
-            font.source.clone(),
-        )
-        .map_err(|e| format!("FEA parse failed: {e}"))?;
+        let mut feature_file =
+            FeatureFile::new_from_fea(&fea_text, Some(&glyph_names), font.source.clone())
+                .map_err(|e| format!("FEA parse failed: {e}"))?;
 
         let mut builder = GraphBuilder::new(font);
         builder
@@ -213,11 +210,7 @@ impl<'a> GraphBuilder<'a> {
                 Vec::new()
             }
             GlyphContainer::GlyphRange(range) => {
-                let start = self
-                    .font
-                    .glyphs
-                    .iter()
-                    .position(|g| g.name == range.start);
+                let start = self.font.glyphs.iter().position(|g| g.name == range.start);
                 let end = self.font.glyphs.iter().position(|g| g.name == range.end);
                 if let (Some(s), Some(e)) = (start, end) {
                     if s <= e {
@@ -304,6 +297,52 @@ impl<'a> GraphBuilder<'a> {
         }
     }
 
+    fn record_subst_rule(
+        &mut self,
+        from_ids: Vec<u32>,
+        out_ids: Vec<u32>,
+        prefix: &[fea_rs_ast::GlyphContainer],
+        suffix: &[fea_rs_ast::GlyphContainer],
+    ) {
+        if from_ids.is_empty() || out_ids.is_empty() {
+            return;
+        }
+        if prefix.is_empty() && suffix.is_empty() {
+            for &from_id in &from_ids {
+                for &to_id in &out_ids {
+                    self.add_direct_edge(from_id, to_id);
+                }
+            }
+        } else {
+            let mut required_any_of = self.build_context_groups(prefix, suffix);
+            required_any_of.push(from_ids);
+            self.trigger_rules.push(TriggerRule {
+                required_any_of,
+                outputs: out_ids,
+            });
+        }
+    }
+
+    fn record_contextual_rule(
+        &mut self,
+        glyphs: &[fea_rs_ast::GlyphContainer],
+        out_ids: Vec<u32>,
+        prefix: &[fea_rs_ast::GlyphContainer],
+        suffix: &[fea_rs_ast::GlyphContainer],
+    ) {
+        if out_ids.is_empty() {
+            return;
+        }
+        let mut required_any_of = self.build_context_groups(prefix, suffix);
+        for gc in glyphs {
+            required_any_of.push(self.intern_container(gc));
+        }
+        self.trigger_rules.push(TriggerRule {
+            required_any_of,
+            outputs: out_ids,
+        });
+    }
+
     fn handle_multiple_subst(&mut self, stmt: &fea_rs_ast::MultipleSubstStatement) {
         let from_ids = self.intern_container(&stmt.glyph);
         let mut out_ids: Vec<u32> = Vec::new();
@@ -312,60 +351,18 @@ impl<'a> GraphBuilder<'a> {
         }
         out_ids.sort_unstable();
         out_ids.dedup();
-        if from_ids.is_empty() || out_ids.is_empty() {
-            return;
-        }
-        if stmt.prefix.is_empty() && stmt.suffix.is_empty() {
-            for &from_id in &from_ids {
-                for &to_id in &out_ids {
-                    self.add_direct_edge(from_id, to_id);
-                }
-            }
-        } else {
-            let mut required_any_of = self.build_context_groups(&stmt.prefix, &stmt.suffix);
-            required_any_of.push(from_ids);
-            self.trigger_rules.push(TriggerRule {
-                required_any_of,
-                outputs: out_ids,
-            });
-        }
+        self.record_subst_rule(from_ids, out_ids, &stmt.prefix, &stmt.suffix);
     }
 
     fn handle_alternate_subst(&mut self, stmt: &fea_rs_ast::AlternateSubstStatement) {
         let from_ids = self.intern_container(&stmt.glyph);
         let out_ids = self.intern_container(&stmt.replacement);
-        if from_ids.is_empty() || out_ids.is_empty() {
-            return;
-        }
-        if stmt.prefix.is_empty() && stmt.suffix.is_empty() {
-            for &from_id in &from_ids {
-                for &to_id in &out_ids {
-                    self.add_direct_edge(from_id, to_id);
-                }
-            }
-        } else {
-            let mut required_any_of = self.build_context_groups(&stmt.prefix, &stmt.suffix);
-            required_any_of.push(from_ids);
-            self.trigger_rules.push(TriggerRule {
-                required_any_of,
-                outputs: out_ids,
-            });
-        }
+        self.record_subst_rule(from_ids, out_ids, &stmt.prefix, &stmt.suffix);
     }
 
     fn handle_ligature_subst(&mut self, stmt: &fea_rs_ast::LigatureSubstStatement) {
         let out_ids = self.intern_container(&stmt.replacement);
-        if out_ids.is_empty() {
-            return;
-        }
-        let mut required_any_of = self.build_context_groups(&stmt.prefix, &stmt.suffix);
-        for gc in &stmt.glyphs {
-            required_any_of.push(self.intern_container(gc));
-        }
-        self.trigger_rules.push(TriggerRule {
-            required_any_of,
-            outputs: out_ids,
-        });
+        self.record_contextual_rule(&stmt.glyphs, out_ids, &stmt.prefix, &stmt.suffix);
     }
 
     fn handle_reverse_chain_subst(&mut self, stmt: &fea_rs_ast::ReverseChainSingleSubstStatement) {
@@ -375,17 +372,7 @@ impl<'a> GraphBuilder<'a> {
         }
         out_ids.sort_unstable();
         out_ids.dedup();
-        if out_ids.is_empty() {
-            return;
-        }
-        let mut required_any_of = self.build_context_groups(&stmt.prefix, &stmt.suffix);
-        for gc in &stmt.glyphs {
-            required_any_of.push(self.intern_container(gc));
-        }
-        self.trigger_rules.push(TriggerRule {
-            required_any_of,
-            outputs: out_ids,
-        });
+        self.record_contextual_rule(&stmt.glyphs, out_ids, &stmt.prefix, &stmt.suffix);
     }
 
     fn handle_glyph_class_def(&mut self, stmt: &fea_rs_ast::GlyphClassDefinition) {

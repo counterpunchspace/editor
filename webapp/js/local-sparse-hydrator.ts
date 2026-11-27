@@ -10,11 +10,7 @@
  */
 
 import { Logger } from './logger';
-import {
-    fontCompilation,
-    type OpenFontSparseResult,
-    type SparseGlyphCatalogEntry
-} from './font-compilation';
+import { fontCompilation, type OpenFontSparseResult } from './font-compilation';
 import type { GlyphCatalogEntry } from './filesystem-plugins/cloud-glyph-catalog';
 import {
     type FontDepEdgeKind,

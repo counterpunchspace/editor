@@ -1,11 +1,13 @@
 /**
- * Confirm Dialog — reusable save/discard/cancel dialog
+ * Confirm Dialog — reusable save/discard/cancel dialog and shared modal overlay
+ * lifecycle helper.
  *
  * Uses the shared .info-popup-overlay + .info-popup pattern and .dialog-button
  * styles from css/ui/dialogs.css.
  */
 
-import { bindModalEscape } from './modal-escape';
+import { escapeHtml } from './escape-html';
+import { bindModalEscape, type ModalEscapeBinding } from './modal-escape';
 
 export type ConfirmChoice = 'save' | 'discard' | 'cancel';
 
@@ -14,11 +16,103 @@ type UnsavedChangesDialogOptions = {
     subjectName: string;
 };
 
-function escapeHtml(value: string): string {
-    return value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
+export type MountModalOverlayOptions = {
+    innerHTML: string;
+    zIndex?: string;
+    attributes?: Record<string, string>;
+    closeSelector?: string;
+    focusSelector?: string;
+    onDismiss: () => void;
+    onCleanup?: () => void;
+};
+
+export type MountedModalOverlay = {
+    overlay: HTMLDivElement;
+    close: () => void;
+};
+
+/**
+ * Mount a `.info-popup-overlay` modal, wiring Escape (`bindModalEscape`),
+ * backdrop click, close button, and idempotent cleanup on every close path.
+ */
+export function mountModalOverlay(
+    options: MountModalOverlayOptions
+): MountedModalOverlay {
+    const overlay = document.createElement('div');
+    overlay.className = 'info-popup-overlay';
+    overlay.style.display = 'flex';
+    if (options.zIndex !== undefined) {
+        overlay.style.zIndex = options.zIndex;
+    }
+    if (options.attributes) {
+        for (const [key, value] of Object.entries(options.attributes)) {
+            overlay.setAttribute(key, value);
+        }
+    }
+    overlay.innerHTML = options.innerHTML;
+    document.body.appendChild(overlay);
+
+    let escapeBinding: ModalEscapeBinding | null = null;
+    let closed = false;
+
+    const close = () => {
+        if (closed) {
+            return;
+        }
+        closed = true;
+        options.onCleanup?.();
+        escapeBinding?.release();
+        escapeBinding = null;
+        overlay.remove();
+    };
+
+    const dismiss = () => {
+        close();
+        options.onDismiss();
+    };
+
+    escapeBinding = bindModalEscape(dismiss, {
+        isOpen: () => overlay.isConnected
+    });
+
+    overlay.addEventListener('click', (event) => {
+        if (event.target === overlay) {
+            dismiss();
+        }
+    });
+
+    const closeSelector = options.closeSelector ?? '.confirm-dialog-close-btn';
+    overlay.querySelector(closeSelector)?.addEventListener('click', dismiss);
+
+    if (options.focusSelector) {
+        const selector = options.focusSelector;
+        queueMicrotask(() => {
+            (overlay.querySelector(selector) as HTMLElement | null)?.focus();
+        });
+    }
+
+    return { overlay, close };
+}
+
+function renderConfirmDialogHtml(
+    title: string,
+    bodyHtml: string,
+    actionsHtml: string
+): string {
+    return `
+        <div class="info-popup confirm-dialog">
+            <div class="info-popup-header">
+                <h3>${escapeHtml(title)}</h3>
+                <button type="button" class="info-popup-close confirm-dialog-close-btn" aria-label="Cancel">
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+            </div>
+            <div class="info-popup-content confirm-dialog-content">
+                ${bodyHtml}
+                <div class="confirm-dialog-actions">${actionsHtml}</div>
+            </div>
+        </div>
+    `;
 }
 
 /**
@@ -37,55 +131,21 @@ export function showProceedDialog(
         ? 'dialog-button dialog-button-danger'
         : 'dialog-button dialog-button-primary';
     return new Promise((resolve) => {
-        const overlay = document.createElement('div');
-        overlay.className = 'info-popup-overlay';
-        overlay.style.display = 'flex';
-        overlay.style.zIndex = '10002';
-
-        overlay.innerHTML = `
-            <div class="info-popup confirm-dialog">
-                <div class="info-popup-header">
-                    <h3>${escapeHtml(title)}</h3>
-                    <button type="button" class="info-popup-close confirm-dialog-close-btn" aria-label="Cancel">
-                        <span class="material-symbols-outlined">close</span>
-                    </button>
-                </div>
-                <div class="info-popup-content confirm-dialog-content">
-                    <p>${escapeHtml(message)}</p>
-                    <div class="confirm-dialog-actions">
-                        <button type="button" class="dialog-button" data-action="cancel">${escapeHtml(options.cancelLabel ?? 'Cancel')}</button>
-                        <button type="button" class="${proceedClass}" data-action="proceed">${escapeHtml(options.proceedLabel ?? 'Proceed')}</button>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        document.body.appendChild(overlay);
-
-        let escapeBinding: ReturnType<typeof bindModalEscape> | null = null;
-
-        function finish(proceed: boolean) {
-            escapeBinding?.release();
-            escapeBinding = null;
-            overlay.remove();
-            resolve(proceed);
-        }
-
-        escapeBinding = bindModalEscape(() => finish(false), {
-            isOpen: () => overlay.isConnected
+        const { overlay, close } = mountModalOverlay({
+            zIndex: '10002',
+            innerHTML: renderConfirmDialogHtml(
+                title,
+                `<p>${escapeHtml(message)}</p>`,
+                `<button type="button" class="dialog-button" data-action="cancel">${escapeHtml(options.cancelLabel ?? 'Cancel')}</button>
+                 <button type="button" class="${proceedClass}" data-action="proceed">${escapeHtml(options.proceedLabel ?? 'Proceed')}</button>`
+            ),
+            onDismiss: () => resolve(false)
         });
 
-        overlay.addEventListener('click', (event) => {
-            if (event.target === overlay) {
-                finish(false);
-            }
-        });
-        overlay
-            .querySelector('.confirm-dialog-close-btn')
-            ?.addEventListener('click', () => finish(false));
         overlay.querySelectorAll('[data-action]').forEach((button) => {
             button.addEventListener('click', () => {
-                finish((button as HTMLElement).dataset.action === 'proceed');
+                close();
+                resolve((button as HTMLElement).dataset.action === 'proceed');
             });
         });
     });
@@ -107,11 +167,6 @@ export function showChoiceDialog(
     choices: DialogChoice[]
 ): Promise<string | null> {
     return new Promise((resolve) => {
-        const overlay = document.createElement('div');
-        overlay.className = 'info-popup-overlay';
-        overlay.style.display = 'flex';
-        overlay.style.zIndex = '10002';
-
         const buttons = choices
             .map((choice) => {
                 const style = choice.style
@@ -120,47 +175,21 @@ export function showChoiceDialog(
                 return `<button type="button" class="dialog-button${style}" data-choice="${escapeHtml(choice.id)}">${escapeHtml(choice.label)}</button>`;
             })
             .join('');
-        overlay.innerHTML = `
-            <div class="info-popup confirm-dialog">
-                <div class="info-popup-header">
-                    <h3>${escapeHtml(title)}</h3>
-                    <button type="button" class="info-popup-close confirm-dialog-close-btn" aria-label="Cancel">
-                        <span class="material-symbols-outlined">close</span>
-                    </button>
-                </div>
-                <div class="info-popup-content confirm-dialog-content">
-                    <p>${escapeHtml(message)}</p>
-                    <div class="confirm-dialog-actions">${buttons}</div>
-                </div>
-            </div>
-        `;
 
-        document.body.appendChild(overlay);
-
-        let escapeBinding: ReturnType<typeof bindModalEscape> | null = null;
-
-        function finish(choice: string | null) {
-            escapeBinding?.release();
-            escapeBinding = null;
-            overlay.remove();
-            resolve(choice);
-        }
-
-        escapeBinding = bindModalEscape(() => finish(null), {
-            isOpen: () => overlay.isConnected
+        const { overlay, close } = mountModalOverlay({
+            zIndex: '10002',
+            innerHTML: renderConfirmDialogHtml(
+                title,
+                `<p>${escapeHtml(message)}</p>`,
+                buttons
+            ),
+            onDismiss: () => resolve(null)
         });
 
-        overlay.addEventListener('click', (event) => {
-            if (event.target === overlay) {
-                finish(null);
-            }
-        });
-        overlay
-            .querySelector('.confirm-dialog-close-btn')
-            ?.addEventListener('click', () => finish(null));
         overlay.querySelectorAll('[data-choice]').forEach((button) => {
             button.addEventListener('click', () => {
-                finish((button as HTMLElement).dataset.choice ?? null);
+                close();
+                resolve((button as HTMLElement).dataset.choice ?? null);
             });
         });
     });
@@ -171,77 +200,29 @@ export function showNamedUnsavedChangesDialog({
     subjectName
 }: UnsavedChangesDialogOptions): Promise<ConfirmChoice> {
     return new Promise((resolve) => {
-        const overlay = document.createElement('div');
-        overlay.className = 'info-popup-overlay';
-        overlay.style.display = 'flex';
-        overlay.style.zIndex = '10002';
-
         const escapedType = escapeHtml(subjectType);
         const escapedName = escapeHtml(subjectName);
 
-        overlay.innerHTML = `
-            <div class="info-popup confirm-dialog">
-                <div class="info-popup-header">
-                    <h3>Unsaved Changes</h3>
-                    <button type="button" class="info-popup-close confirm-dialog-close-btn" aria-label="Cancel">
-                        <span class="material-symbols-outlined">close</span>
-                    </button>
-                </div>
-                <div class="info-popup-content confirm-dialog-content">
-                    <p>${escapedType} <strong>${escapedName}</strong> has unsaved changes. What do you want to do?</p>
-                    <div class="confirm-dialog-actions">
-                        <button type="button" class="dialog-button dialog-button-danger" data-action="discard">Don't Save</button>
-                        <button type="button" class="dialog-button" data-action="cancel">Cancel</button>
-                        <button type="button" class="dialog-button dialog-button-primary" data-action="save">Save</button>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        document.body.appendChild(overlay);
-
-        let escapeBinding: ReturnType<typeof bindModalEscape> | null = null;
-
-        function cleanup() {
-            escapeBinding?.release();
-            escapeBinding = null;
-            overlay.remove();
-        }
-
-        function handleChoice(choice: ConfirmChoice) {
-            cleanup();
-            resolve(choice);
-        }
-
-        escapeBinding = bindModalEscape(() => handleChoice('cancel'), {
-            isOpen: () => overlay.isConnected
+        const { overlay, close } = mountModalOverlay({
+            zIndex: '10002',
+            innerHTML: renderConfirmDialogHtml(
+                'Unsaved Changes',
+                `<p>${escapedType} <strong>${escapedName}</strong> has unsaved changes. What do you want to do?</p>`,
+                `<button type="button" class="dialog-button dialog-button-danger" data-action="discard">Don't Save</button>
+                 <button type="button" class="dialog-button" data-action="cancel">Cancel</button>
+                 <button type="button" class="dialog-button dialog-button-primary" data-action="save">Save</button>`
+            ),
+            focusSelector: '[data-action="save"]',
+            onDismiss: () => resolve('cancel')
         });
-
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) {
-                handleChoice('cancel');
-            }
-        });
-
-        overlay
-            .querySelector('.confirm-dialog-close-btn')
-            ?.addEventListener('click', () => {
-                handleChoice('cancel');
-            });
 
         overlay.querySelectorAll('[data-action]').forEach((btn) => {
             btn.addEventListener('click', () => {
                 const action = (btn as HTMLElement).dataset
                     .action as ConfirmChoice;
-                handleChoice(action);
+                close();
+                resolve(action);
             });
-        });
-
-        queueMicrotask(() => {
-            const saveBtn = overlay.querySelector(
-                '[data-action="save"]'
-            ) as HTMLElement;
-            saveBtn?.focus();
         });
     });
 }

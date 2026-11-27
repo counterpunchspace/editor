@@ -5,6 +5,7 @@
  */
 
 import { Logger } from './logger';
+import { viewAnimationDelayMs } from './tour-utils';
 import {
     selectTourStationByName,
     TOUR_EDIERESIS_LETTER,
@@ -21,6 +22,7 @@ import {
     getTourEditRootGlyphName
 } from './tour-components';
 import { wait } from './tour-spotlight';
+import { waitForNextAnimationFrame } from './yield-to-ui';
 
 const console = new Logger('Tour');
 
@@ -48,20 +50,6 @@ type SnapshotDrawing = {
     shapes?: unknown[];
     toJSON?: () => { shapes?: unknown[] };
 };
-
-function viewAnimationDelayMs(): number {
-    const animation = window.VIEW_SETTINGS?.animation;
-    if (animation?.enabled && typeof animation.duration === 'number') {
-        return animation.duration + 40;
-    }
-    return 0;
-}
-
-function waitForNextAnimationFrame(): Promise<void> {
-    return new Promise((resolve) => {
-        requestAnimationFrame(() => resolve());
-    });
-}
 
 async function waitFor(
     condition: () => boolean,

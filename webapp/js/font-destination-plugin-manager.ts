@@ -132,6 +132,36 @@ function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
+function parseDestinationMetadata(
+    destination: JsonRecord
+): Pick<
+    FontDestinationManifest,
+    | 'entryPoint'
+    | 'pluginId'
+    | 'name'
+    | 'description'
+    | 'destinationUrl'
+    | 'targetOrigin'
+    | 'repositoryUrl'
+> {
+    const destinationUrl = getRequiredString(destination, 'destinationUrl');
+    const targetOrigin = getRequiredString(destination, 'targetOrigin');
+    if (new URL(destinationUrl).origin !== targetOrigin) {
+        throw new Error(
+            'Font Destination targetOrigin must match destinationUrl.'
+        );
+    }
+    return {
+        entryPoint: getRequiredString(destination, 'entryPoint'),
+        pluginId: getRequiredString(destination, 'pluginId'),
+        name: getRequiredString(destination, 'name'),
+        description: getRequiredString(destination, 'description'),
+        destinationUrl,
+        targetOrigin,
+        repositoryUrl: getRequiredString(destination, 'repositoryUrl')
+    };
+}
+
 /** Parse and validate a Font Destination manifest without executing package code. */
 function parseFontDestinationManifestV2(
     value: JsonRecord
@@ -143,28 +173,16 @@ function parseFontDestinationManifestV2(
     if (!isRecord(destination)) {
         throw new Error('Manifest does not provide a Font Destination plugin.');
     }
-    const destinationUrl = getRequiredString(destination, 'destinationUrl');
-    const targetOrigin = getRequiredString(destination, 'targetOrigin');
-    if (new URL(destinationUrl).origin !== targetOrigin) {
-        throw new Error(
-            'Font Destination targetOrigin must match destinationUrl.'
-        );
-    }
+    const metadata = parseDestinationMetadata(destination);
     const packageName = getRequiredString(value, 'package');
     return {
         packageName,
-        entryPoint: getRequiredString(destination, 'entryPoint'),
-        pluginId: getRequiredString(destination, 'pluginId'),
-        name: getRequiredString(destination, 'name'),
-        description: getRequiredString(destination, 'description'),
-        destinationUrl,
-        targetOrigin,
-        repositoryUrl: getRequiredString(destination, 'repositoryUrl'),
+        ...metadata,
         imageUrl:
             typeof destination.imageUrl === 'string'
                 ? destination.imageUrl
                 : null,
-        releaseRepository: getRequiredString(destination, 'repositoryUrl')
+        releaseRepository: metadata.repositoryUrl
             .replace(/^https:\/\/github.com\//, '')
             .replace(/\/$/, ''),
         wheelAssetPrefix: `${packageName.replaceAll('-', '_')}-`,
@@ -198,22 +216,9 @@ export function parseFontDestinationManifest(
 
     const destination = value.fontDestination;
     const release = value.release;
-    const destinationUrl = getRequiredString(destination, 'destinationUrl');
-    const targetOrigin = getRequiredString(destination, 'targetOrigin');
-    if (new URL(destinationUrl).origin !== targetOrigin) {
-        throw new Error(
-            'Font Destination targetOrigin must match destinationUrl.'
-        );
-    }
     return {
         packageName: getRequiredString(value, 'package'),
-        entryPoint: getRequiredString(destination, 'entryPoint'),
-        pluginId: getRequiredString(destination, 'pluginId'),
-        name: getRequiredString(destination, 'name'),
-        description: getRequiredString(destination, 'description'),
-        destinationUrl,
-        targetOrigin,
-        repositoryUrl: getRequiredString(destination, 'repositoryUrl'),
+        ...parseDestinationMetadata(destination),
         imageUrl: getOptionalHttpsUrl(destination, 'imageUrl'),
         releaseRepository: getRequiredString(release, 'repository'),
         wheelAssetPrefix: getRequiredString(release, 'wheelAssetPrefix'),

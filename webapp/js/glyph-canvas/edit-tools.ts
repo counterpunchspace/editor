@@ -44,14 +44,6 @@ export const POINTER_BADGE_ICONS: Record<EditToolPointerBadge, string> = {
     blocked: 'do_not_disturb_on'
 };
 
-export const STICKY_EDIT_TOOLS: StickyEditTool[] = [
-    'select',
-    'pen',
-    'insert',
-    'convert',
-    'cut'
-];
-
 export function resolveHighlightedEditTool(options: {
     isEditMode: boolean;
     stickyTool: StickyEditTool;

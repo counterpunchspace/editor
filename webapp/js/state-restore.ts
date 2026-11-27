@@ -8,6 +8,7 @@ import { userspaceLocationsEqual, type UserspaceLocation } from './locations';
 import { enableSync, initStateSync, disableSync } from './state-sync';
 import { textLayoutControls } from './glyph-canvas/text-layout-controls';
 import { userTextBufferHasBeenWritten } from './glyph-canvas/text-buffer-session';
+import { waitForNextAnimationFrame } from './yield-to-ui';
 
 const console = new Logger('StateRestore');
 let startupStateReady = false;
@@ -17,12 +18,6 @@ let pendingUrlCursorRestore: {
     mode: 'text' | 'edit' | null;
     text: string | null;
 } | null = null;
-
-function waitForNextAnimationFrame(): Promise<void> {
-    return new Promise((resolve) => {
-        requestAnimationFrame(() => resolve());
-    });
-}
 
 /** True after the first open's URL/state restore has finished. */
 export function isStartupStateReady(): boolean {

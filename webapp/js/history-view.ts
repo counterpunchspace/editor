@@ -19,12 +19,6 @@ const console = new Logger('HistoryView');
 type HistoryScope =
     'layer' | 'glyph' | 'font' | 'feature' | 'overview' | 'automation';
 
-type FeatureHistoryContext = {
-    type: 'feature' | 'class' | 'prefix';
-    key: string;
-    label: string;
-};
-
 type GlyphSelectedListener = (
     index: number,
     previousIndex: number,
@@ -55,9 +49,6 @@ class HistoryViewController {
     private rootEl: HTMLElement | null = null;
     private listEl: HTMLElement | null = null;
     private showUnreachableToggle: HTMLButtonElement | null = null;
-    private currentGlyphName: string | null = null;
-    private currentDrawingId: string | null = null;
-    private currentFeatureContext: FeatureHistoryContext | null = null;
     private unsubscribeBridge: (() => void) | null = null;
     private attachedTextRunEditor: TextRunSelectionEmitter | null = null;
     private metadataTooltips: TippyInstance[] = [];
@@ -414,51 +405,7 @@ class HistoryViewController {
     }
 
     private syncEditingContext(): void {
-        this.currentFeatureContext = this.resolveFeatureHistoryContext();
-        this.currentGlyphName = this.resolveCurrentGlyphName();
-        this.currentDrawingId = this.resolveCurrentDrawingId();
         this.scheduleRender();
-    }
-
-    private resolveFeatureHistoryContext(): FeatureHistoryContext | null {
-        const target = window.fontInfoManager?.getHistoryScopeTarget?.();
-        if (!target) {
-            return null;
-        }
-
-        return {
-            type: target.type,
-            key: target.key,
-            label: target.label
-        };
-    }
-
-    private resolveCurrentGlyphName(): string | null {
-        const outlineEditor = window.glyphCanvas?.outlineEditor;
-        if (outlineEditor?.active) {
-            const parsedStack = outlineEditor.parseGlyphStack();
-            const glyphName =
-                parsedStack[parsedStack.length - 1]?.glyphName ??
-                outlineEditor.currentGlyphName;
-            if (glyphName && glyphName !== 'undefined') {
-                return glyphName;
-            }
-        }
-
-        const glyphName = window.glyphCanvas?.getCurrentGlyphName?.();
-        if (glyphName && glyphName !== 'undefined') {
-            return glyphName;
-        }
-
-        return null;
-    }
-
-    private resolveCurrentDrawingId(): string | null {
-        const outlineEditor = window.glyphCanvas?.outlineEditor;
-        if (!outlineEditor?.active) {
-            return null;
-        }
-        return outlineEditor.selectedDrawingId ?? null;
     }
 
     private render(): void {

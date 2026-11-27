@@ -71,17 +71,33 @@ export function normalizeCloudRoomHttpUrl(
     return url.toString();
 }
 
+function normalizeCloudShardEndpointUrl(
+    roomUrl: string,
+    websiteBaseUrl: string,
+    assetId: string,
+    documentId: string,
+    suffix: string
+): string {
+    const httpUrl = normalizeCloudRoomHttpUrl(roomUrl, websiteBaseUrl);
+    const url = new URL(httpUrl);
+    const shardPath = documentId.replace(/:/g, '/');
+    url.pathname = `/room/${encodeURIComponent(assetId)}/shards/${shardPath}/${suffix}`;
+    return url.toString();
+}
+
 export function normalizeCloudShardHttpUrl(
     roomUrl: string,
     websiteBaseUrl: string,
     assetId: string,
     documentId: string
 ): string {
-    const httpUrl = normalizeCloudRoomHttpUrl(roomUrl, websiteBaseUrl);
-    const url = new URL(httpUrl);
-    const shardPath = documentId.replace(/:/g, '/');
-    url.pathname = `/room/${encodeURIComponent(assetId)}/shards/${shardPath}/state`;
-    return url.toString();
+    return normalizeCloudShardEndpointUrl(
+        roomUrl,
+        websiteBaseUrl,
+        assetId,
+        documentId,
+        'state'
+    );
 }
 
 export function normalizeCloudShardPackUrl(
@@ -101,11 +117,13 @@ export function normalizeCloudShardLiveHttpUrl(
     assetId: string,
     documentId: string
 ): string {
-    const url = new URL(
-        normalizeCloudShardHttpUrl(roomUrl, websiteBaseUrl, assetId, documentId)
+    return normalizeCloudShardEndpointUrl(
+        roomUrl,
+        websiteBaseUrl,
+        assetId,
+        documentId,
+        'live'
     );
-    url.pathname = url.pathname.replace(/\/state$/, '/live');
-    return url.toString();
 }
 
 export function normalizeCloudShardStatusHttpUrl(
@@ -114,11 +132,13 @@ export function normalizeCloudShardStatusHttpUrl(
     assetId: string,
     documentId: string
 ): string {
-    const url = new URL(
-        normalizeCloudShardHttpUrl(roomUrl, websiteBaseUrl, assetId, documentId)
+    return normalizeCloudShardEndpointUrl(
+        roomUrl,
+        websiteBaseUrl,
+        assetId,
+        documentId,
+        'status'
     );
-    url.pathname = url.pathname.replace(/\/state$/, '/status');
-    return url.toString();
 }
 
 export function normalizeCloudShardWebSocketUrl(

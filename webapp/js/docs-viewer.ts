@@ -2,6 +2,7 @@ import { Logger } from './logger';
 import { buildDocsHref } from './link-navigation';
 import {
     keyboardShortcutHtml,
+    platformUsesCommandKey,
     shortcutSpecFromHandbook
 } from './keyboard-shortcut-display';
 import {
@@ -51,10 +52,6 @@ function docsHeadingId(raw: string): string {
     return slug ? `docs-${slug}` : '';
 }
 
-function usesCommandModifier(): boolean {
-    return navigator.platform.toUpperCase().includes('MAC');
-}
-
 function isLightAppTheme(): boolean {
     return document.documentElement.getAttribute('data-theme') === 'light';
 }
@@ -80,8 +77,8 @@ function themedHandbookImageSrc(src: string): string {
 }
 
 function localizeModifierNotation(markdown: string): string {
-    const command = usesCommandModifier() ? 'Cmd' : 'Ctrl';
-    const option = usesCommandModifier() ? 'Option' : 'Alt';
+    const command = platformUsesCommandKey() ? 'Cmd' : 'Ctrl';
+    const option = platformUsesCommandKey() ? 'Option' : 'Alt';
     return markdown
         .replaceAll('Cmd/Ctrl', command)
         .replaceAll('Alt/Option', option);

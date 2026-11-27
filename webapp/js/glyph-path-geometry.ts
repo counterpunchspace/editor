@@ -62,6 +62,25 @@ export function transformPointWithAffine(
     };
 }
 
+export function clampUnitInterval(value: number): number {
+    if (!Number.isFinite(value)) {
+        return 0;
+    }
+
+    return Math.max(0, Math.min(1, value));
+}
+
+export function lerpPoint(
+    start: { x: number; y: number },
+    end: { x: number; y: number },
+    t: number
+): { x: number; y: number } {
+    return {
+        x: start.x + (end.x - start.x) * t,
+        y: start.y + (end.y - start.y) * t
+    };
+}
+
 /** Below this |determinant| an affine is treated as non-invertible. */
 export const AFFINE_SINGULAR_EPSILON = 0.0001;
 

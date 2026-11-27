@@ -851,7 +851,12 @@ impl OverviewGlyphBuilder {
         if subtract {
             self.has_subtraction = true;
         }
-        let run_flags = (fill_kind & 0b11) | if subtract { OVERVIEW_RUN_SUBTRACT_BIT } else { 0 };
+        let run_flags = (fill_kind & 0b11)
+            | if subtract {
+                OVERVIEW_RUN_SUBTRACT_BIT
+            } else {
+                0
+            };
         // Merge consecutive non-subtracting contours of the same fill kind into one Path2D run.
         let can_merge = !subtract
             && self

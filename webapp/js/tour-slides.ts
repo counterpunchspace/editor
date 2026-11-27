@@ -12,9 +12,15 @@ import {
     type TourDrawingGuides
 } from './tour-drawing';
 import {
+    delay,
+    fontRectToCutout,
+    getFontStations,
+    getStationDisplayName,
+    viewAnimationDelayMs
+} from './tour-utils';
+import {
     fitTourLetterIntoView,
     getTourComponentCutout,
-    getTourCurrentEditingGlyphCutout,
     getTourLetterCutout
 } from './tour-components';
 import type { StickyEditTool } from './glyph-canvas/edit-tools';
@@ -276,12 +282,6 @@ function tourAction(action: string): string {
     return action.startsWith('_') ? action : `_${action}_`;
 }
 
-function delay(ms: number): Promise<void> {
-    return new Promise((resolve) => {
-        window.setTimeout(resolve, ms);
-    });
-}
-
 async function waitForElement(
     selector: string,
     timeoutMs = 8000
@@ -347,32 +347,6 @@ function scrollTourTargetIntoView(element: HTMLElement): void {
     if (typeof element.scrollIntoView === 'function') {
         element.scrollIntoView({ block: 'center', inline: 'nearest' });
     }
-}
-
-function getStationDisplayName(station: {
-    name?: string | { dflt?: string; en?: string };
-}): string {
-    const name = station.name;
-    if (typeof name === 'string') {
-        return name;
-    }
-    if (name?.dflt) {
-        return name.dflt;
-    }
-    if (name?.en) {
-        return name.en;
-    }
-    return '';
-}
-
-function getFontStations(): Array<{
-    id?: string;
-    name?: string | { dflt?: string; en?: string };
-    location?: Record<string, number>;
-}> {
-    const fontModel =
-        window.currentFontModel || window.fontManager?.currentFont?.fontModel;
-    return fontModel?.stations || [];
 }
 
 export async function selectTourStationByName(name: string): Promise<void> {
@@ -489,39 +463,6 @@ function getTextRunGlyphMetrics(letter: string): {
     return null;
 }
 
-function fontRectToCutout(
-    minX: number,
-    maxX: number,
-    minY: number,
-    maxY: number
-): TourCutoutRect | null {
-    const canvas = window.glyphCanvas;
-    const viewport = canvas?.viewportManager;
-    const canvasEl = canvas?.canvas;
-    if (!canvas || !viewport || !canvasEl) {
-        return null;
-    }
-    const corners = [
-        viewport.fontToScreenCoordinates(minX, minY),
-        viewport.fontToScreenCoordinates(maxX, minY),
-        viewport.fontToScreenCoordinates(minX, maxY),
-        viewport.fontToScreenCoordinates(maxX, maxY)
-    ];
-    const canvasRect = canvasEl.getBoundingClientRect();
-    const left = canvasRect.left + Math.min(...corners.map((point) => point.x));
-    const top = canvasRect.top + Math.min(...corners.map((point) => point.y));
-    const right =
-        canvasRect.left + Math.max(...corners.map((point) => point.x));
-    const bottom =
-        canvasRect.top + Math.max(...corners.map((point) => point.y));
-    return {
-        left,
-        top,
-        width: Math.max(8, right - left),
-        height: Math.max(8, bottom - top)
-    };
-}
-
 function getTextRunCutout(): TourCutoutRect | null {
     const canvas = window.glyphCanvas;
     const textRun = canvas?.textRunEditor;
@@ -555,7 +496,7 @@ function getTextRunCutout(): TourCutoutRect | null {
         xPosition += xAdvance;
     }
 
-    return fontRectToCutout(minX, maxX, minY, maxY);
+    return fontRectToCutout({ minX, maxX, minY, maxY });
 }
 
 export const TOUR_SAMPLE_TEXT_CUTOUT: TourCutout = {
@@ -594,7 +535,12 @@ function getTextRunSpanCutout(text: string): TourCutoutRect | null {
     if (!Number.isFinite(minX)) {
         return null;
     }
-    return fontRectToCutout(minX, maxX, band.lowest, band.highest);
+    return fontRectToCutout({
+        minX,
+        maxX,
+        minY: band.lowest,
+        maxY: band.highest
+    });
 }
 
 function getTextRunLetterCutout(letter: string): TourCutoutRect | null {
@@ -602,12 +548,7 @@ function getTextRunLetterCutout(letter: string): TourCutoutRect | null {
     if (!metrics) {
         return null;
     }
-    return fontRectToCutout(
-        metrics.minX,
-        metrics.maxX,
-        metrics.minY,
-        metrics.maxY
-    );
+    return fontRectToCutout(metrics);
 }
 
 function getSelectedGlyphOutlineRect(): {
@@ -646,12 +587,7 @@ function getSelectedGlyphOutlineRect(): {
 function getCurrentGlyphOutlineCutout(): TourCutoutRect | null {
     const outline = getSelectedGlyphOutlineRect();
     if (outline) {
-        return fontRectToCutout(
-            outline.minX,
-            outline.maxX,
-            outline.minY,
-            outline.maxY
-        );
+        return fontRectToCutout(outline);
     }
     return getTextRunLetterCutout(TOUR_LETTER_L);
 }
@@ -703,7 +639,7 @@ function getDrawAreaAboveGlyphCutout(): TourCutoutRect | null {
     if (!area) {
         return null;
     }
-    return fontRectToCutout(area.minX, area.maxX, area.minY, area.maxY);
+    return fontRectToCutout(area);
 }
 
 function getWghtSliderAreaCutout(): TourCutoutRect | null {
@@ -825,15 +761,6 @@ function breadcrumbCutout(id: string, selector: string): TourCutout {
     };
 }
 
-function editingGlyphCutout(): TourCutout {
-    return {
-        id: 'editing-glyph',
-        padding: 16,
-        radius: 12,
-        resolve: getTourCurrentEditingGlyphCutout
-    };
-}
-
 async function prepareEdieresisSlide(): Promise<void> {
     await fitTourLetterIntoView(TOUR_EDIERESIS_LETTER);
 }
@@ -848,14 +775,6 @@ async function prepareBreadcrumbSlide(minChips = 2): Promise<void> {
         await delay(50);
     }
     await delay(50);
-}
-
-function viewAnimationDelayMs(): number {
-    const animation = window.VIEW_SETTINGS?.animation;
-    if (animation?.enabled && typeof animation.duration === 'number') {
-        return animation.duration + 40;
-    }
-    return 0;
 }
 
 async function prepareFocusView(viewId: string): Promise<void> {

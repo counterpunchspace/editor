@@ -5,6 +5,7 @@
  * shard I/O helpers that already yield) so Cancel and Escape stay responsive.
  */
 
+import { escapeHtml } from './escape-html';
 import { bindModalEscape } from './modal-escape';
 import { throwIfAborted, yieldToUi } from '../yield-to-ui';
 
@@ -55,13 +56,6 @@ export type RunWithTransferProgressOptions<T> = {
     bytesTotal?: number;
     work: (session: TransferProgressSession) => Promise<T>;
 };
-
-function escapeHtml(value: string): string {
-    return value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-}
 
 /** Above the other modal dialogs. */
 export const TRANSFER_PROGRESS_Z_INDEX = 12000;

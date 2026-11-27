@@ -5,6 +5,7 @@
 
 import { attachTopRowSidebarInterpolation } from './top-row-sidebar-interpolation';
 import { listOverviewGlyphRecords } from './filesystem-plugins/cloud-glyph-catalog';
+import { waitForNextAnimationFrame } from './yield-to-ui';
 
 function timelineSpanStartSafe(
     stage: string,
@@ -28,18 +29,6 @@ function timelineSpanEndSafe(spanId: string) {
     const endMark = `${spanId.replace(':start', ':end')}`;
     performance.mark(endMark);
     performance.measure('cp:overview.fallback', spanId, endMark);
-}
-
-function waitForNextAnimationFrame() {
-    return new Promise((resolve) => {
-        const nextFrame =
-            window.requestAnimationFrame ||
-            globalThis.requestAnimationFrame ||
-            ((callback: FrameRequestCallback) =>
-                window.setTimeout(() => callback(performance.now()), 0));
-
-        nextFrame(() => resolve(undefined));
-    });
 }
 
 console.log('[OverviewView]', 'overview-view.js loaded');

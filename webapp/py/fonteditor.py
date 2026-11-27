@@ -821,10 +821,6 @@ def _cp_get_host_object():
     return js.self
 
 
-def _cp_wrap_js_value(value):
-    return _wrap_js_value(value)
-
-
 def _cp_classify_filter_glyphs(glyphs, classify_fn, candidate_fn=None):
     """Classify a JS glyph list in one Python pass.
 
@@ -1131,14 +1127,6 @@ def _cp_compile_filter_transient_anchor(change_json):
     if not isinstance(result, dict):
         return json.dumps({"ok": bool(result)})
     return json.dumps(result)
-
-
-def _cp_compile_filter_retire_guides(plugin_id):
-    plugin = _CP_COMPILE_FILTERS.get(plugin_id)
-    method = getattr(plugin, 'retire_legacy_guides', None)
-    if not callable(method):
-        return
-    method(Font())
 
 
 def _cp_compile_filter_setup(plugin_id):

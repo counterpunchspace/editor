@@ -12,6 +12,7 @@ import {
     setupMenuKeyboardNav
 } from './tippy-utils';
 import { Logger } from './logger';
+import { escapeHtml } from './ui/escape-html';
 import {
     openLinkedEditorWindow,
     triggerRedo,
@@ -47,12 +48,6 @@ type ToolbarMenuItem = {
     children?: ToolbarMenuItem[];
     action?: () => Promise<void>;
 };
-
-function escapeHtml(text: string): string {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
 
 function createMenuItemsHtml(items: ToolbarMenuItem[], prefix = ''): string {
     return items
