@@ -13746,6 +13746,7 @@ mod tests {
         clear_font_cache();
     }
 
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn apply_yjs_update_applies_array_nodes_to_subset_cache() {
         clear_font_cache();
 
@@ -13808,8 +13809,6 @@ mod tests {
         )
         .expect("array nodes must update the active subset cache");
 
-        *SUBSET_FONT_CACHE.lock().unwrap() = None;
-        SUBSET_FONT_CACHE_BUILT_AT_EPOCH.store(0, Ordering::Relaxed);
         let subset_font = get_or_rebuild_subset_font_cache("A")
             .unwrap()
             .expect("subset cache should contain A");
