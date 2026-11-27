@@ -161,4 +161,93 @@ describe('folder permissions auto-prompt session persistence', () => {
             delete window.__folderPermissionsHost;
         }
     });
+
+    test('closes automatically when a new user selects the Settings Folder', async () => {
+        const originalPicker = window.showDirectoryPicker;
+        const originalTestMode = window.isTestMode;
+        window.showDirectoryPicker = function () {};
+        window.isTestMode = () => false;
+
+        try {
+            const { settingsFolder } = require('../js/settings-folder');
+            let state = 'missing';
+            jest.spyOn(settingsFolder, 'initialize').mockResolvedValue(false);
+            jest.spyOn(settingsFolder, 'getAccessState').mockImplementation(
+                async () => state
+            );
+            jest.spyOn(settingsFolder, 'getFolderName').mockImplementation(
+                () => (state === 'ready' ? 'Counterpunch' : null)
+            );
+            jest.spyOn(settingsFolder, 'selectFolder').mockImplementation(
+                async () => {
+                    state = 'ready';
+                    return true;
+                }
+            );
+
+            const folderPermissions = require('../js/folder-permissions-dialog');
+            await folderPermissions.maybeShowFolderPermissionsDialog();
+            expect(
+                document.querySelector('.folder-permissions-dialog')
+            ).not.toBeNull();
+            expect(
+                document.querySelector('[data-action="continue"]')
+            ).toBeNull();
+
+            document.querySelector('[data-folder-action="select"]').click();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+
+            expect(
+                document.querySelector('.folder-permissions-dialog')
+            ).toBeNull();
+        } finally {
+            window.showDirectoryPicker = originalPicker;
+            window.isTestMode = originalTestMode;
+            window.sessionStorage.clear();
+            delete window.__folderPermissionsHost;
+        }
+    });
+
+    test('closes automatically when a returning user renews Settings Folder access', async () => {
+        const originalPicker = window.showDirectoryPicker;
+        const originalTestMode = window.isTestMode;
+        window.showDirectoryPicker = function () {};
+        window.isTestMode = () => false;
+
+        try {
+            const { settingsFolder } = require('../js/settings-folder');
+            let state = 'needsRenewal';
+            jest.spyOn(settingsFolder, 'initialize').mockResolvedValue(true);
+            jest.spyOn(settingsFolder, 'getAccessState').mockImplementation(
+                async () => state
+            );
+            jest.spyOn(settingsFolder, 'getFolderName').mockReturnValue(
+                'Counterpunch'
+            );
+            jest.spyOn(settingsFolder, 'renewPermission').mockImplementation(
+                async () => {
+                    state = 'ready';
+                    return true;
+                }
+            );
+
+            const folderPermissions = require('../js/folder-permissions-dialog');
+            await folderPermissions.maybeShowFolderPermissionsDialog();
+            expect(
+                document.querySelector('.folder-permissions-dialog')
+            ).not.toBeNull();
+
+            document.querySelector('[data-folder-action="renew"]').click();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+
+            expect(
+                document.querySelector('.folder-permissions-dialog')
+            ).toBeNull();
+        } finally {
+            window.showDirectoryPicker = originalPicker;
+            window.isTestMode = originalTestMode;
+            window.sessionStorage.clear();
+            delete window.__folderPermissionsHost;
+        }
+    });
 });

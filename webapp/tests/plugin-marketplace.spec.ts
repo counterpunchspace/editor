@@ -63,13 +63,9 @@ async function linkStartupFolders(page: Page, waitForDialog: boolean) {
         return;
     }
     await dialog.locator('[data-folder-kind="settings"]').click();
-    await expect(dialog).toContainText('Access granted', { timeout: 20000 });
-    // The dialog links only the Settings Folder; fonts on disk are opened
-    // from the launcher.
-    const continueButton = dialog.locator('[data-action="continue"]');
-    await expect(continueButton).toBeEnabled({ timeout: 20000 });
-    await continueButton.click();
-    await expect(dialog).toBeHidden();
+    // The dialog links only the Settings Folder and closes automatically once
+    // permission is granted.
+    await expect(dialog).toBeHidden({ timeout: 20000 });
 }
 
 async function openPluginManager(page: Page, waitForFolderDialog = false) {

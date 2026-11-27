@@ -256,6 +256,7 @@ function showPluginRemovedToast(names: string[]): void {
 }
 
 let lastRevocationCheck = 0;
+let revocationWatchStarted = false;
 
 export async function enforcePluginRevocation(force = false): Promise<void> {
     if (!force && Date.now() - lastRevocationCheck < 60000) return;
@@ -274,6 +275,10 @@ export async function enforcePluginRevocation(force = false): Promise<void> {
 }
 
 export function startPluginRevocationWatch(): void {
+    if (revocationWatchStarted) {
+        return;
+    }
+    revocationWatchStarted = true;
     window.addEventListener('focus', () => {
         void enforcePluginRevocation(false).catch(() => undefined);
     });

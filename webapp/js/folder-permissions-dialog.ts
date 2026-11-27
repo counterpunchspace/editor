@@ -313,14 +313,10 @@ async function paintDialog(): Promise<void> {
     const status = await refreshFolderSetupStatus();
     const pickerAvailable = isFileSystemAccessSupported();
     const copy = getFolderPermissionsDialogCopy(status, pickerAvailable);
-    const complete = isFolderSetupComplete(status);
     const title = host.dialogOverlay.querySelector('#folder-permissions-title');
     const content = host.dialogOverlay.querySelector(
         '.folder-permissions-content'
     );
-    const continueBtn = host.dialogOverlay.querySelector(
-        '[data-action="continue"]'
-    ) as HTMLButtonElement | null;
 
     if (title) {
         title.textContent = copy.title;
@@ -341,9 +337,6 @@ async function paintDialog(): Promise<void> {
                 pickerAvailable
             )}
         `;
-    }
-    if (continueBtn) {
-        continueBtn.disabled = !complete;
     }
 
     destroyInfoTippys();
@@ -372,17 +365,23 @@ async function handleFolderAction(action: 'select' | 'renew'): Promise<void> {
         await paintDialog();
         return;
     }
+    let granted = false;
     const restoreOverlay = concealOverlayForNativePicker();
     try {
         if (action === 'select') {
-            await settingsFolder.selectFolder();
+            granted = await settingsFolder.selectFolder();
         } else {
-            await settingsFolder.renewPermission();
+            granted = await settingsFolder.renewPermission();
         }
     } catch (error) {
         console.error('Folder action failed:', error);
     } finally {
         restoreOverlay();
+    }
+    const status = await refreshFolderSetupStatus();
+    if (granted && isFolderSetupComplete(status)) {
+        closeDialog();
+        return;
     }
     await paintDialog();
 }
@@ -425,7 +424,6 @@ export async function openFolderPermissionsDialog(): Promise<void> {
             <div class="info-popup-content confirm-dialog-content folder-permissions-content"></div>
             <div class="confirm-dialog-actions folder-permissions-actions">
                 <button type="button" class="dialog-button" data-action="skip">Skip</button>
-                <button type="button" class="dialog-button dialog-button-primary" data-action="continue" disabled>Continue</button>
             </div>
         </div>
     `;
@@ -445,13 +443,6 @@ export async function openFolderPermissionsDialog(): Promise<void> {
     overlay
         .querySelector('[data-action="skip"]')
         ?.addEventListener('click', closeDialog);
-    overlay
-        .querySelector('[data-action="continue"]')
-        ?.addEventListener('click', () => {
-            if (cachedStatus && isFolderSetupComplete(cachedStatus)) {
-                closeDialog();
-            }
-        });
     overlay.addEventListener('click', (event) => {
         const target = (event.target as Element | null)?.closest(
             '[data-folder-action]'

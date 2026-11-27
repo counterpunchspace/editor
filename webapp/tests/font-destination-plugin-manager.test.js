@@ -810,4 +810,71 @@ describe('Font Destination plugins', () => {
             jest.useRealTimers();
         }
     });
+
+    test('scans and loads stored Python wheels when Settings Folder permission is renewed', async () => {
+        const originalPyodide = window.pyodide;
+        const originalCanvas = window.canvasPluginManager;
+        const originalOverview = window.glyphOverviewFilterManager;
+        const runPythonAsync = jest.fn().mockResolvedValue(undefined);
+        const loadPackage = jest.fn().mockResolvedValue(undefined);
+        window.pyodide = {
+            loadPackage,
+            runPythonAsync,
+            FS: {
+                mkdirTree: jest.fn(),
+                writeFile: jest.fn(),
+                unlink: jest.fn()
+            }
+        };
+        const discoverCanvas = jest.fn().mockResolvedValue(undefined);
+        const discoverPythonFilters = jest.fn().mockResolvedValue(undefined);
+        window.canvasPluginManager = { discoverPlugins: discoverCanvas };
+        window.glyphOverviewFilterManager = {
+            discoverPythonPlugins: discoverPythonFilters
+        };
+        global.fetch = jest.fn(async (url) => {
+            const href = String(url);
+            if (href.includes('wheels.json')) {
+                return { ok: true, json: async () => ({ wheels: [] }) };
+            }
+            if (href.includes('fonteditor.py')) {
+                return { ok: true, text: async () => '' };
+            }
+            return {
+                ok: true,
+                json: async () => ({ plugins: [], blocked: [], revoked: [] })
+            };
+        });
+
+        try {
+            const {
+                fontDestinationPluginManager
+            } = require('../js/font-destination-plugin-manager.ts');
+            const compileFilterHost = require('../js/compile-filter-host.ts');
+            const reinstallSpy = jest
+                .spyOn(fontDestinationPluginManager, 'reinstallStoredPlugins')
+                .mockResolvedValue(undefined);
+            const compileDiscoverSpy = jest
+                .spyOn(compileFilterHost, 'discoverCompileFilters')
+                .mockResolvedValue([]);
+
+            const fonteditor = require('../js/fonteditor.ts');
+            await window.ensurePyodideReady();
+            reinstallSpy.mockClear();
+            discoverCanvas.mockClear();
+            discoverPythonFilters.mockClear();
+            compileDiscoverSpy.mockClear();
+
+            await fonteditor.restoreStoredPythonPluginsOnFolderAccess();
+
+            expect(reinstallSpy).toHaveBeenCalledTimes(1);
+            expect(discoverCanvas).toHaveBeenCalledTimes(1);
+            expect(discoverPythonFilters).toHaveBeenCalledTimes(1);
+            expect(compileDiscoverSpy).toHaveBeenCalledTimes(1);
+        } finally {
+            window.pyodide = originalPyodide;
+            window.canvasPluginManager = originalCanvas;
+            window.glyphOverviewFilterManager = originalOverview;
+        }
+    });
 });

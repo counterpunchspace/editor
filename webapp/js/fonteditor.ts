@@ -31,6 +31,98 @@ type ExtendedWindow = Window & {
 
 let pyodideReadyPromise: Promise<unknown> | null = null;
 let pyodideEnvironmentInitialized = false;
+let storedPluginRestorePromise: Promise<void> | null = null;
+
+async function restoreStoredPythonPlugins(): Promise<void> {
+    try {
+        const { revokeBeforeReinstall, startPluginRevocationWatch } =
+            await import('./installed-plugin-manager');
+        await revokeBeforeReinstall();
+        startPluginRevocationWatch();
+    } catch (error) {
+        console.warn(
+            '[FontEditor]',
+            'Could not check refunded plugins before restore:',
+            error
+        );
+    }
+    try {
+        await fontDestinationPluginManager.reinstallStoredPlugins();
+        const { refreshPluginUpdateCount } =
+            await import('./installed-plugin-manager');
+        void refreshPluginUpdateCount();
+    } catch (error) {
+        console.warn(
+            '[FontEditor]',
+            'Failed to restore stored Font Destination plugins:',
+            error
+        );
+    }
+}
+
+async function discoverPythonPlugins(): Promise<void> {
+    if (window.canvasPluginManager) {
+        try {
+            await window.canvasPluginManager.discoverPlugins();
+        } catch (error) {
+            console.error(
+                '[FontEditor]',
+                'Failed to discover canvas plugins:',
+                error
+            );
+        }
+    }
+    if (window.glyphOverviewFilterManager?.discoverPythonPlugins) {
+        try {
+            await window.glyphOverviewFilterManager.discoverPythonPlugins();
+        } catch (error) {
+            console.error(
+                '[FontEditor]',
+                'Failed to discover Python glyph filter plugins:',
+                error
+            );
+        }
+    }
+    try {
+        await discoverCompileFilters();
+    } catch (error) {
+        console.error(
+            '[FontEditor]',
+            'Failed to discover compile filter plugins:',
+            error
+        );
+    }
+}
+
+/**
+ * Scan and load stored third-party wheels immediately when Settings Folder
+ * access is granted or renewed after Pyodide has already started.
+ */
+export async function restoreStoredPythonPluginsOnFolderAccess(): Promise<void> {
+    if (storedPluginRestorePromise) {
+        return storedPluginRestorePromise;
+    }
+    const run = (async () => {
+        if (!pyodideEnvironmentInitialized) {
+            await ensurePyodideReady();
+        }
+        await restoreStoredPythonPlugins();
+        try {
+            await runHostPythonAsync(
+                'import builtins\nif hasattr(builtins, "_cp_skills"): delattr(builtins, "_cp_skills")'
+            );
+        } catch {
+            // Non-fatal; skills will still resolve on next call if not cached.
+        }
+        await discoverPythonPlugins();
+    })();
+    storedPluginRestorePromise = run.finally(() => {
+        if (storedPluginRestorePromise === run) {
+            storedPluginRestorePromise = null;
+        }
+    });
+    return storedPluginRestorePromise;
+}
 
 function checkCrossOriginIsolation(): boolean {
     if (typeof SharedArrayBuffer !== 'undefined') {
@@ -211,67 +303,14 @@ export function ensurePyodideReady(): Promise<unknown> {
             const restorePluginsSpanId = timelineSpanStart(
                 'python.restorePlugins'
             );
-            try {
-                const { revokeBeforeReinstall, startPluginRevocationWatch } =
-                    await import('./installed-plugin-manager');
-                await revokeBeforeReinstall();
-                startPluginRevocationWatch();
-            } catch (error) {
-                console.warn(
-                    '[FontEditor]',
-                    'Could not check refunded plugins before restore:',
-                    error
-                );
-            }
-            try {
-                await fontDestinationPluginManager.reinstallStoredPlugins();
-                const { refreshPluginUpdateCount } =
-                    await import('./installed-plugin-manager');
-                void refreshPluginUpdateCount();
-            } catch (error) {
-                console.warn(
-                    '[FontEditor]',
-                    'Failed to restore stored Font Destination plugins:',
-                    error
-                );
-            }
+            await restoreStoredPythonPlugins();
             timelineSpanEnd(restorePluginsSpanId);
 
             pyodideEnvironmentInitialized = true;
             timelineSpanEnd(initSpanId);
             timelineMark('python.initFontEditor.ready');
 
-            if (window.canvasPluginManager) {
-                try {
-                    await window.canvasPluginManager.discoverPlugins();
-                } catch (error) {
-                    console.error(
-                        '[FontEditor]',
-                        'Failed to discover canvas plugins:',
-                        error
-                    );
-                }
-            }
-            if (window.glyphOverviewFilterManager?.discoverPythonPlugins) {
-                try {
-                    await window.glyphOverviewFilterManager.discoverPythonPlugins();
-                } catch (error) {
-                    console.error(
-                        '[FontEditor]',
-                        'Failed to discover Python glyph filter plugins:',
-                        error
-                    );
-                }
-            }
-            try {
-                await discoverCompileFilters();
-            } catch (error) {
-                console.error(
-                    '[FontEditor]',
-                    'Failed to discover compile filter plugins:',
-                    error
-                );
-            }
+            await discoverPythonPlugins();
             if (
                 document.getElementById('console-container') &&
                 typeof window.initPyodideConsole === 'function'
@@ -381,6 +420,24 @@ async function initFontEditor(): Promise<boolean> {
 
 document.addEventListener('DOMContentLoaded', () => {
     void initAppStartup();
+});
+
+window.addEventListener('settingsFolderAccessChanged', (event: Event) => {
+    const detail = (
+        event as CustomEvent<{
+            hasSettingsFolderAccess?: boolean;
+        }>
+    ).detail;
+    if (!detail?.hasSettingsFolderAccess) {
+        return;
+    }
+    void restoreStoredPythonPluginsOnFolderAccess().catch((error) => {
+        console.warn(
+            '[FontEditor]',
+            'Failed to restore stored Python plugins after folder access change:',
+            error
+        );
+    });
 });
 
 window.ensurePyodideReady = ensurePyodideReady;
