@@ -5148,11 +5148,21 @@ class FontManager {
             seen.add(name);
         };
 
-        const pushMappedGlyph = (name?: string | null) => {
-            // Missing codepoints must still pull .notdef into the editing
-            // subset. Otherwise empty/new fonts never compile (fallback text
-            // like "Hamburgevons" maps to nothing) and shaping has no font.
-            pushGlyph(name || notdefName);
+        const pushMappedGlyph = (
+            glyph?: { name?: string | null; exported?: boolean } | null
+        ) => {
+            // Missing or non-exported codepoints fall back to .notdef when
+            // shaped. Pull .notdef into the editing subset so fontc compiles
+            // the font's real .notdef instead of synthesizing a default box
+            // (and so empty/new fonts still compile fallback text).
+            if (!glyph?.name) {
+                pushGlyph(notdefName);
+                return;
+            }
+            pushGlyph(glyph.name);
+            if (glyph.exported === false) {
+                pushGlyph(notdefName);
+            }
         };
 
         let index = 0;
@@ -5167,7 +5177,7 @@ class FontManager {
                 const slashGlyph = fontModel.findGlyphByCodepoint(
                     '/'.codePointAt(0)!
                 );
-                pushMappedGlyph(slashGlyph?.name);
+                pushMappedGlyph(slashGlyph);
                 index += 2;
                 continue;
             }
@@ -5211,7 +5221,7 @@ class FontManager {
                     (typeof this.findCatalogGlyphByCodepoint === 'function'
                         ? this.findCatalogGlyphByCodepoint(codepoint)
                         : null);
-                pushMappedGlyph(glyph?.name);
+                pushMappedGlyph(glyph);
                 index += codepoint > 0xffff ? 2 : 1;
             } else {
                 index += 1;

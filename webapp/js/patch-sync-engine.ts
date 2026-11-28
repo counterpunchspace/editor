@@ -7558,6 +7558,28 @@ export class PatchSyncEngine {
     }
 
     private _reportGlyphModelRebuilt(event: GlyphModelRebuildEvent): void {
+        // Granular Y.Doc rebuilds (_patchGlyphFromYDoc, _patchDrawingFromYDoc,
+        // _syncAllGlyphsFromYDoc) mutate `_fontJson` in place without going
+        // through Font's mutator methods. Drop cached component and metrics-key
+        // dependency graphs so subsequent local/cascade recompositions see
+        // remote metrics-key, component, or glyph-set changes.
+        const globalObj = globalThis as {
+            fontManager?: {
+                currentFont?: {
+                    fontModel?: {
+                        invalidateReverseComponentIndex?: () => void;
+                    };
+                };
+            };
+            currentFontModel?: {
+                invalidateReverseComponentIndex?: () => void;
+            };
+        };
+        const fontModel =
+            globalObj.fontManager?.currentFont?.fontModel ??
+            globalObj.currentFontModel;
+        fontModel?.invalidateReverseComponentIndex?.();
+
         recordCollabTrace('model-glyph-rebuilt', event.glyphs ?? [], {
             glyphs: event.glyphs ?? 'all',
             cause: event.cause

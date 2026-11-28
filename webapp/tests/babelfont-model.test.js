@@ -8166,4 +8166,90 @@ describe('automatic composite recomposition on removeShape and component.referen
         drawing.components[0].reference = 'a';
         expect(drawing.width).toBe(500);
     });
+
+    test('Drawing.removeShape and Path.insertNode/removeNode recompute metrics keys on non-automatic drawings', () => {
+        const font = Font.fromData({
+            upm: 1000,
+            axes: [],
+            masters: [{ id: 'M1', name: { dflt: 'Regular' }, location: {} }],
+            glyphs: [
+                {
+                    name: 'o',
+                    codepoints: [111],
+                    category: 'Base',
+                    layers: [
+                        {
+                            id: 'M1',
+                            master: { type: 'DefaultForMaster', master: 'M1' },
+                            width: 500,
+                            shapes: [
+                                {
+                                    closed: true,
+                                    nodes: [
+                                        { x: 50, y: 0, nodetype: 'Line' },
+                                        { x: 452, y: 0, nodetype: 'Line' },
+                                        { x: 452, y: 500, nodetype: 'Line' },
+                                        { x: 50, y: 500, nodetype: 'Line' }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    name: 'p',
+                    codepoints: [112],
+                    category: 'Base',
+                    format_specific: { metric_right: '=o' },
+                    layers: [
+                        {
+                            id: 'M1',
+                            master: { type: 'DefaultForMaster', master: 'M1' },
+                            width: 468,
+                            shapes: [
+                                {
+                                    closed: true,
+                                    nodes: [
+                                        { x: 20, y: 0, nodetype: 'Line' },
+                                        { x: 120, y: 0, nodetype: 'Line' },
+                                        { x: 120, y: 500, nodetype: 'Line' },
+                                        { x: 20, y: 500, nodetype: 'Line' }
+                                    ]
+                                },
+                                {
+                                    closed: true,
+                                    nodes: [
+                                        { x: 120, y: 0, nodetype: 'Line' },
+                                        { x: 420, y: 0, nodetype: 'Line' },
+                                        { x: 420, y: 500, nodetype: 'Line' },
+                                        { x: 120, y: 500, nodetype: 'Line' }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        });
+        const oDrawing = font.findGlyph('o').findDrawingById('M1');
+        const pDrawing = font.findGlyph('p').findDrawingById('M1');
+        expect(oDrawing.rsb).toBe(48);
+        expect(pDrawing.rsb).toBe(48);
+
+        // Removing the rightmost contour drops maxX from 420 to 120; width
+        // must drop from 468 to 168 so RSB stays 48 (=o).
+        pDrawing.removeShape(1);
+        expect(pDrawing.width).toBe(168);
+        expect(pDrawing.rsb).toBe(48);
+
+        // Extending the remaining contour via insertNode must also recompute RSB.
+        pDrawing.paths[0].insertNode(1, 220, 0, 'Line');
+        expect(pDrawing.width).toBe(268);
+        expect(pDrawing.rsb).toBe(48);
+
+        // Removing that node brings width back to 168.
+        pDrawing.paths[0].removeNode(1);
+        expect(pDrawing.width).toBe(168);
+        expect(pDrawing.rsb).toBe(48);
+    });
 });

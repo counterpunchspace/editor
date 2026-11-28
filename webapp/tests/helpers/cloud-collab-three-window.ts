@@ -1302,20 +1302,34 @@ export async function settledRoomTrafficStart(
         JSON.stringify(
             Object.entries(rooms).map(([id, room]) => [id, room.updatesApplied])
         );
+    // Ignore text keepalive ping/pong frames when checking for quiet traffic;
+    // summarizeRoomTraffic and expectGlyphEditOverWebSocket only count binary
+    // frames, HTTP requests, and socket lifecycle events.
+    const quietTraffic = () =>
+        JSON.stringify(
+            recorders.map((traffic) => [
+                traffic.frames.filter((frame) => frame.binary).length,
+                traffic.requests.length,
+                traffic.sockets.length
+            ])
+        );
     let mark = markCloudRoomTraffic(...recorders);
+    let prevTraffic = quietTraffic();
     let rooms = await readRoomCounters(page, documentIds);
     for (let attempt = 0; attempt < attempts; attempt++) {
         await page.waitForTimeout(quietMs);
-        const beforeRead = JSON.stringify(markCloudRoomTraffic(...recorders));
+        const beforeRead = quietTraffic();
         const nextRooms = await readRoomCounters(page, documentIds);
+        const nextTraffic = quietTraffic();
         const nextMark = markCloudRoomTraffic(...recorders);
         const quiet =
-            beforeRead === JSON.stringify(mark) &&
-            JSON.stringify(nextMark) === beforeRead &&
+            beforeRead === prevTraffic &&
+            nextTraffic === beforeRead &&
             updates(nextRooms) === updates(rooms) &&
             (!settlePages.length ||
                 (await unsettledCollabWork(settlePages)).length === 0);
         mark = nextMark;
+        prevTraffic = nextTraffic;
         rooms = nextRooms;
         if (quiet) {
             return { rooms, mark };

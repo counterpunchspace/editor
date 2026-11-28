@@ -12,6 +12,7 @@ import {
     glyphIdsFromCatalogEntries,
     glyphIdsFromRevisionEntries
 } from '../cloud-document-set';
+import { layoutDocumentKind } from '../cloud-room-layout';
 import {
     activeEditorGlyphNames,
     catchUpBatchOutcome,
@@ -25,19 +26,40 @@ export const cloudPluginCatchUpMethods = {
         if (context.origin !== 'remote') {
             return;
         }
+        const isCatalogDoc =
+            typeof context.documentId === 'string' &&
+            layoutDocumentKind(context.documentId) === 'catalog';
         if (
             context.documentId &&
             context.documentId !== FONT_CORE_DOCUMENT_ID &&
-            context.documentId !== FONT_DEPS_DOCUMENT_ID
+            context.documentId !== FONT_DEPS_DOCUMENT_ID &&
+            !isCatalogDoc
         ) {
             return;
         }
-        const glyphIds = [
+        let glyphIds = [
             ...new Set([
                 ...glyphIdsFromRevisionEntries(entries),
                 ...glyphIdsFromCatalogEntries(entries)
             ])
         ];
+        if (isCatalogDoc) {
+            // A layout-2 catalog entry can arrive before its glyph's revision
+            // feed on a new add; wait for the revision feed so the glyph is
+            // fetched once instead of twice. Only catch up here when a known
+            // revision already arrived (e.g. while the glyph was tombstoned).
+            const bridge = this._activeAssetSizeBridge;
+            const knownRevisions = new Set(
+                (bridge?.listGlyphRevisionTokens?.() ?? [])
+                    .filter((token) =>
+                        Boolean(token?.glyphId && token.revision)
+                    )
+                    .map((token) => token.glyphId)
+            );
+            glyphIds = glyphIds.filter((glyphId) =>
+                knownRevisions.has(glyphId)
+            );
+        }
         if (!glyphIds.length) {
             if (
                 !context.documentId ||

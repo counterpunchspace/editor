@@ -2005,6 +2005,8 @@ export function confirmEditChanged(
                 // comparison with the model resolves which pair wins.
                 return null;
             }
+            const [left, right] = edit.pair.split(':');
+            if (!inSet(left) || !inSet(right)) return null;
             return need(
                 changed(before.kerning, after.kerning),
                 `kerning ${edit.pair}`

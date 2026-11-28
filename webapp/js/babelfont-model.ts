@@ -4129,6 +4129,7 @@ function recomputeMetricsKeysForModelDrawing(
 
     if (
         !drawing ||
+        drawing.is_background ||
         suppressMetricsKeyRecomputeDepth > 0 ||
         suppressModelRecordingDepth > 0 ||
         bridge?._suppressRecording ||
@@ -5416,7 +5417,12 @@ export class Path extends ArrayElementBase<PathData, Drawing | Shape> {
             nodeArray.splice(index, 0, nodeData);
             this._nodeWrappers = null; // Invalidate cache
             recordGranularNodesChange(this.getPath(), oldNodes, nodeArray);
-            return new Node(nodeArray, index, this);
+            const inserted = new Node(nodeArray, index, this);
+            const drawing = this.parent()?.parent();
+            recomputeMetricsKeysForModelDrawing(
+                drawing instanceof Drawing ? drawing : null
+            );
+            return inserted;
         });
     }
 
@@ -5438,6 +5444,10 @@ export class Path extends ArrayElementBase<PathData, Drawing | Shape> {
             nodeArray.splice(index, 1);
             this._nodeWrappers = null; // Invalidate cache
             recordGranularNodesChange(this.getPath(), oldNodes, nodeArray);
+            const drawing = this.parent()?.parent();
+            recomputeMetricsKeysForModelDrawing(
+                drawing instanceof Drawing ? drawing : null
+            );
         });
     }
 
@@ -10401,14 +10411,17 @@ export class Drawing extends ArrayElementBase {
             ) {
                 this.getFont()?.invalidateReverseComponentIndex();
             }
-            if (
-                !options?.skipAutomaticRebuild &&
-                this.isAutomaticAlignedDrawing()
-            ) {
-                this.rebuildAutomaticComposition();
-                const glyphName = this.getGlyphName();
-                if (glyphName) {
-                    this.getFont()?.recomputeMetricsKeys(new Set([glyphName]));
+            if (!options?.skipAutomaticRebuild) {
+                if (this.isAutomaticAlignedDrawing()) {
+                    this.rebuildAutomaticComposition();
+                    const glyphName = this.getGlyphName();
+                    if (glyphName) {
+                        this.getFont()?.recomputeMetricsKeys(
+                            new Set([glyphName])
+                        );
+                    }
+                } else {
+                    recomputeMetricsKeysForModelDrawing(this);
                 }
             }
         });

@@ -85,6 +85,33 @@ describe('FontManager sparse hydration', () => {
         expect(names).toEqual(expect.arrayContaining(['adieresis']));
     });
 
+    test('deriveSubsetGlyphsFromText includes .notdef when a mapped glyph has exported === false', () => {
+        const names = fontManager.deriveSubsetGlyphsFromText.call(
+            {
+                currentFont: {
+                    fontModel: {
+                        findGlyph(name) {
+                            return name === '.notdef'
+                                ? { name: '.notdef', exported: true }
+                                : null;
+                        },
+                        findGlyphByCodepoint(cp) {
+                            if (cp === 112) {
+                                return { name: 'p', exported: false };
+                            }
+                            if (cp === 113) {
+                                return { name: 'q', exported: true };
+                            }
+                            return null;
+                        }
+                    }
+                }
+            },
+            'pq'
+        );
+        expect(names).toEqual(['p', '.notdef', 'q']);
+    });
+
     test('needsEditingCompileForText is true when a hydrated cmap glyph is missing from the compiled snapshot', () => {
         const needs = fontManager.needsEditingCompileForText.call(
             {

@@ -3124,11 +3124,14 @@ export class CloudPlugin extends FilesystemPlugin {
                 depsGlyphs: new Set(update.depsGlyphs)
             };
         }
-        if (this._isSyncingCatalog || options?.holdForBatch) {
+        if (this._isSyncingCatalog) {
             return;
         }
         if (window.patchSyncEngine?.deferCatalogProjection) {
             window.patchSyncEngine.noteDeferredCatalogOwner?.(this);
+            return;
+        }
+        if (options?.holdForBatch) {
             return;
         }
         this._flushCatalogProjection();

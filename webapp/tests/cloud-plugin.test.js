@@ -3984,6 +3984,127 @@ describe('CloudPlugin glyph catch-up from core revision map', () => {
         }
     });
 
+    test('catches up a restored glyph when layout-2 catalog room un-deletes it after its revision arrived', async () => {
+        const plugin = new CloudPlugin();
+        const catchUpDocuments = jest
+            .fn()
+            .mockResolvedValue(['glyph:restored-id']);
+        plugin._liveSession = { catchUpDocuments };
+        let deleted = true;
+        plugin._activeAssetSizeBridge = {
+            hasSparseWorkingSet: () => true,
+            listSparseWorkingGlyphIds: () => [],
+            glyphDocumentIdForName: () => null,
+            hasResidentGlyphDocument: () => true,
+            isDeletedGlyphDocument: () => deleted,
+            isEmptyGlyphDocument: () => true,
+            listGlyphRevisionTokens: () => [
+                { glyphId: 'restored-id', revision: 'rev-14' }
+            ],
+            glyphHasCatchUpRevision: () => false
+        };
+        const originalFontManager = window.fontManager;
+        const originalCanvas = window.glyphCanvas;
+        window.fontManager = {
+            getActiveEditorGlyphName: () => 'a',
+            getConstrainedEditingSubsetGlyphs: () => ['a'],
+            getEditingSubsetSnapshot: () => ['a'],
+            getLiveVisibleGlyphNames: () => ['a'],
+            deriveSubsetGlyphsFromText: () => ['a'],
+            resolveEditingTextForCompile: () => 'a'
+        };
+        window.glyphCanvas = { textRunEditor: { glyphNameBuffer: [] } };
+        try {
+            // Revision arrives before catalog:1 clears the tombstone, so initial catch-up skips it.
+            plugin._syncGlyphCatchUpFromCommittedChange(
+                [{ path: 'glyphRevisions.restored-id', newValue: 'rev-14' }],
+                { origin: 'remote', documentId: 'font-core' }
+            );
+            await Promise.resolve();
+            expect(catchUpDocuments).not.toHaveBeenCalled();
+
+            // Layout-2 catalog bucket delivers the un-deleted entry.
+            deleted = false;
+            plugin._syncGlyphCatchUpFromCommittedChange(
+                [
+                    {
+                        path: 'glyphCatalog.restored-id',
+                        newValue: {
+                            glyphId: 'restored-id',
+                            name: 'fuzz.restored',
+                            deleted: false,
+                            generation: 2
+                        }
+                    }
+                ],
+                { origin: 'remote', documentId: 'catalog:1' }
+            );
+            await Promise.resolve();
+            expect(catchUpDocuments).toHaveBeenCalledTimes(1);
+            expect(catchUpDocuments).toHaveBeenCalledWith(
+                [
+                    {
+                        documentId: 'glyph:restored-id',
+                        expectedRevision: 'rev-14'
+                    }
+                ],
+                { includeLiveDocuments: true }
+            );
+        } finally {
+            plugin._stopTrackingActiveAssetSize?.();
+            window.fontManager = originalFontManager;
+            window.glyphCanvas = originalCanvas;
+        }
+    });
+
+    test('waits for revision feed when layout-2 catalog room adds a glyph with no revision yet', async () => {
+        const plugin = new CloudPlugin();
+        const catchUpDocuments = jest.fn().mockResolvedValue(['glyph:new-id']);
+        plugin._liveSession = { catchUpDocuments };
+        plugin._activeAssetSizeBridge = {
+            hasSparseWorkingSet: () => true,
+            listSparseWorkingGlyphIds: () => [],
+            glyphDocumentIdForName: () => null,
+            hasResidentGlyphDocument: () => false,
+            isDeletedGlyphDocument: () => false,
+            listGlyphRevisionTokens: () => [],
+            glyphHasCatchUpRevision: () => false
+        };
+        const originalFontManager = window.fontManager;
+        const originalCanvas = window.glyphCanvas;
+        window.fontManager = {
+            getActiveEditorGlyphName: () => 'a',
+            getConstrainedEditingSubsetGlyphs: () => ['a'],
+            getEditingSubsetSnapshot: () => ['a'],
+            getLiveVisibleGlyphNames: () => ['a'],
+            deriveSubsetGlyphsFromText: () => ['a'],
+            resolveEditingTextForCompile: () => 'a'
+        };
+        window.glyphCanvas = { textRunEditor: { glyphNameBuffer: [] } };
+        try {
+            plugin._syncGlyphCatchUpFromCommittedChange(
+                [
+                    {
+                        path: 'glyphCatalog.new-id',
+                        newValue: {
+                            glyphId: 'new-id',
+                            name: 'fuzz.new',
+                            deleted: false,
+                            generation: 0
+                        }
+                    }
+                ],
+                { origin: 'remote', documentId: 'catalog:1' }
+            );
+            await Promise.resolve();
+            expect(catchUpDocuments).not.toHaveBeenCalled();
+        } finally {
+            plugin._stopTrackingActiveAssetSize?.();
+            window.fontManager = originalFontManager;
+            window.glyphCanvas = originalCanvas;
+        }
+    });
+
     describe('layout room report', () => {
         const makeOwnerPlugin = () => {
             const plugin = new CloudPlugin();
@@ -4394,6 +4515,86 @@ describe('CloudPlugin glyph catch-up from core revision map', () => {
                 'id-c',
                 'id-d'
             ]);
+        } finally {
+            window.patchSyncEngine = originalEngine;
+        }
+    });
+
+    test('registers deferred catalog owner even when the catalog-dirty packet is held for batch', () => {
+        const plugin = new CloudPlugin();
+        const fontJson = {
+            glyphs: [
+                {
+                    id: 'id-readded',
+                    name: 'fuzz.renamed',
+                    codepoints: [],
+                    exported: true,
+                    layers: []
+                }
+            ],
+            glyphCatalog: {
+                'id-old': {
+                    glyphId: 'id-old',
+                    name: 'fuzz.renamed',
+                    codepoints: [],
+                    exported: true,
+                    deleted: true,
+                    generation: 1
+                }
+            },
+            codepointIndex: {}
+        };
+        plugin._currentFontJson = () => fontJson;
+        const projected = [];
+        const deferredOwners = new Set();
+        const originalEngine = window.patchSyncEngine;
+        const engine = {
+            deferCatalogProjection: true,
+            noteDeferredCatalogOwner: (owner) => deferredOwners.add(owner),
+            syncCloudOwnedProjection: (owned) => projected.push(owned)
+        };
+        window.patchSyncEngine = engine;
+        try {
+            // Packet 0 (glyph shard) is catalog-dirty and held for batch;
+            // Packet 1 (font-core whole-document / non-catalog path) skips _enqueueCatalogProjection.
+            plugin._syncCatalogFromCommittedChange(
+                [
+                    {
+                        op: 'add',
+                        path: ['glyphs', 'fuzz.renamed'],
+                        newValue: { id: 'id-readded', name: 'fuzz.renamed' }
+                    }
+                ],
+                {
+                    origin: 'local',
+                    update: new Uint8Array(),
+                    documentId: 'glyph:id-readded',
+                    uiBatch: { id: 'batch-1', index: 0, count: 2 }
+                }
+            );
+            plugin._syncCatalogFromCommittedChange(
+                [{ op: 'set', path: ['font'], newValue: {} }],
+                {
+                    origin: 'local',
+                    update: new Uint8Array(),
+                    documentId: 'font-core',
+                    uiBatch: { id: 'batch-1', index: 1, count: 2 }
+                }
+            );
+            expect(projected).toHaveLength(0);
+            expect(deferredOwners.has(plugin)).toBe(true);
+
+            engine.deferCatalogProjection = false;
+            for (const owner of deferredOwners) {
+                owner.flushDeferredCatalogProjection();
+            }
+            expect(projected).toHaveLength(1);
+            expect(projected[0].glyphCatalog['id-readded']?.name).toBe(
+                'fuzz.renamed'
+            );
+            expect(projected[0].glyphCatalog['id-readded']?.deleted).toBe(
+                false
+            );
         } finally {
             window.patchSyncEngine = originalEngine;
         }
